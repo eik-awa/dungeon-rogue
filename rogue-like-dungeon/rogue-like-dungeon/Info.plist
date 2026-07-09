@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-1615601076718034~3190216216</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>あなたの興味に合った広告を表示するために、この識別子を使用します。許可すると、アプリ内に表示される広告があなたに関連したものになります。</string>
+</dict>
+</plist>
