@@ -1,5 +1,5 @@
 // ============================================================
-//  霧渡りの森 — Roguelike (第一章: 森 / 1-1 〜 1-10)
+//  DungeonRogue (第一章: 霧渡り森 / 1-1 〜 1-10)
 //
 //  ◆ 画像差し替えガイド
 //  すべての絵素材は下の ASSETS レジストリで一元管理しています。
@@ -16,6 +16,7 @@ import {
   TreePine, Droplets, Flower2, Crown, Skull, Heart, Package, Moon, Star,
   ChevronRight, X, Plus, Wind, CircleDot,
   Cloud, Mountain, Eye, Bone, Snowflake, Sprout, Waves, Feather, Shell, Sun,
+  Volume1, Volume2, VolumeX,
 } from "lucide-react";
 
 /* ------------------------------------------------------------
@@ -42,7 +43,7 @@ const ASSETS = {
   bomb:       { icon: Flame,       img: null },
   dew:        { icon: Sparkles,    img: null },
   mossHeart:  { icon: CircleDot,   img: null },
-  // 敵(第1章: 森)
+  // 敵(第1章: 霧渡りの森)
   slime:      { icon: Droplets,    img: null },
   beetle:     { icon: Bug,         img: null },
   wisp:       { icon: Ghost,       img: null },
@@ -273,83 +274,93 @@ const RARE_ENEMY = {
 ------------------------------------------------------------ */
 const STAGES = [
   {
-    name: "森", read: "だいいっしょう ・ もり", tate: "霧渡りの森・第一章",
+    name: "霧渡りの森", read: "きりわたりのもり", tate: "第一章",
     // 序盤で詰まないよう、短剣(斬)で倒せる敵を先頭に。甲虫・迷い火など斬耐性は後半に。
     enemies: ["slime", "raven", "shroom", "beetle", "wisp", "treant"],
     terrain: "trees",
     bg: { skyTop: [10, 20, 16], skyMid: [24, 44, 34], layers: ["rgba(18,30,23,.9)", "rgba(12,21,16,.95)", "rgba(7,13,10,1)"], moon: "rgba(238,230,204,.85)", mist: "157,180,166" },
+    moonPhase: { phase: 0.22, waning: false },
     particles: { color: [240, 200, 110], mode: "float", density: 26 },
     boss: { id: "bossDeer", name: "森の主・苔冠の大鹿", asset: "bossDeer", weak: ["魔", "音"], resist: ["斬"], summons: ["slime", "wisp"], chargeLine: "大鹿は角を低く構えた……", bigLine: "渾身の角撃!!", summonLine: "大鹿が啼くと、森の眷属が湧き出した!" },
   },
   {
-    name: "茸の湿原", read: "だいにしょう ・ きのこのしつげん", tate: "霧渡りの森・第二章",
+    name: "茸の湿原", read: "きのこのしつげん", tate: "第二章",
     enemies: ["bogSlime", "sporeling", "leech", "mudcrab", "shroom", "wisp"],
     terrain: "mounds",
     bg: { skyTop: [14, 16, 22], skyMid: [30, 42, 52], layers: ["rgba(28,38,48,.9)", "rgba(20,28,38,.95)", "rgba(10,15,22,1)"], moon: "rgba(180,220,214,.8)", mist: "140,180,190" },
+    moonPhase: { phase: 0.38, waning: false },
     particles: { color: [150, 220, 190], mode: "rise", density: 30 },
     boss: { id: "bossMycel", name: "菌帝マザーマイセリア", asset: "bossMycel", weak: ["打", "斬"], resist: ["突"], poison: true, summons: ["sporeling", "bogSlime"], chargeLine: "菌帝が胞子を吸い込んでいく……", bigLine: "胞子の大嵐!!", summonLine: "地面から菌の子らが芽吹いた!" },
   },
   {
-    name: "苔の遺跡", read: "だいさんしょう ・ こけのいせき", tate: "霧渡りの森・第三章",
+    name: "苔の遺跡", read: "こけのいせき", tate: "第三章",
     enemies: ["skel", "ruinBat", "statue", "curseEye", "wisp", "beetle"],
     terrain: "blocks",
     bg: { skyTop: [16, 17, 15], skyMid: [42, 44, 38], layers: ["rgba(40,42,36,.9)", "rgba(28,30,26,.95)", "rgba(14,15,13,1)"], moon: "rgba(230,225,200,.8)", mist: "170,172,150" },
+    moonPhase: { phase: 0.50, waning: false },
     particles: { color: [210, 205, 170], mode: "float", density: 18 },
     boss: { id: "bossGolem", name: "遺跡の巨像アトラガル", asset: "bossGolem", weak: ["打", "魔"], resist: ["斬", "突"], summons: ["statue", "skel"], chargeLine: "巨像の拳が軋みを上げる……", bigLine: "崩落の一撃!!", summonLine: "壁面から石像兵が剥がれ落ちた!" },
   },
   {
-    name: "花霞の谷", read: "だいよんしょう ・ はながすみのたに", tate: "霧渡りの森・第四章",
+    name: "花霞の谷", read: "はながすみのたに", tate: "第四章",
     enemies: ["bee", "petalGuard", "pixie", "thornVine", "raven"],
     terrain: "hills",
     bg: { skyTop: [26, 14, 22], skyMid: [70, 36, 52], layers: ["rgba(58,30,44,.9)", "rgba(40,20,32,.95)", "rgba(20,10,16,1)"], moon: "rgba(255,214,214,.85)", mist: "220,170,190" },
+    moonPhase: { phase: 0.67, waning: false },
     particles: { color: [245, 180, 200], mode: "fall", density: 34 },
     boss: { id: "bossButterfly", name: "花嵐の女王蝶ヴェスパリア", asset: "bossButterfly", weak: ["突"], resist: ["打"], poison: true, summons: ["bee", "pixie"], chargeLine: "女王蝶の翅が妖しく輝く……", bigLine: "鱗粉の嵐!!", summonLine: "花陰から蜂と妖精が舞い上がる!" },
   },
   {
-    name: "水晶洞", read: "だいごしょう ・ すいしょうどう", tate: "霧渡りの森・第五章",
+    name: "水晶洞", read: "すいしょうどう", tate: "第五章",
     enemies: ["crysBug", "shardWisp", "prism", "crysTurtle", "curseEye"],
     terrain: "spires",
     bg: { skyTop: [8, 14, 26], skyMid: [22, 44, 74], layers: ["rgba(30,52,84,.85)", "rgba(20,36,62,.92)", "rgba(8,16,30,1)"], moon: "rgba(180,220,255,.8)", mist: "150,190,230" },
+    moonPhase: { phase: 0.84, waning: false },
     particles: { color: [160, 210, 255], mode: "float", density: 24 },
     boss: { id: "bossCrystal", name: "晶洞竜クリスタヴェイン", asset: "bossCrystal", weak: ["打", "音"], resist: ["斬", "魔"], summons: ["prism", "crysBug"], chargeLine: "竜の鱗が光を溜めていく……", bigLine: "晶光の咆哮!!", summonLine: "砕けた鱗が晶蟲となって蠢く!" },
   },
   {
-    name: "焔の峠", read: "だいろくしょう ・ ほむらのとうげ", tate: "霧渡りの森・第六章",
+    name: "焔の峠", read: "ほむらのとうげ", tate: "第六章",
     enemies: ["emberBird", "salamander", "magmaBug", "ashWraith"],
     terrain: "peaks",
     bg: { skyTop: [24, 10, 8], skyMid: [70, 30, 18], layers: ["rgba(56,24,16,.9)", "rgba(38,16,10,.95)", "rgba(18,7,5,1)"], moon: "rgba(255,180,120,.8)", mist: "220,140,90" },
+    moonPhase: { phase: 1.00, waning: false },
     particles: { color: [255, 150, 70], mode: "rise", density: 36 },
     boss: { id: "bossFlame", name: "焔尾の獣イグナロス", asset: "bossFlame", weak: ["突", "魔"], resist: ["音"], summons: ["emberBird", "salamander"], chargeLine: "獣の尾が焔を巻き上げる……", bigLine: "劫火の尾撃!!", summonLine: "火の粉が獣の仔らに変わる!" },
   },
   {
-    name: "氷樹の森", read: "だいななしょう ・ ひょうじゅのもり", tate: "霧渡りの森・第七章",
+    name: "氷樹の森", read: "ひょうじゅのもり", tate: "第七章",
     enemies: ["iceSprite", "frostShroom", "blizzWolf", "icicleTort"],
     terrain: "trees",
     bg: { skyTop: [12, 18, 28], skyMid: [40, 58, 78], layers: ["rgba(70,92,116,.7)", "rgba(44,60,80,.85)", "rgba(18,26,38,1)"], moon: "rgba(220,235,255,.9)", mist: "200,220,240" },
+    moonPhase: { phase: 0.80, waning: true },
     particles: { color: [230, 240, 255], mode: "fall", density: 44 },
     boss: { id: "bossWolf", name: "氷牙の古狼フェンヴァル", asset: "bossWolf", weak: ["打", "魔"], resist: ["突"], summons: ["blizzWolf", "iceSprite"], chargeLine: "古狼が白い息を吐き、身を沈めた……", bigLine: "凍てつく牙!!", summonLine: "吹雪の中から群れが応えた!" },
   },
   {
-    name: "雷雲の尾根", read: "だいはっしょう ・ らいうんのおね", tate: "霧渡りの森・第八章",
+    name: "雷雲の尾根", read: "らいうんのおね", tate: "第八章",
     enemies: ["voltBug", "stormBird", "galeSprite", "cloudEater"],
     terrain: "ridge",
     bg: { skyTop: [14, 12, 24], skyMid: [36, 32, 58], layers: ["rgba(34,30,54,.9)", "rgba(24,21,40,.95)", "rgba(10,9,18,1)"], moon: "rgba(230,220,160,.7)", mist: "170,165,200", flash: true },
+    moonPhase: { phase: 0.52, waning: true },
     particles: { color: [200, 195, 240], mode: "fall", density: 40, fast: true },
     boss: { id: "bossRoc", name: "雷駆のロック鳥トナリオン", asset: "bossRoc", weak: ["突"], resist: ["斬", "打"], summons: ["stormBird", "galeSprite"], chargeLine: "ロック鳥が雷雲を纏っていく……", bigLine: "落雷の急降下!!", summonLine: "翼の一振りで嵐の眷属が生まれた!" },
   },
   {
-    name: "星降りの浮島", read: "だいきゅうしょう ・ ほしふりのうきしま", tate: "霧渡りの森・第九章",
+    name: "星降りの浮島", read: "ほしふりのうきしま", tate: "第九章",
     enemies: ["starSlime", "meteorBug", "nightHerald", "silentShade"],
     terrain: "islands",
     bg: { skyTop: [6, 8, 20], skyMid: [16, 20, 44], layers: ["rgba(24,28,56,.85)", "rgba(16,18,40,.92)", "rgba(6,7,18,1)"], moon: "rgba(200,210,255,.9)", mist: "150,160,220", stars: true },
+    moonPhase: { phase: 0.33, waning: true },
     particles: { color: [220, 225, 255], mode: "float", density: 30 },
     boss: { id: "bossShadow", name: "星喰いノクスヴォア", asset: "bossShadow", weak: ["魔", "音"], resist: ["斬", "突", "打"], summons: ["silentShade", "nightHerald"], chargeLine: "星喰いが光を呑み込んでいく……", bigLine: "星喰らいの顎!!", summonLine: "影が千切れ、形を得た!" },
   },
   {
-    name: "常夜の根", read: "さいしゅうしょう ・ とこよのね", tate: "霧渡りの森・終章",
+    name: "常夜の根", read: "とこよのね", tate: "終章",
     enemies: ["rootPuppet", "nightMoth", "abyssEye", "shadeWalker"],
     terrain: "roots",
     bg: { skyTop: [8, 6, 10], skyMid: [22, 16, 26], layers: ["rgba(26,20,30,.9)", "rgba(16,12,20,.95)", "rgba(6,5,9,1)"], moon: "rgba(232,180,74,.75)", mist: "160,140,120", stars: true },
+    moonPhase: { phase: 0.10, waning: true },
     particles: { color: [232, 180, 74], mode: "float", density: 34 },
     boss: { id: "bossRootKing", name: "常夜の根王ユグドナハト", asset: "bossRootKing", weak: ["魔", "音"], resist: ["斬"], summons: ["rootPuppet", "shadeWalker"], chargeLine: "根王の千の根が大地を掴んだ……", bigLine: "世界根の槌!!", summonLine: "根の底から傀儡が這い上がる!", final: true },
   },
@@ -470,6 +481,7 @@ function enemiesForEncounter(floor) {
    永続データ (window.storage / 失敗時はメモリ)
 ------------------------------------------------------------ */
 const SAVE_KEY = "kiriwatari-forest-save";
+const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
 const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1 };
 
@@ -483,6 +495,22 @@ async function loadMeta() {
 async function saveMeta(meta) {
   memorySave = { ...meta };
   try { await window.storage.set(SAVE_KEY, JSON.stringify(meta)); } catch (e) { /* メモリ保存で継続 */ }
+}
+async function loadRun() {
+  try {
+    const r = await window.storage.get(RUN_SAVE_KEY);
+    if (r && r.value) return JSON.parse(r.value);
+  } catch {}
+  return null;
+}
+async function saveRun(floor, player, weapons, armor, inv, cds) {
+  try {
+    const data = { floor, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {} };
+    await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
+  } catch {}
+}
+async function clearRun() {
+  try { await window.storage.set(RUN_SAVE_KEY, ""); } catch {}
 }
 
 /* ------------------------------------------------------------
@@ -524,6 +552,7 @@ const CSS = `
   --font-body: 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-root {
   height: 100dvh; width: 100%;
   background: var(--ink);
@@ -543,6 +572,8 @@ const CSS = `
 /* --- 背景層 --- */
 .kw-bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
 .kw-bg svg, .kw-bg canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.kw-bg-preview { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.kw-bg-preview svg, .kw-bg-preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .kw-vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
   background: radial-gradient(ellipse 90% 70% at 50% 42%, transparent 40%, rgba(4,8,6,.55) 100%); }
 
@@ -567,7 +598,9 @@ const CSS = `
 }
 
 /* --- 敵エリア --- */
-.kw-field { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; padding: 18px 0 20px; overflow: hidden; }
+.kw-field { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; align-items: stretch; }
+.kw-field-inner { margin: auto; width: 100%; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 18px; padding: 18px 8px 20px; }
+.kw-field-panel { margin: auto; width: 100%; display: flex; flex-direction: column; align-items: center; padding: 18px 8px 20px; }
 .kw-enemy {
   position: relative; width: 138px; padding: 16px 10px 12px; text-align: center;
   cursor: pointer; transition: transform .18s ease, box-shadow .18s ease;
@@ -630,7 +663,7 @@ const CSS = `
 /* --- ボタン --- */
 .kw-btn { font-family: var(--font-body); font-weight: 700; letter-spacing: .14em; cursor: pointer;
   background: transparent; color: var(--paper); border: 1px solid rgba(233,228,211,.35);
-  border-radius: 8px; padding: 10px 22px; font-size: 13px; transition: all .18s ease; }
+  border-radius: 8px; padding: 10px 22px; font-size: 13px; white-space: nowrap; transition: all .18s ease; }
 .kw-btn:hover { border-color: var(--hotaru); color: var(--hotaru); box-shadow: 0 0 14px var(--hotaru-dim); }
 .kw-btn.primary { border-color: var(--hotaru); color: var(--ink); background: var(--hotaru); }
 .kw-btn.primary:hover { background: #f3c86b; color: var(--ink); }
@@ -719,6 +752,21 @@ const CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .kw-enemy { animation: none; }
+}
+
+/* --- 音量スライダー --- */
+.kw-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer;
+  background: linear-gradient(to right,
+    var(--hotaru) 0%, var(--hotaru) var(--vol, 70%),
+    rgba(157,180,166,.2) var(--vol, 70%), rgba(157,180,166,.2) 100%);
+}
+.kw-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--hotaru); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
 }
 `;
 
@@ -825,7 +873,19 @@ function terrainPath(mode, seed, baseY, amp, count) {
   return d;
 }
 
-function StageBackdrop({ floor = 1 }) {
+// 月の満ち欠けを SVG clipPath パスとして返す。phase: 0=新月 〜 1=満月, waning: 欠ける方向
+function moonPhasePath(cx, cy, r, phase, waning) {
+  if (phase >= 0.99) return null; // 満月はクリップ不要
+  if (phase <= 0.01) return `M ${cx} ${cy} Z`;
+  const terminatorRx = r * Math.abs(Math.cos(Math.PI * phase));
+  const isGibbous = phase > 0.5;
+  const top = [cx, cy - r], bottom = [cx, cy + r];
+  const limbSweep = waning ? 0 : 1;
+  const termSweep = waning ? (isGibbous ? 0 : 1) : (isGibbous ? 1 : 0);
+  return [`M ${top[0]} ${top[1]}`, `A ${r} ${r} 0 0 ${limbSweep} ${bottom[0]} ${bottom[1]}`, `A ${terminatorRx} ${r} 0 0 ${termSweep} ${top[0]} ${top[1]}`, `Z`].join(" ");
+}
+
+function StageBackdrop({ floor = 1, preview = false }) {
   const sIdx = stageOf(floor);
   const st = STAGES[sIdx];
   const depth = (floorInStage(floor) - 1) / 9; // 章内で霧が深まる
@@ -869,30 +929,35 @@ function StageBackdrop({ floor = 1 }) {
   const c = (arr, dim) => `rgb(${Math.max(0, arr[0] - dim)}, ${Math.max(0, arr[1] - dim)}, ${Math.max(0, arr[2] - dim)})`;
   const dim = Math.round(depth * 6);
 
+  const moonInfo = st.moonPhase || { phase: 1.0, waning: false };
+  const moonClipPath = moonPhasePath(880, 150, 46, moonInfo.phase, moonInfo.waning);
+  const skyId = `kwSky${sIdx}`, moonGradId = `kwMoon${sIdx}`, mistId = `kwMist${sIdx}`, moonClipId = `kwMoonClip${sIdx}`;
+
   return (
-    <div className="kw-bg" aria-hidden="true">
+    <div className={preview ? "kw-bg-preview" : "kw-bg"} aria-hidden="true">
       <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <linearGradient id="kwSky" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={skyId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor={c(st.bg.skyTop, dim)} />
             <stop offset="0.55" stopColor={c(st.bg.skyMid, dim * 2)} />
             <stop offset="1" stopColor="#050806" />
           </linearGradient>
-          <radialGradient id="kwMoon" cx="0.5" cy="0.5" r="0.5">
+          <radialGradient id={moonGradId} cx="0.5" cy="0.5" r="0.5">
             <stop offset="0" stopColor={st.bg.moon} />
             <stop offset="0.35" stopColor={st.bg.moon.replace(/[\d.]+\)$/, "0.25)")} />
             <stop offset="1" stopColor="rgba(0,0,0,0)" />
           </radialGradient>
-          <linearGradient id="kwMist" x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id={mistId} x1="0" y1="0" x2="1" y2="0">
             <stop offset="0" stopColor={`rgba(${st.bg.mist},0)`} />
             <stop offset="0.5" stopColor={`rgba(${st.bg.mist},${0.10 + depth * 0.1})`} />
             <stop offset="1" stopColor={`rgba(${st.bg.mist},0)`} />
           </linearGradient>
+          {moonClipPath && <clipPath id={moonClipId}><path d={moonClipPath} /></clipPath>}
         </defs>
-        <rect width="1200" height="800" fill="url(#kwSky)" />
+        <rect width="1200" height="800" fill={`url(#${skyId})`} />
         {stars.map((s, i) => <circle key={i} cx={s.x} cy={s.y} r={s.r} fill={`rgba(230,235,255,${s.o})`} />)}
-        <circle cx="880" cy="150" r="150" fill="url(#kwMoon)" />
-        <circle cx="880" cy="150" r="46" fill={st.bg.moon} />
+        <circle cx="880" cy="150" r="150" fill={`url(#${moonGradId})`} />
+        <circle cx="880" cy="150" r="46" fill={st.bg.moon} clipPath={moonClipPath ? `url(#${moonClipId})` : undefined} />
         <polygon points="820,150 940,150 1090,800 640,800" fill="rgba(235,226,196,0.045)" />
         {layers.roots && <path d={layers.roots} fill={st.bg.layers[1]} />}
         {isl.map((o, i) => (
@@ -902,16 +967,16 @@ function StageBackdrop({ floor = 1 }) {
           </g>
         ))}
         {layers.paths.map((d, i) => <path key={i} d={d} fill={st.bg.layers[Math.min(i, st.bg.layers.length - 1)]} />)}
-        <ellipse cx="600" cy="600" rx="700" ry="60" fill="url(#kwMist)">
+        <ellipse cx="600" cy="600" rx="700" ry="60" fill={`url(#${mistId})`}>
           <animate attributeName="cx" values="500;700;500" dur="26s" repeatCount="indefinite" />
         </ellipse>
-        <ellipse cx="400" cy="700" rx="620" ry="52" fill="url(#kwMist)">
+        <ellipse cx="400" cy="700" rx="620" ry="52" fill={`url(#${mistId})`}>
           <animate attributeName="cx" values="700;380;700" dur="34s" repeatCount="indefinite" />
         </ellipse>
         {st.bg.flash && <rect className="kw-flash" width="1200" height="800" fill="rgba(230,225,255,1)" />}
       </svg>
-      <Particles color={st.particles.color} mode={st.particles.mode}
-        density={st.particles.density + Math.round(depth * 12)} fast={st.particles.fast} />
+      {!preview && <Particles color={st.particles.color} mode={st.particles.mode}
+        density={st.particles.density + Math.round(depth * 12)} fast={st.particles.fast} />}
     </div>
   );
 }
@@ -1035,12 +1100,12 @@ function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
 /* ------------------------------------------------------------
    メインゲーム
 ------------------------------------------------------------ */
-const BASE_HP = 60;
+const BASE_HP = 72;
 const AFF_WEAK = 1.6, AFF_RES = 0.5;
 const INV_CAP = 14;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function starterState(meta) {
+function starterState(meta, initialWeaponType = "dagger") {
   const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid() }));
   const weapons = [null, null, null];
   const armor = { helm: null, armor: null, charm: null };
@@ -1054,9 +1119,11 @@ function starterState(meta) {
     } else inv.push(it);
   }
   if (!weapons.some(Boolean)) {
-    weapons[0] = { id: uid(), kind: "weapon", type: "dagger", name: WEAPON_NAMES.dagger[0], rarity: "common", atk: 5, asset: "dagger" };
+    weapons[0] = makeWeapon(4, { type: initialWeaponType, rarity: "common" });
   }
   inv.push(makeConsumable("berrySmall"));
+  inv.push(makeConsumable("berrySmall"));
+  inv.push(makeConsumable("antidote"));
   return { weapons, armor, inv };
 }
 
@@ -1071,7 +1138,119 @@ export default function KiriwatariNoMori() {
   const [g, setG] = useState({ screen: "title" });
   const gRef = useRef(g); gRef.current = g;
 
-  useEffect(() => { loadMeta().then(setMeta); }, []);
+  // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
+  // JS Audio は一切使わない。WebKit が AVAudioSession を .playback に上書きするのを防ぎ
+  // Apple Music との共存 (.ambient + .mixWithOthers) を維持するため。
+  const bgmFallbackRef = useRef(null); // ネイティブ不可環境用 BGM フォールバック
+  const seFallbackRef  = useRef(null); // ネイティブ不可環境用 SE フォールバック
+  const bgmVolRef      = useRef(70);
+  const seVolRef       = useRef(80);
+  const bgmStartedRef  = useRef(false);
+  const [startWeapon, setStartWeapon] = useState("dagger");
+  const [bgmVolume, setBgmVolume] = useState(() => {
+    try { const v = localStorage.getItem("kw-bgm-v"); return v !== null ? Math.max(0, Math.min(100, parseInt(v))) : 70; } catch { return 70; }
+  });
+  const [seVolume, setSeVolume] = useState(() => {
+    try { const v = localStorage.getItem("kw-se-v");  return v !== null ? Math.max(0, Math.min(100, parseInt(v))) : 80; } catch { return 80; }
+  });
+  const [savedRun, setSavedRun] = useState(null);
+
+  useEffect(() => { bgmVolRef.current = bgmVolume; }, [bgmVolume]);
+  useEffect(() => { seVolRef.current  = seVolume;  }, [seVolume]);
+
+  // ネイティブハンドラへ BGM メッセージを送信
+  const sendBGM = (action, volume) => {
+    const msg = { a: action };
+    if (volume !== undefined) msg.v = volume;
+    try { window.webkit?.messageHandlers?.bgm?.postMessage(msg); } catch {}
+  };
+
+  // ネイティブハンドラへ SE メッセージを送信 (ch:"se" でルーティング)
+  const sendSE = (action, volume) => {
+    const msg = { a: action, ch: "se" };
+    if (volume !== undefined) msg.v = volume;
+    try { window.webkit?.messageHandlers?.bgm?.postMessage(msg); } catch {}
+  };
+
+  const bgmFbSetVol = (v) => {
+    const fb = bgmFallbackRef.current; if (!fb) return;
+    fb.volume = v / 100 * 0.5;
+    if (v > 0 && fb.paused && bgmStartedRef.current) fb.play().catch(() => {});
+    else if (v <= 0 && !fb.paused) fb.pause();
+  };
+
+  // 初回タップで音声を起動。ネイティブが使えれば Swift 側に委譲し JS Audio は触らない。
+  useEffect(() => {
+    const initAudio = () => {
+      if (bgmStartedRef.current) return;
+      bgmStartedRef.current = true;
+      const vol   = bgmVolRef.current;
+      const seVol = seVolRef.current;
+      if (window.webkit?.messageHandlers?.bgm) {
+        // ネイティブパス: BGM 開始 + SE 初期音量を通知
+        if (vol > 0) sendBGM("play", vol / 100);
+        sendSE("volume", seVol / 100 * 0.85);
+      } else {
+        // フォールバック (ブラウザ等): JS Audio を使用
+        const bgm = new Audio("kwapp://app/Where_the_Willow_Bends.mp3");
+        bgm.loop = true; bgm.volume = vol / 100 * 0.5;
+        bgmFallbackRef.current = bgm;
+        if (vol > 0) bgm.play().catch(() => {});
+        const se = new Audio("kwapp://app/attack.mp3");
+        se.volume = seVol / 100 * 0.85; se.preload = "none";
+        seFallbackRef.current = se;
+      }
+    };
+    document.addEventListener("click",      initAudio, { once: true });
+    document.addEventListener("touchstart", initAudio, { once: true });
+    return () => {
+      document.removeEventListener("click",      initAudio);
+      document.removeEventListener("touchstart", initAudio);
+    };
+  }, []);
+
+  // スリープ/バックグラウンド時に BGM を停止・復帰
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        sendBGM("pause");
+        const fb = bgmFallbackRef.current; if (fb && !fb.paused) fb.pause();
+      } else if (bgmStartedRef.current && bgmVolRef.current > 0) {
+        sendBGM("play");
+        const fb = bgmFallbackRef.current; if (fb && fb.paused) fb.play().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
+  function changeBgmVolume(v) {
+    setBgmVolume(v); bgmVolRef.current = v;
+    sendBGM("volume", v / 100);
+    bgmFbSetVol(v);
+    try { localStorage.setItem("kw-bgm-v", String(v)); } catch {}
+  }
+  function changeSeVolume(v) {
+    setSeVolume(v); seVolRef.current = v;
+    sendSE("volume", v / 100 * 0.85);
+    const se = seFallbackRef.current; if (se) se.volume = v / 100 * 0.85;
+    try { localStorage.setItem("kw-se-v", String(v)); } catch {}
+  }
+
+  function playAttackSound() {
+    if (seVolume === 0) return;
+    if (window.webkit?.messageHandlers?.bgm) {
+      sendSE("play");
+    } else {
+      const snd = seFallbackRef.current; if (!snd) return;
+      snd.currentTime = 0; snd.play().catch(() => {});
+    }
+  }
+
+  useEffect(() => {
+    loadMeta().then(setMeta);
+    loadRun().then((run) => { if (run && run.floor) setSavedRun(run); });
+  }, []);
 
   const armorDef = (st) => Object.values(st.armor).reduce((a, x) => a + (x ? x.def : 0), 0);
   const maxHpOf = (st, m = meta) => BASE_HP + (m?.bonusHp || 0) +
@@ -1098,18 +1277,50 @@ export default function KiriwatariNoMori() {
   }, [!g.floats || g.floats.length === 0]);
 
   /* ---------- ラン開始 ---------- */
-  function startRun() {
-    const eq = starterState(meta);
-    const startFloor = (Math.min(meta.checkpoint, 10) - 1) * 10 + 1;
+  // chapterIdx: 0-based (0=第1章, 1=第2章, ...)
+  function startFromChapter(chapterIdx) {
+    let m = meta;
+    if (chapterIdx === 0) {
+      const hints = {};
+      for (const id of STAGES[0].enemies) {
+        if (!(m.discovered || {})[id]) {
+          const b = ENEMY_BOOK[id];
+          if (b.weak.length > 0) hints[id] = { w: [b.weak[0]], r: [] };
+        }
+      }
+      if (Object.keys(hints).length > 0) {
+        m = { ...m, discovered: { ...hints, ...(m.discovered || {}) } };
+        setMeta(m); saveMeta(m);
+      }
+    }
+    const eq = starterState(m, startWeapon);
+    const startFloor = chapterIdx * 10 + 1;
     const base = {
       screen: "run", floor: startFloor, node: 0, nodes: floorNodes(startFloor), phase: "battle",
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
       ...eq, cds: {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, coach: meta.deaths === 0 && (meta.checkpoint || 1) === 1,
-      stageIntro: stageOf(startFloor),
+      confirm: null, full: false,
+      coach: chapterIdx === 0 && (m.checkpoint || 1) === 1,
+      stageIntro: chapterIdx,
     };
-    base.player.hp = maxHpOf(base);
+    base.player.hp = maxHpOf(base, m);
+    clearRun(); setSavedRun(null);
+    setG(enterNode(base));
+  }
+  // チェックポイント(前回到達章)から続ける
+  function startRun() { startFromChapter((meta.checkpoint || 1) - 1); }
+
+  // タスクキル後の再開: 保存済みフロア状態を復元する
+  function resumeRun(run) {
+    const base = {
+      screen: "run", floor: run.floor, node: 0, nodes: floorNodes(run.floor), phase: "battle",
+      player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
+      cds: run.cds || {}, enemies: [], drops: [], logs: [], floats: [],
+      pending: null, busy: false, bag: false, hitId: null, eventDone: false,
+      confirm: null, full: false, coach: false, stageIntro: null,
+    };
+    clearRun(); setSavedRun(null);
     setG(enterNode(base));
   }
 
@@ -1138,6 +1349,7 @@ export default function KiriwatariNoMori() {
     const nf = s.floor + 1;
     if (nf > 100) return s; // 100層クリアはボス撃破側で処理
     s.floor = nf; s.node = 0; s.nodes = floorNodes(nf);
+    saveRun(nf, s.player, s.weapons, s.armor, s.inv, s.cds); // タスクキル対策: フロア移行時に保存
     if (floorInStage(nf) === 1) {
       s.stageIntro = stageOf(nf); // 新章に入ったらタイトル演出を挟む
       s = pushLog(s, `第${stageOf(nf) + 1}章「${STAGES[stageOf(nf)].name}」に足を踏み入れた。`, true);
@@ -1167,6 +1379,7 @@ export default function KiriwatariNoMori() {
   async function attackWith(weapon, targetId) {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
+    playAttackSound();
     const t = WEAPON_TYPES[weapon.type];
     let s = { ...st0, pending: null, busy: true };
     const enemies = s.enemies.map((e) => ({ ...e }));
@@ -1336,9 +1549,10 @@ export default function KiriwatariNoMori() {
         continue;
       }
       const roll = Math.random();
-      if (roll < 0.40) drops.push(makeConsumable());
-      else if (roll < 0.62) drops.push(makeWeapon(floor));
-      else if (roll < 0.74) drops.push(makeArmor(floor));
+      const wMax = floor <= 10 ? 0.64 : 0.62; // 第1章は武器ドロップ率アップ
+      if (roll < 0.38) drops.push(makeConsumable());
+      else if (roll < wMax) drops.push(makeWeapon(floor));
+      else if (roll < wMax + 0.12) drops.push(makeArmor(floor));
     }
     if (drops.length === 0) drops.push(makeConsumable());
     return drops;
@@ -1358,6 +1572,10 @@ export default function KiriwatariNoMori() {
         const m2 = { ...meta, clears: meta.clears + 1, slots: meta.slots + 1, bestFloor: 100, inherited: keep };
         setMeta(m2); await saveMeta(m2);
         s.phase = "ending";
+        // 初回全章踏破でレビューを促す
+        if (meta.clears === 0) {
+          try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
+        }
       } else {
         // 章クリア: 継承枠+1、次章から再出発できるようになる
         const m2 = {
@@ -1367,6 +1585,10 @@ export default function KiriwatariNoMori() {
         };
         setMeta(m2); await saveMeta(m2);
         s.phase = "clear";
+        // 第2・3章ボス初クリア時にレビューを促す
+        if ((stage === 2 || stage === 3) && (meta.checkpoint || 1) <= stage) {
+          try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
+        }
       }
     }
     setG(s);
@@ -1444,6 +1666,7 @@ export default function KiriwatariNoMori() {
     if (player.hp <= 0) {
       const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, s.floor) };
       setMeta(m2); saveMeta(m2);
+      clearRun(); setSavedRun(null); // 死亡時は再開データを消去
       const stDead = { ...s, enemies, player, cds };
       setG({ ...stDead, busy: false, phase: "dead", pick: recommendPick(stDead, meta.slots) });
       return;
@@ -1641,23 +1864,186 @@ export default function KiriwatariNoMori() {
         <style>{CSS}</style>
         <StageBackdrop floor={1} />
         <div className="kw-vignette" />
+        <button className="kw-btn ghost" style={{ position: "fixed", top: "calc(14px + env(safe-area-inset-top))", right: 16, zIndex: 10, padding: "6px 10px" }}
+          onClick={() => setG((s) => ({ ...s, volumeSettings: true }))}>
+          {bgmVolume === 0 && seVolume === 0 ? <VolumeX size={16} /> : Math.max(bgmVolume, seVolume) < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
+        </button>
         <div className="kw-title">
-          <div className="kw-tsub">全十章 ・ 百層</div>
-          <h1>霧渡りの森</h1>
+          <div className="kw-tsub">装備を集めて、さらなる奥地へ。</div>
+          <h2>ダンジョンローグ</h2>
           <div className="kw-tmeta">
             死は終わりではない。魂に刻んだ武具だけが、次の旅へ受け継がれる。<br />
             森、湿原、遺跡、花の谷、水晶洞、焔、氷、雷、星──そして常夜の根。<br />
-            百層の底で、この森の物語は終わる。
+            百層の底に、何が眠っているのだろうか。
           </div>
-          <button className="kw-btn primary" style={{ marginTop: 8, padding: "13px 46px", fontSize: 15 }} onClick={startRun}>
-            {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章 から 入 る` : "森 へ 入 る"}
-          </button>
+          {(!meta.inherited || meta.inherited.filter((x) => x.kind === "weapon").length === 0) && (
+            <div style={{ width: "100%", maxWidth: 480, marginTop: 6 }}>
+              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".3em", marginBottom: 8, textAlign: "center" }}>はじめの武器を選ぶ</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                {["dagger", "axe", "bow", "staff"].map((type) => {
+                  const t = WEAPON_TYPES[type];
+                  const sel = startWeapon === type;
+                  return (
+                    <button key={type}
+                      className={`kw-panel kw-wcard ${sel ? "selected" : ""}`}
+                      style={{ width: 110, padding: "8px 10px", flex: "0 0 auto" }}
+                      onClick={() => setStartWeapon(type)}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <AssetIcon assetId={t.asset} size={16} color={sel ? "var(--hotaru)" : "var(--mist)"} />
+                        <span className="kw-typechip" style={{ color: sel ? "var(--hotaru)" : undefined }}>{t.dmgType}</span>
+                      </div>
+                      <div className="kw-wname" style={{ fontSize: 12 }}>{t.label}</div>
+                      <div style={{ fontSize: 9.5, color: "var(--mist)", lineHeight: 1.5, marginTop: 2 }}>{t.tags[0]}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {savedRun && (
+            <button className="kw-btn" style={{ marginTop: 6, padding: "10px 28px", fontSize: 13, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+              onClick={() => resumeRun(savedRun)}>
+              前回の冒険を再開（{floorLabel(savedRun.floor)}層）
+            </button>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
+            <button className="kw-btn primary" style={{ padding: "13px 36px", fontSize: 15 }} onClick={startRun}>
+              {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章 から 続 け る` : "森 へ 入 る"}
+            </button>
+            {meta.checkpoint > 1 && (
+              <button className="kw-btn ghost" style={{ padding: "13px 22px", fontSize: 13 }}
+                onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章 を 選 ぶ</button>
+            )}
+          </div>
+          <button className="kw-btn ghost" style={{ marginTop: 4, padding: "8px 28px", fontSize: 12 }}
+            onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊 び 方</button>
           <div className="kw-tmeta" style={{ marginTop: 10, fontSize: 11.5 }}>
             転生 {meta.deaths} 回 ／ 最深 {floorLabel(meta.bestFloor)} ／ 継承枠 {meta.slots}
             {meta.inherited?.length > 0 && <> ／ 継承品 {meta.inherited.length} 点</>}
             {meta.clears > 0 && <> ／ 百層踏破 {meta.clears} 回</>}
           </div>
         </div>
+        {/* 章選択 — 背景が透けて見えるよう半透明 */}
+        {g.chapterSelect && (
+          <div className="kw-overlay" style={{ background: "rgba(6,10,8,.65)", backdropFilter: "none" }}
+            onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ letterSpacing: ".2em" }}>章 を 選 ぶ</h2>
+              <div className="kw-sub">ボスを倒した章の頭から再挑戦できます。継承品はそのまま持ち込まれます。</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 12 }}>
+                {STAGES.map((st, i) => {
+                  const ch = i + 1;
+                  if (ch > meta.checkpoint) return null;
+                  const cleared = ch < meta.checkpoint;
+                  const current = ch === meta.checkpoint;
+                  return (
+                    <button key={i}
+                      style={{
+                        position: "relative", overflow: "hidden", height: 90,
+                        borderRadius: 8, border: current ? "1.5px solid var(--hotaru)" : "1px solid rgba(157,180,166,.18)",
+                        textAlign: "left", cursor: "pointer", padding: 0,
+                      }}
+                      onClick={() => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i); }}>
+                      {/* ステージ背景プレビュー */}
+                      <StageBackdrop floor={i * 10 + 1} preview={true} />
+                      {/* テキスト */}
+                      <div style={{ position: "absolute", inset: 0, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                        <div style={{ fontSize: 9, color: "var(--mist)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)", lineHeight: 1.3 }}>{st.name}</div>
+                        <div style={{ fontSize: 9.5, marginTop: 3, color: cleared ? "#8fd39a" : "var(--hotaru)" }}>
+                          {cleared ? "✓ クリア済み" : "▶ 現在の到達地点"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="kw-divider" />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <button className="kw-btn ghost" style={{ fontSize: 11, color: "var(--mist)", padding: "6px 14px" }}
+                  onClick={() => setG((s) => ({ ...s, chapterSelect: false, confirmReset: true }))}>
+                  第1章から継承品なしでやり直す
+                </button>
+                <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {g.confirmReset && (
+          <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, confirmReset: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ color: "var(--danger)" }}>やり直し確認</h2>
+              <div className="kw-sub">
+                継承品と到達章をリセットして、第1章から再スタートします。<br />
+                転生回数・継承枠・踏破記録は引き継がれます。<br />
+                この操作は元に戻せません。
+              </div>
+              <div className="kw-actions">
+                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                  onClick={() => setG((s) => ({ ...s, confirmReset: false }))}>← キャンセル</button>
+                <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+                  onClick={async () => {
+                    const m2 = { ...meta, checkpoint: 1, inherited: [] };
+                    setMeta(m2); await saveMeta(m2);
+                    setG({ screen: "title" });
+                  }}>第1章からやり直す</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {g.howToPlay && (
+          <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, howToPlay: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 520, textAlign: "left" }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ letterSpacing: ".2em" }}>遊び方</h2>
+              <div className="kw-sub" style={{ fontSize: 13, lineHeight: 2, marginTop: 8 }}>
+                <b style={{ color: "var(--paper)" }}>武器カード</b>をタップして攻撃します。敵が複数いるときは武器を選んだ後に狙う敵を選びます。<br /><br />
+                ダメージに「<b style={{ color: "var(--hotaru)" }}>弱点</b>」と出たらその属性が有効です。敵カードに弱点が記録され、次からの目印になります。<br /><br />
+                <b style={{ color: "var(--paper)" }}>防御</b>ボタンで構えると次の敵の攻撃ダメージが半減します。HPが低い時に使いましょう。<br /><br />
+                <b style={{ color: "var(--paper)" }}>袋</b>ボタンから消耗品の使用・装備の変更ができます。袋が満杯の場合は不要品を「捨てる」で手放せます。<br /><br />
+                倒れても選んだ装備は次の旅へ受け継がれます。章のボスを倒すと、死んでもその章から再開できるようになります。
+              </div>
+              <div className="kw-actions" style={{ justifyContent: "center" }}>
+                <button className="kw-btn primary" style={{ padding: "10px 30px" }}
+                  onClick={() => setG((s) => ({ ...s, howToPlay: false }))}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {g.volumeSettings && (
+          <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ letterSpacing: ".2em" }}>音量設定</h2>
+              <div style={{ marginTop: 20 }}>
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                    <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
+                    <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                      {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
+                    </span>
+                  </div>
+                  <input type="range" min="0" max="100" step="1" className="kw-slider"
+                    defaultValue={bgmVolume} style={{ "--vol": `${bgmVolume}%` }}
+                    onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeBgmVolume(v); }} />
+                </div>
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                    <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
+                    <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                      {seVolume === 0 ? "OFF" : `${seVolume}%`}
+                    </span>
+                  </div>
+                  <input type="range" min="0" max="100" step="1" className="kw-slider"
+                    defaultValue={seVolume} style={{ "--vol": `${seVolume}%` }}
+                    onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeSeVolume(v); }} />
+                </div>
+              </div>
+              <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
+                <button className="kw-btn primary" style={{ padding: "10px 30px" }}
+                  onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1687,82 +2073,95 @@ export default function KiriwatariNoMori() {
             {floorLabel(g.floor)}<span style={{ fontSize: 14, color: "var(--mist)", marginLeft: 8 }}>層</span>
           </div>
           <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-            <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
-              onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="kw-btn ghost" style={{ padding: "4px 10px" }}
+                onClick={() => setG((s) => ({ ...s, volumeSettings: true }))}>
+                {bgmVolume === 0 && seVolume === 0 ? <VolumeX size={14} /> : Math.max(bgmVolume, seVolume) < 50 ? <Volume1 size={14} /> : <Volume2 size={14} />}
+              </button>
+              <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
+                onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
+            </div>
             <div className="kw-progress" style={{ justifyContent: "flex-end" }}>
               {g.nodes.map((n, i) => (
                 <span key={i} className={`kw-node ${i < g.node ? "done" : i === g.node ? "now" : ""}`} title={nodeLabel[n]} />
               ))}
-            </div>
-            <div style={{ fontSize: 10.5, color: "var(--mist)", letterSpacing: ".15em" }}>
-              {nodeLabel[g.nodes[g.node]]} ／ 継承枠 {meta.slots}
             </div>
           </div>
         </div>
 
         {/* フィールド */}
         <div className="kw-field">
-          {g.phase === "battle" && g.enemies.map((e) => (
-            <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} />
-          ))}
+          {g.phase === "battle" && (
+            <div className="kw-field-inner">
+              {g.enemies.map((e) => (
+                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} />
+              ))}
+            </div>
+          )}
 
           {g.phase === "chest" && (
-            <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420 }}>
-              <Package size={44} color="var(--hotaru)" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>苔むした宝箱</div>
-              <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
-                森の誰かが遺していった。良いものが眠っていることが多い。
-              </div>
-              {!g.eventDone
-                ? <button className="kw-btn primary" onClick={openChest}>開ける</button>
-                : <div className="kw-grid" style={{ justifyItems: "center" }}>
-                    {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
-                  </div>}
-              <div style={{ marginTop: 14 }}>
-                <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+            <div className="kw-field-panel">
+              <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420, width: "100%" }}>
+                <Package size={44} color="var(--hotaru)" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
+                <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>苔むした宝箱</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
+                  森の誰かが遺していった。良いものが眠っていることが多い。
+                </div>
+                {!g.eventDone
+                  ? <button className="kw-btn primary" onClick={openChest}>開ける</button>
+                  : <div className="kw-grid" style={{ justifyItems: "center" }}>
+                      {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
+                    </div>}
+                <div style={{ marginTop: 14 }}>
+                  <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+                </div>
               </div>
             </div>
           )}
 
           {g.phase === "spring" && (
-            <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420, position: "relative" }}>
-              {floatsFor("player").map((f) => (
-                <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size }}>{f.text}</div>
-              ))}
-              <Moon size={44} color="#9fd4c9" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>月映しの泉</div>
-              <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
-                水面に月が揺れている。飲めば傷も毒も流れていく。
-              </div>
-              {!g.eventDone
-                ? <button className="kw-btn primary" onClick={drinkSpring}>水を飲む(HP50%回復)</button>
-                : g.drops.length > 0 && (
-                  <div className="kw-grid" style={{ justifyItems: "center" }}>
-                    {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
-                  </div>)}
-              <div style={{ marginTop: 14 }}>
-                <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+            <div className="kw-field-panel">
+              <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420, width: "100%", position: "relative" }}>
+                {floatsFor("player").map((f) => (
+                  <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size }}>{f.text}</div>
+                ))}
+                <Moon size={44} color="#9fd4c9" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
+                <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>月映しの泉</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
+                  水面に月が揺れている。飲めば傷も毒も流れていく。
+                </div>
+                {!g.eventDone
+                  ? <button className="kw-btn primary" onClick={drinkSpring}>水を飲む(HP50%回復)</button>
+                  : g.drops.length > 0 && (
+                    <div className="kw-grid" style={{ justifyItems: "center" }}>
+                      {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
+                    </div>)}
+                <div style={{ marginTop: 14 }}>
+                  <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+                </div>
               </div>
             </div>
           )}
 
           {g.phase === "reward" && (
-            <div className="kw-panel" style={{ padding: "26px 30px", textAlign: "center", maxWidth: 560 }}>
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>勝 利</div>
-              <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 14px" }}>
-                {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{INV_CAP}</span></> : "今回は何も落ちていないようだ。"}
-              </div>
-              {g.drops.length > 0 && (
-                <div className="kw-grid">
-                  {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
+            <div className="kw-field-panel">
+              <div className="kw-panel" style={{ padding: "26px 30px", textAlign: "center", maxWidth: 560, width: "100%" }}>
+                <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>勝 利</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 14px" }}>
+                  {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{INV_CAP}</span></> : "今回は何も落ちていないようだ。"}
                 </div>
-              )}
-              {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
-              <div className="kw-actions" style={{ justifyContent: "center" }}>
-                {g.drops.length > 1 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
-                <button className="kw-btn primary" onClick={tryProceed}>
-                  {g.node + 1 < g.nodes.length ? "先へ進む →" : `${floorLabel(g.floor + 1)} 層へ降りる ↓`}
-                </button>
+                {g.drops.length > 0 && (
+                  <div className="kw-grid">
+                    {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
+                  </div>
+                )}
+                {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
+                <div className="kw-actions" style={{ justifyContent: "center" }}>
+                  {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
+                  <button className="kw-btn primary" onClick={tryProceed}>
+                    {g.node + 1 < g.nodes.length ? "先へ進む →" : `${floorLabel(g.floor + 1)} 層へ降りる ↓`}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1777,7 +2176,6 @@ export default function KiriwatariNoMori() {
           <div className={`kw-mybar ${g.player.hp / mx < 0.25 ? "low" : ""}`}><i style={{ width: `${(g.player.hp / mx) * 100}%` }} /></div>
           <div className="kw-num">{g.player.hp} / {mx}</div>
           <div className="kw-status">
-            <span className="kw-tag" style={{ color: "var(--mist)", borderColor: "rgba(157,180,166,.3)" }}>防 {def}</span>
             {g.player.atkUp > 0 && <span className="kw-tag buff">攻+40% {g.player.atkUp}T</span>}
             {g.player.poison > 0 && <span className="kw-tag bad">毒 {g.player.poison}T</span>}
             {g.player.guard && <span className="kw-tag buff">防御中</span>}
@@ -1796,15 +2194,15 @@ export default function KiriwatariNoMori() {
         <div className="kw-subbar">
           {g.phase === "battle" && (
             <>
-              <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御</button>
+              <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御<span style={{ fontSize: 9, color: "var(--mist)", marginLeft: 3 }}>被ダメ半減</span></button>
               <button className="kw-btn ghost" disabled={g.busy} onClick={() => setG((s) => ({ ...s, bag: true }))}
                 style={g.inv.length >= INV_CAP ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
                 袋 ({g.inv.length}/{INV_CAP}){g.inv.length >= INV_CAP ? " 満杯" : ""}
               </button>
               {g.pending && (
                 <>
-                  <span className="kw-hint" style={{ fontSize: 12, color: "var(--hotaru)", letterSpacing: ".05em" }}>
-                    → 狙う敵を選ぶ({WEAPON_TYPES[g.pending.type].desc})
+                  <span className="kw-panel kw-hint" style={{ fontSize: 12, color: "var(--hotaru)", letterSpacing: ".05em", padding: "5px 10px", border: "1px solid var(--hotaru-dim)", animation: "kwFade .3s ease" }}>
+                    ↑ 狙う敵を選んでください
                   </span>
                   <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10, flexShrink: 0 }}
                     onClick={() => setG((s) => ({ ...s, pending: null }))}>やめる</button>
@@ -1840,7 +2238,7 @@ export default function KiriwatariNoMori() {
                 <div className="kw-sub">
                   {g.phase === "battle"
                     ? "戦闘中は消耗品のみ使えます(1ターン消費)。"
-                    : "消耗品を使う・武具を装備する・不要品を長押しではなく「捨てる」で手放せます。"}
+                    : "消耗品を使う・武具を装備する・不要品は「捨てる」ボタンで手放せます。"}
                 </div>
               </div>
               <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={() => setG((s) => ({ ...s, bag: false }))}><X size={14} /></button>
@@ -1874,10 +2272,10 @@ export default function KiriwatariNoMori() {
                 }
                 if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
-                  <div key={it.id} style={{ position: "relative" }}>
+                  <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <ItemCell item={it} actionLabel="装備する" onClick={() => equipItem(it)} hint={hintFor(it)} />
-                    <button className="kw-btn ghost" style={{ position: "absolute", right: 6, bottom: 6, padding: "2px 8px", fontSize: 10 }}
-                      onClick={() => discardItem(it)}>捨てる</button>
+                    <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
+                      onClick={(e) => { e.stopPropagation(); discardItem(it); }}>捨てる</button>
                   </div>
                 );
               })}
@@ -1986,9 +2384,10 @@ export default function KiriwatariNoMori() {
           <div className="kw-panel kw-sheet" style={{ maxWidth: 520, textAlign: "left" }}>
             <h2 style={{ letterSpacing: ".2em" }}>森へようこそ</h2>
             <div className="kw-sub" style={{ fontSize: 13, lineHeight: 2, marginTop: 8 }}>
-              下の<b style={{ color: "var(--paper)" }}>武器</b>をタップして攻撃します。敵が複数いるときは、続けて狙う相手を選びます。<br /><br />
-              与えたダメージに「<b style={{ color: "var(--hotaru)" }}>弱点</b>」と出たらその属性が有効。敵カードにも弱点が記録され、次からの目印になります。<br /><br />
-              倒れても、選んだ装備は次の生へ受け継がれます(最も強い武器は必ず引き継がれます)。恐れず挑みましょう。
+              下の<b style={{ color: "var(--paper)" }}>武器カード</b>をタップして攻撃します。全体攻撃(本・楽器)はすぐ発動、単体攻撃は続けて狙う敵をタップします。<br /><br />
+              武器には <b style={{ color: "var(--paper)" }}>斬・突・打・魔・音</b> の属性があります。<b style={{ color: "var(--hotaru)" }}>「弱点をつける!」</b> が光る敵には1.6倍のダメージ、耐性持ちには0.5倍になります。手こずる敵が出たら、別の属性の武器を探しましょう。<br /><br />
+              <b style={{ color: "var(--paper)" }}>防御</b>ボタンで構えると次の敵の攻撃ダメージが半減します。<b style={{ color: "var(--paper)" }}>袋</b>から回復アイテムも使えます(1ターン消費)。<br /><br />
+              倒れても選んだ装備は次の生へ受け継がれ、到達済みの章から再開できます。恐れず挑みましょう。
             </div>
             <div className="kw-actions" style={{ justifyContent: "center" }}>
               <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={() => setG((s) => ({ ...s, coach: false }))}>はじめる</button>
@@ -2018,7 +2417,7 @@ export default function KiriwatariNoMori() {
                 転生した回数 …… {meta.deaths} 回<br />
                 魂の継承枠 …… {meta.slots}<br />
                 百層踏破 …… {meta.clears} 回<br /><br />
-                <h3>霧渡りの森</h3>
+                <h3>ダンジョンローグ</h3>
                 完<br /><br />
                 ──蛍はまだ、森のどこかで灯っている。<br />
                 (継承品を携えて、もう一度最初から旅ができます)
@@ -2047,7 +2446,7 @@ export default function KiriwatariNoMori() {
               {STAGES[g.stageIntro].name}
             </h1>
             <div style={{ color: "var(--paper-dim)", fontSize: 12.5, lineHeight: 2, marginTop: 14 }}>
-              霧渡りの森 ・ 第{g.stageIntro + 1}章<br />
+              第{g.stageIntro + 1}章<br />
               {g.stageIntro === 0
                 ? "旅の始まり。灯りを頼りに、霧の奥へ。"
                 : `${STAGES[g.stageIntro - 1].name}を越え、新たな地へ足を踏み入れる。`}
@@ -2072,7 +2471,42 @@ export default function KiriwatariNoMori() {
             </div>
             <div className="kw-actions">
               <button className="kw-btn ghost" style={{ marginRight: "auto" }} onClick={() => setG((s) => ({ ...s, confirm: null }))}>← 続ける</button>
-              <button className="kw-btn primary" onClick={() => setG({ screen: "title" })}>タイトルへ戻る</button>
+              <button className="kw-btn primary" onClick={() => { clearRun(); setSavedRun(null); setG({ screen: "title" }); }}>タイトルへ戻る</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {g.volumeSettings && (
+        <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ letterSpacing: ".2em" }}>音量設定</h2>
+            <div style={{ marginTop: 20 }}>
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
+                  <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                    {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
+                  </span>
+                </div>
+                <input type="range" min="0" max="100" step="1" className="kw-slider"
+                  defaultValue={bgmVolume} style={{ "--vol": `${bgmVolume}%` }}
+                  onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeBgmVolume(v); }} />
+              </div>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
+                  <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                    {seVolume === 0 ? "OFF" : `${seVolume}%`}
+                  </span>
+                </div>
+                <input type="range" min="0" max="100" step="1" className="kw-slider"
+                  defaultValue={seVolume} style={{ "--vol": `${seVolume}%` }}
+                  onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeSeVolume(v); }} />
+              </div>
+            </div>
+            <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
+              <button className="kw-btn primary" style={{ padding: "10px 30px" }}
+                onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>閉じる</button>
             </div>
           </div>
         </div>

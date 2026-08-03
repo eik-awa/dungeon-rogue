@@ -14,6 +14,8 @@
 
 import SwiftUI
 import WebKit
+import StoreKit
+import AVFoundation
 
 /// JSX ゲームを表示する WKWebView のラッパ。
 struct GameWebView: UIViewRepresentable {
@@ -21,11 +23,20 @@ struct GameWebView: UIViewRepresentable {
     static let scheme = "kwapp"
     static let startURL = URL(string: "\(scheme)://app/index.html")!
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.setURLSchemeHandler(GameSchemeHandler(), forURLScheme: Self.scheme)
+
+        // JS → Swift メッセージハンドラ (retain cycle 回避のためプロキシ経由)
+        let proxy = WeakScriptMessageProxy(target: context.coordinator)
+        config.userContentController.add(proxy, name: "requestReview")
+        config.userContentController.add(proxy, name: "bgm")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -39,6 +50,114 @@ struct GameWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+    /// JS メッセージを処理する Coordinator。BGM は AVAudioPlayer でネイティブ再生。
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        let bgm = BGMController()
+
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            switch message.name {
+            case "requestReview":
+                DispatchQueue.main.async {
+                    guard let scene = UIApplication.shared.connectedScenes
+                        .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+                    else { return }
+                    SKStoreReviewController.requestReview(in: scene)
+                }
+            case "bgm":
+                bgm.handle(message)
+            default:
+                break
+            }
+        }
+    }
+}
+
+/// AVAudioPlayer で BGM + SE をネイティブ再生する。
+/// .ambient + .mixWithOthers により Apple Music と共存できる。
+/// JS Audio は一切使わないことで WebKit による AVAudioSession 上書きを防ぐ。
+final class BGMController: NSObject {
+    private var bgmPlayer: AVAudioPlayer?
+    private var sePlayer:  AVAudioPlayer?
+    private var bgmStarted = false
+
+    override init() {
+        super.init()
+        try? AVAudioSession.sharedInstance().setCategory(
+            .ambient, mode: .default, options: [.mixWithOthers])
+        if let url = Bundle.main.url(forResource: "Where_the_Willow_Bends", withExtension: "mp3") {
+            bgmPlayer = try? AVAudioPlayer(contentsOf: url)
+            bgmPlayer?.numberOfLoops = -1
+            bgmPlayer?.volume = 0.35
+            bgmPlayer?.prepareToPlay()
+        }
+        if let url = Bundle.main.url(forResource: "attack", withExtension: "mp3") {
+            sePlayer = try? AVAudioPlayer(contentsOf: url)
+            sePlayer?.volume = 0.68
+            sePlayer?.prepareToPlay()
+        }
+    }
+
+    func handle(_ message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let action = body["a"] as? String else { return }
+        let channel = body["ch"] as? String ?? "bgm"
+        switch channel {
+        case "se":  handleSE(action: action, body: body)
+        default:    handleBGM(action: action, body: body)
+        }
+    }
+
+    private func handleBGM(action: String, body: [String: Any]) {
+        switch action {
+        case "play":
+            bgmStarted = true
+            let v = (body["v"] as? Double).map { Float($0) } ?? bgmPlayer?.volume ?? 0.35
+            bgmPlayer?.volume = v
+            if !(bgmPlayer?.isPlaying ?? false) {
+                try? AVAudioSession.sharedInstance().setActive(true)
+                bgmPlayer?.prepareToPlay()
+                bgmPlayer?.play()
+            }
+        case "pause":
+            bgmPlayer?.pause()
+        case "volume":
+            guard let v = (body["v"] as? Double).map({ Float($0) }) else { return }
+            bgmPlayer?.volume = v
+            if bgmStarted {
+                if v > 0 && !(bgmPlayer?.isPlaying ?? false) { bgmPlayer?.play() }
+                else if v <= 0 { bgmPlayer?.pause() }
+            }
+        default: break
+        }
+    }
+
+    private func handleSE(action: String, body: [String: Any]) {
+        switch action {
+        case "play":
+            sePlayer?.currentTime = 0
+            sePlayer?.play()
+        case "volume":
+            guard let v = (body["v"] as? Double).map({ Float($0) }) else { return }
+            sePlayer?.volume = v
+        default: break
+        }
+    }
+}
+
+/// WKUserContentController との強参照ループを断ち切るプロキシ。
+private final class WeakScriptMessageProxy: NSObject, WKScriptMessageHandler {
+    private weak var target: WKScriptMessageHandler?
+
+    init(target: WKScriptMessageHandler) {
+        self.target = target
+    }
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
+    }
 }
 
 /// kwapp:// のリクエストをバンドル内リソースへマッピングして配信する。
@@ -91,6 +210,9 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
         case "json": return "application/json; charset=utf-8"
         case "png": return "image/png"
         case "jpg", "jpeg": return "image/jpeg"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "wav": return "audio/wav"
         default: return "application/octet-stream"
         }
     }

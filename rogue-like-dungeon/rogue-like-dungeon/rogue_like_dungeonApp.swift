@@ -8,10 +8,18 @@
 import SwiftUI
 import GoogleMobileAds
 import AppTrackingTransparency
+import AVFoundation
 
 @main
 struct rogue_like_dungeonApp: App {
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // カテゴリのみ設定する。setActive(true) は省略し、
+        // 実際に音声再生するまで Apple Music を中断しない。
+        try? AVAudioSession.sharedInstance().setCategory(
+            .ambient, mode: .default, options: [.mixWithOthers])
+    }
     // ATT の要求は一度だけ行う。
     @State private var didRequestTracking = false
 
