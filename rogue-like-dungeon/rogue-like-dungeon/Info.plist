@@ -5,6 +5,11 @@
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-1615601076718034~3190216216</string>
 	<key>NSUserTrackingUsageDescription</key>
-	<string>あなたの興味に合った広告を表示するために、この識別子を使用します。許可すると、アプリ内に表示される広告があなたに関連したものになります。</string>
+	<string>広告のカスタマイズと効果測定のため、端末の識別子を利用することがあります。</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 </dict>
 </plist>

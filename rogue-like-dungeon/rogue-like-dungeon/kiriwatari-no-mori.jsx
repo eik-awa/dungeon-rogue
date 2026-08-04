@@ -17,6 +17,7 @@ import {
   ChevronRight, X, Plus, Wind, CircleDot,
   Cloud, Mountain, Eye, Bone, Snowflake, Sprout, Waves, Feather, Shell, Sun,
   Volume1, Volume2, VolumeX,
+  Settings, ExternalLink,
 } from "lucide-react";
 
 /* ------------------------------------------------------------
@@ -672,9 +673,13 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 
 /* --- ログ --- */
 .kw-log { margin-top: 10px; padding: 9px 14px; font-size: 12px; color: var(--paper-dim);
-  min-height: 58px; max-height: 58px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; line-height: 1.7; }
+  height: 79px; flex-shrink: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; line-height: 1.7; box-sizing: border-box; }
 .kw-log b { color: var(--hotaru); font-weight: 700; }
 .kw-log .new { color: var(--paper); }
+.kw-log::-webkit-scrollbar { width: 3px; }
+.kw-log::-webkit-scrollbar-track { background: transparent; }
+.kw-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
 
 /* --- サブバー(所持品など) --- 高さ固定でボタン位置がぶれないようにする */
 .kw-subbar { display: flex; gap: 8px; margin-top: 10px; flex-wrap: nowrap; align-items: center;
@@ -1133,10 +1138,71 @@ function floorNodes(floor) {
   return ["battle", mid, "battle"];
 }
 
+/* ---- 設定オーバーレイ (タイトル・ラン両画面で共用) ---- */
+function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, changeSeVolume,
+                           sleepDisabled, toggleSleep, cssClass }) {
+  const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center",
+                     padding: "8px 0", fontSize: 12, color: "var(--mist)", borderBottom: "1px solid rgba(157,180,166,.08)" };
+  const sectionLabel = { fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 10, marginTop: 4 };
+
+  return (
+    <div className={`kw-overlay ${cssClass || ""}`} onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+        <h2 style={{ letterSpacing: ".2em" }}>設定</h2>
+
+        {/* 音声 */}
+        <div style={{ marginTop: 18 }}>
+          <div style={sectionLabel}>音声</div>
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+              <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
+              <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
+              </span>
+            </div>
+            <input type="range" min="0" max="100" step="1" className="kw-slider"
+              defaultValue={bgmVolume} style={{ "--vol": `${bgmVolume}%` }}
+              onChange={e => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeBgmVolume(v); }} />
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+              <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
+              <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
+                {seVolume === 0 ? "OFF" : `${seVolume}%`}
+              </span>
+            </div>
+            <input type="range" min="0" max="100" step="1" className="kw-slider"
+              defaultValue={seVolume} style={{ "--vol": `${seVolume}%` }}
+              onChange={e => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeSeVolume(v); }} />
+          </div>
+        </div>
+
+        {/* 表示 */}
+        <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
+          <div style={sectionLabel}>表示</div>
+          <div style={rowStyle}>
+            <span style={{ letterSpacing: ".05em" }}>画面スリープ防止</span>
+            <button className={`kw-btn ${sleepDisabled ? "primary" : "ghost"}`}
+              style={{ padding: "4px 14px", fontSize: 11, minWidth: 44 }}
+              onClick={toggleSleep}>
+              {sleepDisabled ? "ON" : "OFF"}
+            </button>
+          </div>
+        </div>
+
+        <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
+          <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function KiriwatariNoMori() {
   const [meta, setMeta] = useState(null);
   const [g, setG] = useState({ screen: "title" });
   const gRef = useRef(g); gRef.current = g;
+  const logRef = useRef(null);
 
   // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
   // JS Audio は一切使わない。WebKit が AVAudioSession を .playback に上書きするのを防ぎ
@@ -1155,8 +1221,32 @@ export default function KiriwatariNoMori() {
   });
   const [savedRun, setSavedRun] = useState(null);
 
+  const [sleepDisabled, setSleepDisabled] = useState(() => {
+    try { return localStorage.getItem("kw-sleep") !== "0"; } catch { return true; }
+  });
+
   useEffect(() => { bgmVolRef.current = bgmVolume; }, [bgmVolume]);
   useEffect(() => { seVolRef.current  = seVolume;  }, [seVolume]);
+
+  // 初回レンダリング完了を Swift に通知してスプラッシュ画面を消す + 起動時設定を復元
+  useEffect(() => {
+    try { window.webkit?.messageHandlers?.appReady?.postMessage({}); } catch {}
+    try {
+      const sl = localStorage.getItem("kw-sleep") !== "0";
+      window.webkit?.messageHandlers?.settings?.postMessage({ sleep: sl });
+    } catch {}
+  }, []);
+
+  const openURL = (url) => {
+    try { window.webkit?.messageHandlers?.openURL?.postMessage({ url }); } catch {}
+  };
+
+  function toggleSleep() {
+    const next = !sleepDisabled;
+    setSleepDisabled(next);
+    try { localStorage.setItem("kw-sleep", next ? "1" : "0"); } catch {}
+    try { window.webkit?.messageHandlers?.settings?.postMessage({ sleep: next }); } catch {}
+  }
 
   // ネイティブハンドラへ BGM メッセージを送信
   const sendBGM = (action, volume) => {
@@ -1179,7 +1269,8 @@ export default function KiriwatariNoMori() {
     else if (v <= 0 && !fb.paused) fb.pause();
   };
 
-  // 初回タップで音声を起動。ネイティブが使えれば Swift 側に委譲し JS Audio は触らない。
+  // 音声起動。ネイティブ WKWebView では AVAudioPlayer に user gesture 制約がないので即時起動。
+  // ブラウザ等のフォールバック環境のみ初回タップを待つ。
   useEffect(() => {
     const initAudio = () => {
       if (bgmStartedRef.current) return;
@@ -1187,11 +1278,9 @@ export default function KiriwatariNoMori() {
       const vol   = bgmVolRef.current;
       const seVol = seVolRef.current;
       if (window.webkit?.messageHandlers?.bgm) {
-        // ネイティブパス: BGM 開始 + SE 初期音量を通知
         if (vol > 0) sendBGM("play", vol / 100);
         sendSE("volume", seVol / 100 * 0.85);
       } else {
-        // フォールバック (ブラウザ等): JS Audio を使用
         const bgm = new Audio("kwapp://app/Where_the_Willow_Bends.mp3");
         bgm.loop = true; bgm.volume = vol / 100 * 0.5;
         bgmFallbackRef.current = bgm;
@@ -1201,12 +1290,19 @@ export default function KiriwatariNoMori() {
         seFallbackRef.current = se;
       }
     };
-    document.addEventListener("click",      initAudio, { once: true });
-    document.addEventListener("touchstart", initAudio, { once: true });
-    return () => {
-      document.removeEventListener("click",      initAudio);
-      document.removeEventListener("touchstart", initAudio);
-    };
+
+    if (window.webkit?.messageHandlers?.bgm) {
+      // ネイティブ: 直接起動
+      initAudio();
+    } else {
+      // ブラウザ: 初回タップ後に起動
+      document.addEventListener("click",      initAudio, { once: true });
+      document.addEventListener("touchstart", initAudio, { once: true });
+      return () => {
+        document.removeEventListener("click",      initAudio);
+        document.removeEventListener("touchstart", initAudio);
+      };
+    }
   }, []);
 
   // スリープ/バックグラウンド時に BGM を停止・復帰
@@ -1223,6 +1319,11 @@ export default function KiriwatariNoMori() {
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
+
+  // 新しいログが追加されたら自動で末尾へスクロール
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [g.logs]);
 
   function changeBgmVolume(v) {
     setBgmVolume(v); bgmVolRef.current = v;
@@ -1257,7 +1358,7 @@ export default function KiriwatariNoMori() {
     Object.values(st.armor).reduce((a, x) => a + (x ? x.hp : 0), 0);
 
   const pushLog = (st, text, strong = false) =>
-    ({ ...st, logs: [...st.logs.slice(-7), { text, strong, k: uid() }] });
+    ({ ...st, logs: [...st.logs.slice(-29), { text, strong, k: uid() }] });
 
   const addFloat = (st, targetId, text, color, size = 20) =>
     ({ ...st, floats: [...st.floats, { key: uid(), targetId, text, color, size, t: Date.now() }] });
@@ -1328,6 +1429,19 @@ export default function KiriwatariNoMori() {
     const kind = st.nodes[st.node];
     let s = { ...st, pending: null, drops: [], eventDone: false };
     if (kind === "battle" || kind === "boss") {
+      // 武器スロットが全空なら袋から最強武器を自動装備。袋にもなければ応急の短剣を生成。
+      if (!s.weapons.some(Boolean)) {
+        const inBag = s.inv.filter((x) => x.kind === "weapon");
+        if (inBag.length > 0) {
+          const best = inBag.reduce((a, b) => (b.atk > a.atk ? b : a));
+          s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? best : null)), inv: s.inv.filter((x) => x.id !== best.id) };
+          s = pushLog(s, `手に武器がない……${best.name}を袋から取り出した。`);
+        } else {
+          const fallback = makeWeapon(Math.max(1, s.floor - 2), { type: "dagger", rarity: "common" });
+          s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? fallback : null)) };
+          s = pushLog(s, "折れかけた短剣が転がっていた。拾い上げて握りしめる……", true);
+        }
+      }
       s.phase = "battle";
       s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor);
       s.cds = {};
@@ -1865,8 +1979,8 @@ export default function KiriwatariNoMori() {
         <StageBackdrop floor={1} />
         <div className="kw-vignette" />
         <button className="kw-btn ghost" style={{ position: "fixed", top: "calc(14px + env(safe-area-inset-top))", right: 16, zIndex: 10, padding: "6px 10px" }}
-          onClick={() => setG((s) => ({ ...s, volumeSettings: true }))}>
-          {bgmVolume === 0 && seVolume === 0 ? <VolumeX size={16} /> : Math.max(bgmVolume, seVolume) < 50 ? <Volume1 size={16} /> : <Volume2 size={16} />}
+          onClick={() => setG((s) => ({ ...s, settingsOpen: true }))}>
+          <Settings size={16} />
         </button>
         <div className="kw-title">
           <div className="kw-tsub">装備を集めて、さらなる奥地へ。</div>
@@ -1921,6 +2035,16 @@ export default function KiriwatariNoMori() {
             転生 {meta.deaths} 回 ／ 最深 {floorLabel(meta.bestFloor)} ／ 継承枠 {meta.slots}
             {meta.inherited?.length > 0 && <> ／ 継承品 {meta.inherited.length} 点</>}
             {meta.clears > 0 && <> ／ 百層踏破 {meta.clears} 回</>}
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
+            <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
+              onClick={() => { try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {} }}>
+              ★ レビューする
+            </button>
+            <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
+              onClick={() => openURL("https://apps.apple.com/gm/developer/eiki-ogawa/id1701253076")}>
+              他のアプリも見る
+            </button>
           </div>
         </div>
         {/* 章選択 — 背景が透けて見えるよう半透明 */}
@@ -2009,40 +2133,14 @@ export default function KiriwatariNoMori() {
             </div>
           </div>
         )}
-        {g.volumeSettings && (
-          <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>
-            <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-              <h2 style={{ letterSpacing: ".2em" }}>音量設定</h2>
-              <div style={{ marginTop: 20 }}>
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                    <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
-                    <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
-                      {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
-                    </span>
-                  </div>
-                  <input type="range" min="0" max="100" step="1" className="kw-slider"
-                    defaultValue={bgmVolume} style={{ "--vol": `${bgmVolume}%` }}
-                    onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeBgmVolume(v); }} />
-                </div>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                    <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
-                    <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
-                      {seVolume === 0 ? "OFF" : `${seVolume}%`}
-                    </span>
-                  </div>
-                  <input type="range" min="0" max="100" step="1" className="kw-slider"
-                    defaultValue={seVolume} style={{ "--vol": `${seVolume}%` }}
-                    onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeSeVolume(v); }} />
-                </div>
-              </div>
-              <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
-                <button className="kw-btn primary" style={{ padding: "10px 30px" }}
-                  onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>閉じる</button>
-              </div>
-            </div>
-          </div>
+        {g.settingsOpen && (
+          <SettingsOverlay
+            onClose={() => setG((s) => ({ ...s, settingsOpen: false }))}
+            bgmVolume={bgmVolume} seVolume={seVolume}
+            changeBgmVolume={changeBgmVolume} changeSeVolume={changeSeVolume}
+            sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
+            cssClass=""
+          />
         )}
       </div>
     );
@@ -2075,8 +2173,8 @@ export default function KiriwatariNoMori() {
           <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
             <div style={{ display: "flex", gap: 6 }}>
               <button className="kw-btn ghost" style={{ padding: "4px 10px" }}
-                onClick={() => setG((s) => ({ ...s, volumeSettings: true }))}>
-                {bgmVolume === 0 && seVolume === 0 ? <VolumeX size={14} /> : Math.max(bgmVolume, seVolume) < 50 ? <Volume1 size={14} /> : <Volume2 size={14} />}
+                onClick={() => setG((s) => ({ ...s, settingsOpen: true }))}>
+                <Settings size={14} />
               </button>
               <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
                 onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
@@ -2190,6 +2288,13 @@ export default function KiriwatariNoMori() {
           ))}
         </div>
 
+        {/* 武器スロットが全空 + 袋に武器あり → 装備を促すバナー */}
+        {g.phase === "battle" && !g.weapons.some(Boolean) && g.inv.some((x) => x.kind === "weapon") && (
+          <div className="kw-notice" style={{ margin: "0 12px" }}>
+            武器がありません。「袋」を開けて武器を装備してください。
+          </div>
+        )}
+
         {/* 行動サブバー */}
         <div className="kw-subbar">
           {g.phase === "battle" && (
@@ -2219,8 +2324,8 @@ export default function KiriwatariNoMori() {
         </div>
 
         {/* ログ */}
-        <div className="kw-panel kw-log">
-          {g.logs.slice(-3).map((l, i, arr) => (
+        <div className="kw-panel kw-log" ref={logRef}>
+          {g.logs.map((l, i, arr) => (
             <div key={l.k} className={i === arr.length - 1 ? "new" : ""}>
               {l.strong ? <b>{l.text}</b> : l.text}
             </div>
@@ -2301,6 +2406,13 @@ export default function KiriwatariNoMori() {
                   actionLabel={g.pick.includes(it.id) ? "✓ 持っていく" : "タップで選ぶ"} />
               ))}
             </div>
+            {/* 武器を選んでいない場合の自動継承注記 */}
+            {allOwned(g).some((x) => x.kind === "weapon") &&
+              !g.pick.some((id) => allOwned(g).find((x) => x.id === id)?.kind === "weapon") && (
+              <div className="kw-notice" style={{ borderColor: "rgba(255,255,255,.12)", color: "var(--mist)" }}>
+                武器を選んでいません。転生すると最も強い武器が自動で引き継がれます。
+              </div>
+            )}
             <div className="kw-actions">
               <div style={{ alignSelf: "center", fontSize: 12, color: g.pick.length >= meta.slots ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
                 選択 {g.pick.length} / {meta.slots}
@@ -2476,40 +2588,14 @@ export default function KiriwatariNoMori() {
           </div>
         </div>
       )}
-      {g.volumeSettings && (
-        <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>
-          <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ letterSpacing: ".2em" }}>音量設定</h2>
-            <div style={{ marginTop: 20 }}>
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
-                  <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
-                    {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
-                  </span>
-                </div>
-                <input type="range" min="0" max="100" step="1" className="kw-slider"
-                  defaultValue={bgmVolume} style={{ "--vol": `${bgmVolume}%` }}
-                  onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeBgmVolume(v); }} />
-              </div>
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-                  <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
-                  <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
-                    {seVolume === 0 ? "OFF" : `${seVolume}%`}
-                  </span>
-                </div>
-                <input type="range" min="0" max="100" step="1" className="kw-slider"
-                  defaultValue={seVolume} style={{ "--vol": `${seVolume}%` }}
-                  onChange={(e) => { const v = parseInt(e.target.value); e.target.style.setProperty("--vol", `${v}%`); changeSeVolume(v); }} />
-              </div>
-            </div>
-            <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
-              <button className="kw-btn primary" style={{ padding: "10px 30px" }}
-                onClick={() => setG((s) => ({ ...s, volumeSettings: false }))}>閉じる</button>
-            </div>
-          </div>
-        </div>
+      {g.settingsOpen && (
+        <SettingsOverlay
+          onClose={() => setG((s) => ({ ...s, settingsOpen: false }))}
+          bgmVolume={bgmVolume} seVolume={seVolume}
+          changeBgmVolume={changeBgmVolume} changeSeVolume={changeSeVolume}
+          sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
+          cssClass="top"
+        />
       )}
     </div>
   );

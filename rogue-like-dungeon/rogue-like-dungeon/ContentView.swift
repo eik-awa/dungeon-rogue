@@ -8,20 +8,102 @@
 import SwiftUI
 
 struct ContentView: View {
-    // AdMob バナー広告ユニット ID
     private let adUnitID = "ca-app-pub-1615601076718034/7651406644"
+    @State private var gameReady = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        VStack(spacing: 0) {
-            GameWebView()
-            // 常に最下部に配置する広告(セーフエリア内=ホームインジケータの上)
-            AdBannerView(adUnitID: adUnitID)
-                .frame(height: 50)
+        ZStack {
+            VStack(spacing: 0) {
+                GameWebView(onReady: { gameReady = true })
+                AdBannerView(adUnitID: adUnitID)
+                    .frame(height: 50)
+            }
+            .background(Color(red: 0x0a / 255, green: 0x12 / 255, blue: 0x0e / 255))
+            .ignoresSafeArea(.container, edges: .top)
+
+            if !gameReady {
+                SplashView()
+                    .transition(.opacity)
+                    .ignoresSafeArea()
+            }
+
+            // アプリスイッチャーのスクリーンショットにゲーム画面を映さない
+            if scenePhase != .active {
+                Color(red: 10 / 255, green: 18 / 255, blue: 14 / 255)
+                    .ignoresSafeArea()
+            }
         }
-        .background(Color(red: 0x0a / 255, green: 0x12 / 255, blue: 0x0e / 255))
-        // 上部(Dynamic Island 側)まで背景を伸ばす。UI 自体は CSS の
-        // env(safe-area-inset-top) で内側に余白を取るため見切れない。
-        .ignoresSafeArea(.container, edges: .top)
+        .animation(.easeOut(duration: 0.6), value: gameReady)
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            gameReady = true
+        }
+    }
+}
+
+// MARK: - Splash Screen
+
+struct SplashView: View {
+    var body: some View {
+        ZStack {
+            Color(red: 10 / 255, green: 18 / 255, blue: 14 / 255)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                if let image = Bundle.main.appIcon {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 110, height: 110)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .shadow(color: .black.opacity(0.6), radius: 24)
+                } else {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color(red: 0.08, green: 0.14, blue: 0.11))
+                        .frame(width: 110, height: 110)
+                }
+
+                VStack(spacing: 4) {
+                    Text("ダンジョンローグ")
+                        .font(.custom("HiraginoMincho-W6", size: 22).weight(.bold))
+                        .foregroundColor(Color(red: 0.91, green: 0.71, blue: 0.29))
+                        .shadow(color: Color(red: 0.91, green: 0.71, blue: 0.29).opacity(0.4), radius: 8)
+                }
+
+                ProgressView()
+                    .tint(Color(red: 0.4, green: 0.76, blue: 0.56))
+                    .scaleEffect(1.3)
+            }
+        }
+    }
+}
+
+// MARK: - Bundle Extension
+
+private extension Bundle {
+    /// アプリアイコンを取得する。appiconset は UIImage(named:) で直接取れないケースがあるため
+    /// Info.plist の CFBundleIcons も辿って複数の方法でフォールバックする。
+    var appIcon: UIImage? {
+        // iOS 15+ では appiconset も UIImage(named:) で取得できる
+        if let img = UIImage(named: "AppIcon") { return img }
+
+        guard let icons = infoDictionary?["CFBundleIcons"] as? [String: Any],
+              let primary = icons["CFBundlePrimaryIcon"] as? [String: Any] else { return nil }
+
+        // Asset Catalog 方式: CFBundleIconName でアセット名を引く
+        if let name = primary["CFBundleIconName"] as? String,
+           let img = UIImage(named: name) { return img }
+
+        // 旧来方式: CFBundleIconFiles のファイル名リスト
+        if let files = primary["CFBundleIconFiles"] as? [String] {
+            return files.reversed().compactMap { UIImage(named: $0) }.first
+        }
+
+        return nil
     }
 }
 

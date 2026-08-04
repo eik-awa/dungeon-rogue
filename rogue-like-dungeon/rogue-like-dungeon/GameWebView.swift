@@ -23,8 +23,11 @@ struct GameWebView: UIViewRepresentable {
     static let scheme = "kwapp"
     static let startURL = URL(string: "\(scheme)://app/index.html")!
 
+    /// React の初回描画完了時に呼ばれるコールバック。
+    var onReady: (() -> Void)?
+
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onReady: onReady)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -37,6 +40,9 @@ struct GameWebView: UIViewRepresentable {
         let proxy = WeakScriptMessageProxy(target: context.coordinator)
         config.userContentController.add(proxy, name: "requestReview")
         config.userContentController.add(proxy, name: "bgm")
+        config.userContentController.add(proxy, name: "appReady")
+        config.userContentController.add(proxy, name: "settings")
+        config.userContentController.add(proxy, name: "openURL")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -54,6 +60,11 @@ struct GameWebView: UIViewRepresentable {
     /// JS メッセージを処理する Coordinator。BGM は AVAudioPlayer でネイティブ再生。
     final class Coordinator: NSObject, WKScriptMessageHandler {
         let bgm = BGMController()
+        var onReady: (() -> Void)?
+
+        init(onReady: (() -> Void)? = nil) {
+            self.onReady = onReady
+        }
 
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
@@ -67,6 +78,23 @@ struct GameWebView: UIViewRepresentable {
                 }
             case "bgm":
                 bgm.handle(message)
+            case "appReady":
+                DispatchQueue.main.async { self.onReady?() }
+            case "settings":
+                guard let body = message.body as? [String: Any],
+                      let sleep = body["sleep"] as? Bool else { return }
+                DispatchQueue.main.async {
+                    UIApplication.shared.isIdleTimerDisabled = sleep
+                }
+            case "openURL":
+                guard let body = message.body as? [String: Any],
+                      let urlString = body["url"] as? String,
+                      let url = URL(string: urlString),
+                      url.scheme == "https" || url.scheme == "http" || url.scheme == "mailto"
+                else { return }
+                DispatchQueue.main.async {
+                    UIApplication.shared.open(url)
+                }
             default:
                 break
             }
@@ -259,6 +287,7 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
         <div id="root"></div>
         <pre id="kw-error"></pre>
         <script>
+          window.kwAppVersion = "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")";
           // JSX の永続データ層 (window.storage) を localStorage で満たす。
           window.storage = {
             get: async (k) => ({ value: localStorage.getItem(k) }),
