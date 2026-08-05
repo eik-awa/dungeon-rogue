@@ -277,7 +277,7 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
             "react-dom": "https://esm.sh/react-dom@18.3.1",
             "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
             "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-            "lucide-react": "https://esm.sh/lucide-react@0.454.0?external=react"
+            "lucide-react": "https://esm.sh/lucide-react@0.480.0?external=react"
           }
         }
         </script>

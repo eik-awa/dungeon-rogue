@@ -15,10 +15,13 @@ import {
   Shield, Gem, Apple, Leaf, Flame, Zap, Sparkles, Ghost, Bug, Bird,
   TreePine, Droplets, Flower2, Crown, Skull, Heart, Package, Moon, Star,
   ChevronRight, X, Plus, Wind, CircleDot,
-  Cloud, Mountain, Eye, Bone, Snowflake, Sprout, Waves, Feather, Shell, Sun,
+  Cloud, Mountain, Eye, Bone, Snowflake, Sprout, Waves, Shell, Sun,
   Volume1, Volume2, VolumeX,
   Settings, ExternalLink,
+  Cat, Fish, Rabbit, Dog, Squirrel,
+  Bot, Scale, EyeClosed, PiggyBank, Atom, Baby, Flower, Dna, Fan, Pyramid, Cherry, Origami, Egg, Snail, Disc2, Turtle, Shrimp,
 } from "lucide-react";
+
 
 /* ------------------------------------------------------------
    素材レジストリ(ここを編集すれば見た目を差し替え可能)
@@ -52,56 +55,75 @@ const ASSETS = {
   treant:     { icon: TreePine,    img: null },
   shroom:     { icon: Flower2,     img: null },
   goldSprite: { icon: Sparkles,    img: null },
+  lostChild:  { icon: Baby,        img: null },
   // 敵(第2章: 茸の湿原)
   bogSlime:   { icon: Droplets,    img: null },
   sporeling:  { icon: Sprout,      img: null },
   mudcrab:    { icon: Shell,       img: null },
   leech:      { icon: Waves,       img: null },
+  mutantFungus:{ icon: Dna,        img: null },
   // 敵(第3章: 苔の遺跡)
   statue:     { icon: Mountain,    img: null },
   skel:       { icon: Skull,       img: null },
   curseEye:   { icon: Eye,         img: null },
-  ruinBat:    { icon: Feather,     img: null },
+  ruinBat:    { icon: Cat,         img: null },
+  ruinTurtle: { icon: Turtle,      img: null },
+  ruinPyramid:{ icon: Pyramid,    img: null },
+  enchantedRabbit: { icon: Rabbit, img: null },
+  bogFish:    { icon: Fish,        img: null },
+  snowHound:  { icon: Dog,         img: null },
   // 敵(第4章: 花霞の谷)
   bee:        { icon: Bug,         img: null },
   petalGuard: { icon: Flower2,     img: null },
   pixie:      { icon: Sparkles,    img: null },
   thornVine:  { icon: Sprout,      img: null },
+  roseThorn:  { icon: Cherry,      img: null },
   // 敵(第5章: 水晶洞)
   crysTurtle: { icon: Shell,       img: null },
   prism:      { icon: Gem,         img: null },
   crysBug:    { icon: Bug,         img: null },
   shardWisp:  { icon: Ghost,       img: null },
+  crystalSnail:{ icon: Snail,      img: null },
+  crystalDisc: { icon: Disc2,      img: null },
   // 敵(第6章: 焔の峠)
   salamander: { icon: Flame,       img: null },
   ashWraith:  { icon: Ghost,       img: null },
   magmaBug:   { icon: Bug,         img: null },
   emberBird:  { icon: Bird,        img: null },
+  fireShrimp: { icon: Shrimp,      img: null },
   // 敵(第7章: 氷樹の森)
   blizzWolf:  { icon: Wind,        img: null },
   iceSprite:  { icon: Snowflake,   img: null },
   frostShroom:{ icon: Flower2,     img: null },
   icicleTort: { icon: Shell,       img: null },
+  greedySpirit:{ icon: PiggyBank,  img: null },
   // 敵(第8章: 雷雲の尾根)
   stormBird:  { icon: Bird,        img: null },
   cloudEater: { icon: Cloud,       img: null },
   voltBug:    { icon: Zap,         img: null },
   galeSprite: { icon: Wind,        img: null },
+  mechDoll:   { icon: Bot,         img: null },
+  stormDancer:{ icon: Fan,         img: null },
   // 敵(第9章: 星降りの浮島)
   starSlime:  { icon: Star,        img: null },
   meteorBug:  { icon: Sparkles,    img: null },
   nightHerald:{ icon: Moon,        img: null },
   silentShade:{ icon: Ghost,       img: null },
+  starCore:   { icon: Atom,        img: null },
+  paperCrane: { icon: Origami,     img: null },
+  judgmentScale:{ icon: Scale,     img: null },
   // 敵(第10章: 常夜の根)
   rootPuppet: { icon: TreePine,    img: null },
   abyssEye:   { icon: Eye,         img: null },
-  nightMoth:  { icon: Feather,     img: null },
+  nightMoth:  { icon: Cat,         img: null },
   shadeWalker:{ icon: Skull,       img: null },
+  sealedEgg:  { icon: Egg,         img: null },
+  sealedGaze: { icon: EyeClosed,   img: null },
   // ボス
   bossDeer:   { icon: Crown,       img: null },
   bossMycel:  { icon: Flower2,     img: null },
   bossGolem:  { icon: Mountain,    img: null },
-  bossButterfly:{ icon: Feather,   img: null },
+  bossButterfly:{ icon: Flower,    img: null },
   bossCrystal:{ icon: Gem,         img: null },
   bossFlame:  { icon: Flame,       img: null },
   bossWolf:   { icon: Snowflake,   img: null },
@@ -201,7 +223,7 @@ const CONSUMABLES = {
   antidote:   { label: "解毒草",     asset: "antidote",   desc: "毒を消し、HPを10%回復。", kind: "cure", power: 0.10 },
   spore:      { label: "力の胞子",   asset: "spore",      desc: "3ターンの間、攻撃力+40%。", kind: "buff", power: 0.4, turns: 3 },
   bomb:       { label: "森火の実",   asset: "bomb",       desc: "敵全体に固定ダメージ(深い階ほど強力)。", kind: "bomb", power: 25 },
-  dew:        { label: "宝樹の雫",   asset: "dew",        desc: "使うと魂の継承枠が永続+1。金枝の精だけが落とす。", kind: "meta" },
+  dew:        { label: "宝樹の雫",   asset: "dew",        desc: "金枝の精だけが落とす精の結晶。スキルツリーの習得に使う。", kind: "meta" },
   mossHeart:  { label: "苔の心臓",   asset: "mossHeart",  desc: "使うと最大HPが永続+6。章の主だけが落とす。", kind: "metaHp" },
 };
 
@@ -218,51 +240,71 @@ const ENEMY_BOOK = {
   raven:  { name: "妖鴉",         asset: "raven",  hpK: 0.8, atkK: 1.1, def: 1, weak: ["突"],       resist: ["斬"],  note: "羽ばたく的は射抜くが早い。" },
   treant: { name: "樹皮の番人",   asset: "treant", hpK: 1.6, atkK: 1.0, def: 4, weak: ["打", "魔"], resist: ["突"],  note: "斧と魔に弱い古木。" },
   shroom: { name: "眠り茸",       asset: "shroom", hpK: 1.0, atkK: 0.8, def: 1, weak: ["魔"],       resist: ["突"],  note: "胞子で毒を撒く。", poison: true },
+  // 1章追加
+  enchantedRabbit: { name: "惑いウサギ", asset: "enchantedRabbit", hpK: 0.65, atkK: 0.85, def: 0, weak: ["打", "魔"], resist: ["突"], poison: true, note: "無害そうに見えて毒の牙を持つ。油断は禁物。" },
+  lostChild: { name: "迷い子の精", asset: "lostChild", hpK: 0.6, atkK: 1.1, def: 0, weak: ["魔", "音"], resist: ["斬", "打"], drain: true, note: "森に迷い込んだ幼き魂。触れると生気を奪われる。" },
   // 2章: 茸の湿原
   bogSlime:  { name: "毒沼スライム", asset: "bogSlime",  hpK: 1.1, atkK: 0.9, def: 0, weak: ["斬", "魔"], resist: ["打"], poison: true },
   sporeling: { name: "胞子小人",     asset: "sporeling", hpK: 0.8, atkK: 1.0, def: 1, weak: ["魔"],       resist: ["突"], poison: true },
   mudcrab:   { name: "泥蟹",         asset: "mudcrab",   hpK: 1.2, atkK: 0.9, def: 5, weak: ["打"],       resist: ["斬", "突"] },
   leech:     { name: "沼蛭",         asset: "leech",     hpK: 0.9, atkK: 1.0, def: 0, weak: ["斬"],       resist: ["打"], drain: true },
+  bogFish:   { name: "沼鯰",         asset: "bogFish",   hpK: 1.0, atkK: 1.0, def: 2, weak: ["斬", "魔"], resist: ["打"], drain: true, note: "澱んだ水底に潜む。触れると生命力を吸われる。" },
+  mutantFungus: { name: "変異菌体", asset: "mutantFungus", hpK: 0.9, atkK: 1.1, def: 1, weak: ["斬", "魔"], resist: ["突"], poison: true, note: "湿原の瘴気を浴びて変異した菌糸の塊。" },
   // 3章: 苔の遺跡
   statue:   { name: "石像兵",     asset: "statue",   hpK: 1.5, atkK: 1.0, def: 6, weak: ["打", "魔"], resist: ["斬", "突"] },
   skel:     { name: "骸骨兵",     asset: "skel",     hpK: 0.9, atkK: 1.1, def: 2, weak: ["打"],       resist: ["突"] },
   curseEye: { name: "呪いの眼",   asset: "curseEye", hpK: 0.8, atkK: 1.2, def: 0, weak: ["魔"],       resist: ["打"], drain: true },
-  ruinBat:  { name: "遺跡蝙蝠",   asset: "ruinBat",  hpK: 0.7, atkK: 1.0, def: 1, weak: ["突", "音"], resist: ["斬"] },
+  ruinBat:  { name: "廃廟の影猫", asset: "ruinBat",  hpK: 0.75, atkK: 1.1, def: 1, weak: ["音", "魔"], resist: ["斬"], drain: true, note: "暗闇に溶け込み生命力を奪う。音と魔法には弱い。" },
+  ruinTurtle: { name: "遺跡の古亀", asset: "ruinTurtle", hpK: 1.6, atkK: 0.8, def: 8, weak: ["打"], resist: ["斬", "突", "魔"], note: "遺跡に棲む古代の亀。堅牢な甲羅は打撃でしか崩せない。" },
+  ruinPyramid: { name: "石積の番人", asset: "ruinPyramid", hpK: 1.4, atkK: 1.0, def: 7, weak: ["打", "魔"], resist: ["斬", "突"], note: "遺跡の深部を守る石の像。重い打撃と魔法でのみ砕ける。" },
   // 4章: 花霞の谷
   bee:        { name: "花蜂",     asset: "bee",        hpK: 0.8, atkK: 1.2, def: 1, weak: ["突"],       resist: ["打"], poison: true },
   petalGuard: { name: "花守り",   asset: "petalGuard", hpK: 1.2, atkK: 0.9, def: 3, weak: ["斬"],       resist: ["魔"] },
   pixie:      { name: "蜜妖精",   asset: "pixie",      hpK: 0.7, atkK: 1.1, def: 0, weak: ["音", "魔"], resist: ["斬", "突"], drain: true },
   thornVine:  { name: "棘蔦",     asset: "thornVine",  hpK: 1.4, atkK: 1.0, def: 3, weak: ["斬", "打"], resist: ["突"] },
+  roseThorn: { name: "棘薔薇霊", asset: "roseThorn", hpK: 1.0, atkK: 1.1, def: 2, weak: ["斬"], resist: ["魔"], poison: true, note: "美しい薔薇の精霊。棘に触れると毒を受ける。" },
   // 5章: 水晶洞
   crysTurtle: { name: "晶亀",     asset: "crysTurtle", hpK: 1.4, atkK: 0.9, def: 8, weak: ["打", "音"], resist: ["斬", "突"] },
   prism:      { name: "光屈の精", asset: "prism",      hpK: 0.9, atkK: 1.1, def: 2, weak: ["音"],       resist: ["魔", "斬"] },
   crysBug:    { name: "晶蟲",     asset: "crysBug",    hpK: 1.0, atkK: 1.0, def: 5, weak: ["打"],       resist: ["突"] },
   shardWisp:  { name: "晶霊",     asset: "shardWisp",  hpK: 0.8, atkK: 1.2, def: 0, weak: ["魔", "音"], resist: ["斬", "打", "突"] },
+  crystalSnail: { name: "水晶蝸牛", asset: "crystalSnail", hpK: 1.4, atkK: 0.8, def: 11, weak: ["打", "音"], resist: ["斬", "突", "魔"], note: "水晶の殻を持つ蝸牛。防御は鉄壁だが打撃の振動が弱点。" },
+  crystalDisc: { name: "水晶円盤", asset: "crystalDisc", hpK: 0.9, atkK: 1.2, def: 4, weak: ["音", "打"], resist: ["斬", "魔"], note: "高速回転する水晶の円盤。斬撃を弾き返すが音に弱い。" },
   // 6章: 焔の峠
   salamander: { name: "火蜥蜴",   asset: "salamander", hpK: 1.0, atkK: 1.2, def: 2, weak: ["突", "魔"], resist: ["斬"] },
   ashWraith:  { name: "灰亡霊",   asset: "ashWraith",  hpK: 0.9, atkK: 1.2, def: 0, weak: ["魔"],       resist: ["斬", "打", "突"], drain: true },
   magmaBug:   { name: "熔岩甲蟲", asset: "magmaBug",   hpK: 1.2, atkK: 1.0, def: 7, weak: ["打"],       resist: ["斬", "突"] },
   emberBird:  { name: "火の雛鳥", asset: "emberBird",  hpK: 0.8, atkK: 1.2, def: 1, weak: ["突"],       resist: ["打"] },
+  fireShrimp: { name: "炎海老", asset: "fireShrimp", hpK: 0.8, atkK: 1.3, def: 3, weak: ["魔"], resist: ["突", "打"], note: "溶岩の流れに棲む海老。ハサミの熱が鎧を溶かす。" },
   // 7章: 氷樹の森
   blizzWolf:  { name: "吹雪の狼", asset: "blizzWolf",  hpK: 1.0, atkK: 1.3, def: 2, weak: ["音"],       resist: [] },
   iceSprite:  { name: "氷精",     asset: "iceSprite",  hpK: 0.8, atkK: 1.1, def: 1, weak: ["打", "魔"], resist: ["突", "斬"] },
   frostShroom:{ name: "凍り茸",   asset: "frostShroom",hpK: 1.1, atkK: 0.9, def: 2, weak: ["魔"],       resist: ["突"], poison: true },
   icicleTort: { name: "氷柱亀",   asset: "icicleTort", hpK: 1.5, atkK: 0.9, def: 9, weak: ["打"],       resist: ["斬", "突"] },
+  snowHound:  { name: "北の猟犬", asset: "snowHound",  hpK: 0.9, atkK: 1.3, def: 2, weak: ["魔", "音"], resist: [], note: "氷雪に鍛えられた獰猛な狩猟犬。" },
+  greedySpirit: { name: "強欲の精", asset: "greedySpirit", hpK: 2.0, atkK: 0.5, def: 15, weak: ["打"], resist: ["斬", "突", "魔", "音"], note: "財宝を詰め込んだ欲深き精霊。硬い外殻は打撃だけが崩せる。" },
   // 8章: 雷雲の尾根
   stormBird:  { name: "雷鳥",     asset: "stormBird",  hpK: 0.9, atkK: 1.3, def: 2, weak: ["突"],       resist: ["斬", "打"] },
   cloudEater: { name: "雲喰い",   asset: "cloudEater", hpK: 1.3, atkK: 1.0, def: 1, weak: ["魔", "音"], resist: ["斬", "打", "突"] },
   voltBug:    { name: "帯電蟲",   asset: "voltBug",    hpK: 1.0, atkK: 1.2, def: 6, weak: ["打"],       resist: ["突"] },
   galeSprite: { name: "嵐の精",   asset: "galeSprite", hpK: 0.8, atkK: 1.2, def: 0, weak: ["音"],       resist: ["斬"], drain: true },
+  mechDoll:   { name: "霊械人形", asset: "mechDoll", hpK: 1.1, atkK: 1.2, def: 5, weak: ["魔", "音"], resist: ["斬", "突", "打"], note: "雷の精霊に魂を吹き込まれた機械人形。物理攻撃を弾く。" },
+  stormDancer: { name: "嵐の舞姫", asset: "stormDancer", hpK: 0.7, atkK: 1.3, def: 0, weak: ["突"], resist: ["打"], drain: true, note: "嵐の中で踊り続ける精霊。攻撃をかわして生気を奪う。" },
   // 9章: 星降りの浮島
   starSlime:  { name: "星屑スライム", asset: "starSlime",  hpK: 1.1, atkK: 1.0, def: 1, weak: ["斬", "魔"], resist: ["打"] },
   meteorBug:  { name: "流星虫",       asset: "meteorBug",  hpK: 1.0, atkK: 1.2, def: 5, weak: ["打"],       resist: ["斬"] },
   nightHerald:{ name: "夜天の使い",   asset: "nightHerald",hpK: 1.2, atkK: 1.2, def: 2, weak: ["魔"],       resist: ["突", "打"], drain: true },
   silentShade:{ name: "無音の影",     asset: "silentShade",hpK: 0.9, atkK: 1.3, def: 0, weak: ["音"],       resist: ["斬", "突", "打"] },
+  starCore:   { name: "星核の精",   asset: "starCore",   hpK: 0.9, atkK: 1.2, def: 2, weak: ["音"],       resist: ["斬", "魔"], note: "星の核から生まれた純粋なエネルギー体。" },
+  paperCrane: { name: "折り鶴の精", asset: "paperCrane", hpK: 0.7, atkK: 1.1, def: 0, weak: ["打", "斬"], resist: ["魔"],       note: "星降る島に舞う折り紙の精霊。音もなく空を滑る。" },
+  judgmentScale: { name: "裁きの天秤", asset: "judgmentScale", hpK: 1.2, atkK: 1.0, def: 2, weak: ["音"], resist: ["斬", "打"], drain: true, note: "宙に浮かぶ神秘の天秤。均衡を乱す者から生気を奪う。" },
   // 10章: 常夜の根
   rootPuppet: { name: "根の傀儡",   asset: "rootPuppet", hpK: 1.6, atkK: 1.1, def: 6, weak: ["打", "魔"], resist: ["突"] },
   abyssEye:   { name: "深淵の眼",   asset: "abyssEye",   hpK: 1.0, atkK: 1.3, def: 1, weak: ["魔"],       resist: ["打"], drain: true },
   nightMoth:  { name: "常夜蝶",     asset: "nightMoth",  hpK: 0.9, atkK: 1.2, def: 1, weak: ["突"],       resist: ["魔"], poison: true },
   shadeWalker:{ name: "影の旅人",   asset: "shadeWalker",hpK: 1.1, atkK: 1.4, def: 2, weak: ["音"],       resist: ["斬", "突", "打"] },
+  sealedEgg:  { name: "封印の卵",   asset: "sealedEgg",  hpK: 0.8, atkK: 1.4, def: 3, weak: ["打"],       resist: ["突", "魔"], note: "常夜の底で蠢く謎の卵。何かが孵る前に倒さねば。" },
+  sealedGaze: { name: "封じられた眼", asset: "sealedGaze", hpK: 1.0, atkK: 1.5, def: 2, weak: ["魔"],     resist: ["打", "突"], note: "常夜に眠る巨大な瞳。目覚めた瞬間、圧倒的な力が解き放たれる。" },
 };
 const RARE_ENEMY = {
   name: "金枝の精", asset: "goldSprite", note: "3ターンで消える。倒せば宝樹の雫を落とす。",
@@ -277,7 +319,7 @@ const STAGES = [
   {
     name: "霧渡りの森", read: "きりわたりのもり", tate: "第一章",
     // 序盤で詰まないよう、短剣(斬)で倒せる敵を先頭に。甲虫・迷い火など斬耐性は後半に。
-    enemies: ["slime", "raven", "shroom", "beetle", "wisp", "treant"],
+    enemies: ["slime", "enchantedRabbit", "raven", "shroom", "lostChild", "beetle", "wisp", "treant"],
     terrain: "trees",
     bg: { skyTop: [10, 20, 16], skyMid: [24, 44, 34], layers: ["rgba(18,30,23,.9)", "rgba(12,21,16,.95)", "rgba(7,13,10,1)"], moon: "rgba(238,230,204,.85)", mist: "157,180,166" },
     moonPhase: { phase: 0.22, waning: false },
@@ -286,7 +328,7 @@ const STAGES = [
   },
   {
     name: "茸の湿原", read: "きのこのしつげん", tate: "第二章",
-    enemies: ["bogSlime", "sporeling", "leech", "mudcrab", "shroom", "wisp"],
+    enemies: ["bogSlime", "sporeling", "leech", "bogFish", "mutantFungus", "mudcrab", "shroom", "wisp"],
     terrain: "mounds",
     bg: { skyTop: [14, 16, 22], skyMid: [30, 42, 52], layers: ["rgba(28,38,48,.9)", "rgba(20,28,38,.95)", "rgba(10,15,22,1)"], moon: "rgba(180,220,214,.8)", mist: "140,180,190" },
     moonPhase: { phase: 0.38, waning: false },
@@ -295,7 +337,7 @@ const STAGES = [
   },
   {
     name: "苔の遺跡", read: "こけのいせき", tate: "第三章",
-    enemies: ["skel", "ruinBat", "statue", "curseEye", "wisp", "beetle"],
+    enemies: ["skel", "ruinBat", "statue", "ruinTurtle", "ruinPyramid", "curseEye", "wisp", "beetle"],
     terrain: "blocks",
     bg: { skyTop: [16, 17, 15], skyMid: [42, 44, 38], layers: ["rgba(40,42,36,.9)", "rgba(28,30,26,.95)", "rgba(14,15,13,1)"], moon: "rgba(230,225,200,.8)", mist: "170,172,150" },
     moonPhase: { phase: 0.50, waning: false },
@@ -304,7 +346,7 @@ const STAGES = [
   },
   {
     name: "花霞の谷", read: "はながすみのたに", tate: "第四章",
-    enemies: ["bee", "petalGuard", "pixie", "thornVine", "raven"],
+    enemies: ["bee", "petalGuard", "pixie", "roseThorn", "thornVine", "raven"],
     terrain: "hills",
     bg: { skyTop: [26, 14, 22], skyMid: [70, 36, 52], layers: ["rgba(58,30,44,.9)", "rgba(40,20,32,.95)", "rgba(20,10,16,1)"], moon: "rgba(255,214,214,.85)", mist: "220,170,190" },
     moonPhase: { phase: 0.67, waning: false },
@@ -313,7 +355,7 @@ const STAGES = [
   },
   {
     name: "水晶洞", read: "すいしょうどう", tate: "第五章",
-    enemies: ["crysBug", "shardWisp", "prism", "crysTurtle", "curseEye"],
+    enemies: ["crysBug", "shardWisp", "crystalDisc", "prism", "crystalSnail", "crysTurtle", "curseEye"],
     terrain: "spires",
     bg: { skyTop: [8, 14, 26], skyMid: [22, 44, 74], layers: ["rgba(30,52,84,.85)", "rgba(20,36,62,.92)", "rgba(8,16,30,1)"], moon: "rgba(180,220,255,.8)", mist: "150,190,230" },
     moonPhase: { phase: 0.84, waning: false },
@@ -322,7 +364,7 @@ const STAGES = [
   },
   {
     name: "焔の峠", read: "ほむらのとうげ", tate: "第六章",
-    enemies: ["emberBird", "salamander", "magmaBug", "ashWraith"],
+    enemies: ["emberBird", "salamander", "fireShrimp", "magmaBug", "ashWraith"],
     terrain: "peaks",
     bg: { skyTop: [24, 10, 8], skyMid: [70, 30, 18], layers: ["rgba(56,24,16,.9)", "rgba(38,16,10,.95)", "rgba(18,7,5,1)"], moon: "rgba(255,180,120,.8)", mist: "220,140,90" },
     moonPhase: { phase: 1.00, waning: false },
@@ -331,7 +373,7 @@ const STAGES = [
   },
   {
     name: "氷樹の森", read: "ひょうじゅのもり", tate: "第七章",
-    enemies: ["iceSprite", "frostShroom", "blizzWolf", "icicleTort"],
+    enemies: ["snowHound", "greedySpirit", "iceSprite", "frostShroom", "blizzWolf", "icicleTort"],
     terrain: "trees",
     bg: { skyTop: [12, 18, 28], skyMid: [40, 58, 78], layers: ["rgba(70,92,116,.7)", "rgba(44,60,80,.85)", "rgba(18,26,38,1)"], moon: "rgba(220,235,255,.9)", mist: "200,220,240" },
     moonPhase: { phase: 0.80, waning: true },
@@ -340,7 +382,7 @@ const STAGES = [
   },
   {
     name: "雷雲の尾根", read: "らいうんのおね", tate: "第八章",
-    enemies: ["voltBug", "stormBird", "galeSprite", "cloudEater"],
+    enemies: ["voltBug", "stormBird", "mechDoll", "stormDancer", "galeSprite", "cloudEater"],
     terrain: "ridge",
     bg: { skyTop: [14, 12, 24], skyMid: [36, 32, 58], layers: ["rgba(34,30,54,.9)", "rgba(24,21,40,.95)", "rgba(10,9,18,1)"], moon: "rgba(230,220,160,.7)", mist: "170,165,200", flash: true },
     moonPhase: { phase: 0.52, waning: true },
@@ -349,7 +391,7 @@ const STAGES = [
   },
   {
     name: "星降りの浮島", read: "ほしふりのうきしま", tate: "第九章",
-    enemies: ["starSlime", "meteorBug", "nightHerald", "silentShade"],
+    enemies: ["starSlime", "meteorBug", "starCore", "paperCrane", "nightHerald", "silentShade"],
     terrain: "islands",
     bg: { skyTop: [6, 8, 20], skyMid: [16, 20, 44], layers: ["rgba(24,28,56,.85)", "rgba(16,18,40,.92)", "rgba(6,7,18,1)"], moon: "rgba(200,210,255,.9)", mist: "150,160,220", stars: true },
     moonPhase: { phase: 0.33, waning: true },
@@ -358,7 +400,7 @@ const STAGES = [
   },
   {
     name: "常夜の根", read: "とこよのね", tate: "終章",
-    enemies: ["rootPuppet", "nightMoth", "abyssEye", "shadeWalker"],
+    enemies: ["rootPuppet", "nightMoth", "sealedEgg", "sealedGaze", "abyssEye", "shadeWalker"],
     terrain: "roots",
     bg: { skyTop: [8, 6, 10], skyMid: [22, 16, 26], layers: ["rgba(26,20,30,.9)", "rgba(16,12,20,.95)", "rgba(6,5,9,1)"], moon: "rgba(232,180,74,.75)", mist: "160,140,120", stars: true },
     moonPhase: { phase: 0.10, waning: true },
@@ -378,6 +420,19 @@ const ri = (a, b) => Math.floor(rnd(a, b + 1));
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 let UID = 1;
 const uid = () => `e${UID++}_${Date.now() % 100000}`;
+
+// メタ依存の派生値
+function weaponSlotsOf(m) {
+  const s = m?.skills || {};
+  return 3 + (s.weaponSlot4 ? 1 : 0) + (s.weaponSlot5 ? 1 : 0) + (s.weaponSlot6 ? 1 : 0);
+}
+function invCapOf(m) {
+  const s = m?.skills || {};
+  return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0);
+}
+function rareChanceOf(m) {
+  return 0.08 + ((m?.skills?.goldSense) ? 0.04 : 0);
+}
 
 // レアリティ抽選 (luckBonus>0 でチェスト等の高レア補正)
 function rollRarity(luckBonus = 0) {
@@ -467,14 +522,18 @@ function makeBoss(floor) {
 }
 
 // フロアごとの出現テーブル(章の進みに応じて敵種と数が増える)
-function enemiesForEncounter(floor) {
+// lastRareSeen: 直近で金枝の精を目撃したフロア番号(連続出現を防ぐ)
+const RARE_COOLDOWN = 7; // この階数は金枝の精が出現しない
+function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   const stage = STAGES[stageOf(floor)];
   const fis = floorInStage(floor);
   const avail = stage.enemies.slice(0, Math.min(stage.enemies.length, 2 + Math.floor((fis - 1) / 2)));
   let count = fis <= 2 ? ri(1, 2) : fis <= 5 ? 2 : ri(2, 3);
   if (stageOf(floor) >= 3) count = Math.max(count, 2);
   const list = Array.from({ length: count }, () => makeEnemy(pick(avail), floor));
-  if (Math.random() < 0.08) list.push(makeRareEnemy(floor)); // 8%で金枝の精が紛れ込む
+  if (floor - lastRareSeen >= RARE_COOLDOWN && Math.random() < rareChance) {
+    list.push(makeRareEnemy(floor));
+  }
   return list;
 }
 
@@ -484,7 +543,36 @@ function enemiesForEncounter(floor) {
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1 };
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {} };
+
+/* ------------------------------------------------------------
+   スキルツリー定義 (宝樹の雫=精の結晶で解放する永続スキル)
+------------------------------------------------------------ */
+const SKILL_TREE = [
+  // 戦闘拡張
+  { id: "weaponSlot4", name: "武器IV", category: "戦闘拡張", cost: 4, requires: null,
+    desc: "武器スロット 3→4。属性の幅が広がる。" },
+  { id: "weaponSlot5", name: "武器V", category: "戦闘拡張", cost: 7, requires: "weaponSlot4",
+    desc: "武器スロット 4→5。" },
+  { id: "weaponSlot6", name: "武器VI", category: "戦闘拡張", cost: 12, requires: "weaponSlot5",
+    desc: "武器スロット 5→6 (最大)。" },
+  { id: "bladeMastery", name: "斬の極意", category: "戦闘拡張", cost: 5, requires: null,
+    desc: "斬属性武器のダメージ+15%。" },
+  { id: "magicMastery", name: "魔の極意", category: "戦闘拡張", cost: 5, requires: null,
+    desc: "魔属性武器のダメージ+15%。" },
+  // 探索
+  { id: "bagCapI", name: "大きな鞄", category: "探索", cost: 3, requires: null,
+    desc: "鞄の容量 14→19。" },
+  { id: "bagCapII", name: "巨大な鞄", category: "探索", cost: 6, requires: "bagCapI",
+    desc: "鞄の容量 19→24。" },
+  { id: "goldSense", name: "精霊の気配", category: "探索", cost: 4, requires: null,
+    desc: "金枝の精の出現率+4%。" },
+  // 転生
+  { id: "inheritSlot", name: "魂の脈絡", category: "転生", cost: 5, requires: null,
+    desc: "継承枠が永続+1。" },
+  { id: "startBonus", name: "旅装の記憶", category: "転生", cost: 3, requires: null,
+    desc: "旅の始まりに生命の果実が1つ追加される。" },
+];
 
 async function loadMeta() {
   try {
@@ -504,9 +592,9 @@ async function loadRun() {
   } catch {}
   return null;
 }
-async function saveRun(floor, player, weapons, armor, inv, cds) {
+async function saveRun(floor, player, weapons, armor, inv, cds, lastRareSeen) {
   try {
-    const data = { floor, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {} };
+    const data = { floor, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0 };
     await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
   } catch {}
 }
@@ -773,6 +861,24 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   background: var(--hotaru); cursor: pointer;
   box-shadow: 0 2px 8px rgba(0,0,0,.5);
 }
+
+/* --- 図鑑(Bestiary) --- */
+.kw-bestiary-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.kw-bestiary-tabs::-webkit-scrollbar { display: none; }
+.kw-bestiary-tab { flex: 0 0 auto; padding: 4px 10px; font-size: 10px; letter-spacing: .1em;
+  border: 1px solid rgba(157,180,166,.22); border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--mist); }
+.kw-bestiary-tab.active { border-color: var(--hotaru); color: var(--hotaru); background: rgba(232,180,74,.07); }
+.kw-bestiary-entry { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0;
+  border-bottom: 1px solid rgba(157,180,166,.07); }
+.kw-bestiary-entry:last-child { border-bottom: none; }
+.kw-bestiary-icon { flex: 0 0 36px; display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(94,130,101,.22), transparent 70%); }
+.kw-bestiary-name { font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: .06em; }
+.kw-bestiary-note { font-size: 11px; color: var(--mist); line-height: 1.7; margin-top: 3px; }
+.kw-bestiary-boss-sep { font-size: 9px; letter-spacing: .3em; color: var(--hotaru); opacity: .7;
+  text-align: center; margin: 4px 0 8px; }
 `;
 
 /* ------------------------------------------------------------
@@ -1107,12 +1213,12 @@ function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
 ------------------------------------------------------------ */
 const BASE_HP = 72;
 const AFF_WEAK = 1.6, AFF_RES = 0.5;
-const INV_CAP = 14;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function starterState(meta, initialWeaponType = "dagger") {
   const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid() }));
-  const weapons = [null, null, null];
+  const weaponCount = weaponSlotsOf(meta);
+  const weapons = Array(weaponCount).fill(null);
   const armor = { helm: null, armor: null, charm: null };
   const inv = [];
   for (const it of inherited) {
@@ -1129,6 +1235,7 @@ function starterState(meta, initialWeaponType = "dagger") {
   inv.push(makeConsumable("berrySmall"));
   inv.push(makeConsumable("berrySmall"));
   inv.push(makeConsumable("antidote"));
+  if (meta?.skills?.startBonus) inv.push(makeConsumable("berryBig"));
   return { weapons, armor, inv };
 }
 
@@ -1192,6 +1299,182 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
 
         <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
           <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------
+   スキルツリー オーバーレイ
+------------------------------------------------------------ */
+function SkillTreeOverlay({ meta, onClose, onBuy }) {
+  const skills = meta?.skills || {};
+  const dewBank = meta?.dewBank || 0;
+  const categories = [...new Set(SKILL_TREE.map((s) => s.category))];
+  const canBuy = (skill) => {
+    if (skills[skill.id]) return false;
+    if (dewBank < skill.cost) return false;
+    if (skill.requires && !skills[skill.requires]) return false;
+    return true;
+  };
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 600 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h2 style={{ letterSpacing: ".2em" }}>スキルツリー</h2>
+            <div className="kw-sub">
+              精の結晶(宝樹の雫)を消費してスキルを永続習得する。<br />
+              所持: <b style={{ color: "var(--hotaru)" }}>{dewBank}</b> 精の結晶
+            </div>
+          </div>
+          <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={onClose}><X size={14} /></button>
+        </div>
+        {categories.map((cat) => (
+          <div key={cat} style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 8 }}>── {cat}</div>
+            <div className="kw-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+              {SKILL_TREE.filter((sk) => sk.category === cat).map((skill) => {
+                const owned = !!skills[skill.id];
+                const buyable = canBuy(skill);
+                const blocked = !!(skill.requires && !skills[skill.requires]);
+                return (
+                  <div key={skill.id}
+                    className={`kw-panel kw-cell ${buyable ? "targetable" : ""}`}
+                    style={{
+                      opacity: blocked ? .38 : 1,
+                      boxShadow: owned ? "0 0 0 1.5px var(--hotaru)" : undefined,
+                      cursor: buyable ? "pointer" : "default",
+                    }}
+                    onClick={() => buyable && onBuy(skill.id)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 10, color: owned ? "var(--hotaru)" : "var(--mist)", letterSpacing: ".1em" }}>
+                        {owned ? "習得済" : `${skill.cost}個`}
+                      </span>
+                      {owned && <Sparkles size={11} color="var(--hotaru)" />}
+                    </div>
+                    <div className="kw-cname" style={{ color: owned ? "var(--hotaru)" : "var(--paper)", marginTop: 4 }}>
+                      {skill.name}
+                    </div>
+                    <div className="kw-cmeta">{skill.desc}</div>
+                    {blocked && (
+                      <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3 }}>
+                        要: {SKILL_TREE.find((s2) => s2.id === skill.requires)?.name}
+                      </div>
+                    )}
+                    {buyable && (
+                      <div style={{ marginTop: 6, fontSize: 10, color: "var(--hotaru)", letterSpacing: ".1em" }}>タップで習得</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <div className="kw-actions" style={{ justifyContent: "center", marginTop: 18 }}>
+          <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------
+   図鑑 オーバーレイ
+------------------------------------------------------------ */
+function BestiaryOverlay({ meta, onClose }) {
+  const [chIdx, setChIdx] = useState(0);
+  const seen = meta?.seen || {};
+  const discovered = meta?.discovered || {};
+  const stage = STAGES[chIdx];
+  const boss = stage.boss;
+
+  const totalSeen = STAGES.reduce((sum, st) => {
+    return sum + st.enemies.filter((id) => seen[id]).length;
+  }, 0);
+  const totalEnemies = STAGES.reduce((sum, st) => sum + st.enemies.length, 0);
+
+  function AffinityChips({ bookId, weak, resist }) {
+    const d = discovered[bookId] || { w: [], r: [] };
+    const allTypes = [...weak, ...resist];
+    const anyUnknown = allTypes.some((t) => !d.w.includes(t) && !d.r.includes(t));
+    if (d.w.length === 0 && d.r.length === 0 && !anyUnknown) return null;
+    return (
+      <div className="kw-affin" style={{ justifyContent: "flex-start", marginTop: 4 }}>
+        {d.w.map((t) => <span key={t} className="kw-chip weak">{t}</span>)}
+        {d.r.map((t) => <span key={t} className="kw-chip res">{t}</span>)}
+        {anyUnknown && <span className="kw-chip unknown">?</span>}
+      </div>
+    );
+  }
+
+  function EnemyEntry({ bookId }) {
+    const b = ENEMY_BOOK[bookId];
+    if (!b) return null;
+    const isSeen = !!seen[bookId];
+    const a = ASSETS[b.asset];
+    const IconC = (a && a.icon) || Package;
+    return (
+      <div className="kw-bestiary-entry">
+        <div className="kw-bestiary-icon" style={{ opacity: isSeen ? 1 : 0.25 }}>
+          <IconC size={20} color="var(--paper)" strokeWidth={1.6} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="kw-bestiary-name" style={{ color: isSeen ? "var(--paper)" : "var(--mist)", opacity: isSeen ? 1 : 0.4 }}>
+            {isSeen ? b.name : "???"}
+          </div>
+          {isSeen && b.note && <div className="kw-bestiary-note">{b.note}</div>}
+          {isSeen && <AffinityChips bookId={bookId} weak={b.weak} resist={b.resist} />}
+        </div>
+      </div>
+    );
+  }
+
+  function BossEntry() {
+    const B = boss;
+    const a = ASSETS[B.asset];
+    const IconC = (a && a.icon) || Package;
+    return (
+      <div className="kw-bestiary-entry">
+        <div className="kw-bestiary-icon" style={{ background: "radial-gradient(circle, rgba(232,180,74,.22), transparent 70%)" }}>
+          <IconC size={22} color="var(--hotaru)" strokeWidth={1.6} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 9, letterSpacing: ".25em", color: "var(--hotaru)", marginBottom: 2 }}>ボス</div>
+          <div className="kw-bestiary-name" style={{ color: "var(--hotaru)" }}>{B.name}</div>
+          <div className="kw-affin" style={{ justifyContent: "flex-start", marginTop: 4 }}>
+            {B.weak.map((t) => <span key={t} className="kw-chip weak">{t}</span>)}
+            {B.resist.map((t) => <span key={t} className="kw-chip res">{t}</span>)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 600, maxHeight: "88vh", display: "flex", flexDirection: "column" }}
+        onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+          <div>
+            <h2 style={{ letterSpacing: ".2em" }}>図鑑</h2>
+            <div className="kw-sub">発見: {totalSeen} / {totalEnemies}</div>
+          </div>
+          <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 11 }} onClick={onClose}>閉じる</button>
+        </div>
+        <div className="kw-bestiary-tabs">
+          {STAGES.map((st, i) => (
+            <button key={i} className={`kw-bestiary-tab ${chIdx === i ? "active" : ""}`}
+              onClick={() => setChIdx(i)}>
+              {i + 1}. {st.name}
+            </button>
+          ))}
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", marginTop: 12, paddingRight: 2 }}>
+          {stage.enemies.map((bookId) => <EnemyEntry key={bookId} bookId={bookId} />)}
+          <div className="kw-bestiary-boss-sep">── ボス ──</div>
+          <BossEntry />
         </div>
       </div>
     </div>
@@ -1353,6 +1636,24 @@ export default function KiriwatariNoMori() {
     loadRun().then((run) => { if (run && run.floor) setSavedRun(run); });
   }, []);
 
+  const invCap = invCapOf(meta);
+
+  async function buySkill(skillId) {
+    if (!meta) return;
+    const skill = SKILL_TREE.find((s) => s.id === skillId);
+    if (!skill || (meta.dewBank || 0) < skill.cost) return;
+    if (skill.requires && !meta.skills?.[skill.requires]) return;
+    if (meta.skills?.[skillId]) return;
+    const m2 = {
+      ...meta,
+      dewBank: meta.dewBank - skill.cost,
+      skills: { ...meta.skills, [skillId]: true },
+      ...(skillId === "inheritSlot" ? { slots: meta.slots + 1 } : {}),
+    };
+    setMeta(m2);
+    await saveMeta(m2);
+  }
+
   const armorDef = (st) => Object.values(st.armor).reduce((a, x) => a + (x ? x.def : 0), 0);
   const maxHpOf = (st, m = meta) => BASE_HP + (m?.bonusHp || 0) +
     Object.values(st.armor).reduce((a, x) => a + (x ? x.hp : 0), 0);
@@ -1401,7 +1702,7 @@ export default function KiriwatariNoMori() {
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
       ...eq, cds: {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false,
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false,
       coach: chapterIdx === 0 && (m.checkpoint || 1) === 1,
       stageIntro: chapterIdx,
     };
@@ -1419,7 +1720,8 @@ export default function KiriwatariNoMori() {
       player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
       cds: run.cds || {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, coach: false, stageIntro: null,
+      confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false,
+      coach: false, stageIntro: null,
     };
     clearRun(); setSavedRun(null);
     setG(enterNode(base));
@@ -1443,7 +1745,14 @@ export default function KiriwatariNoMori() {
         }
       }
       s.phase = "battle";
-      s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor);
+      const lastRare = s.lastRareSeen || 0;
+      const rareChance = meta ? rareChanceOf(meta) : 0.08;
+      s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor, lastRare, rareChance);
+      if (kind !== "boss" && s.enemies.some((e) => e.rare)) s = { ...s, lastRareSeen: s.floor };
+      // 遭遇した敵を図鑑に記録
+      { const ns = { ...(meta.seen || {}) }; let ch = false;
+        for (const e of s.enemies) { if (e.bookId && !ns[e.bookId]) { ns[e.bookId] = true; ch = true; } }
+        if (ch) { const m2 = { ...meta, seen: ns }; setMeta(m2); saveMeta(m2); } }
       s.cds = {};
       s = pushLog(s, kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss");
       if (s.enemies.some((e) => e.rare)) s = pushLog(s, "……金色の光。金枝の精が紛れている!", true);
@@ -1463,7 +1772,7 @@ export default function KiriwatariNoMori() {
     const nf = s.floor + 1;
     if (nf > 100) return s; // 100層クリアはボス撃破側で処理
     s.floor = nf; s.node = 0; s.nodes = floorNodes(nf);
-    saveRun(nf, s.player, s.weapons, s.armor, s.inv, s.cds); // タスクキル対策: フロア移行時に保存
+    saveRun(nf, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen); // タスクキル対策: フロア移行時に保存
     if (floorInStage(nf) === 1) {
       s.stageIntro = stageOf(nf); // 新章に入ったらタイトル演出を挟む
       s = pushLog(s, `第${stageOf(nf) + 1}章「${STAGES[stageOf(nf)].name}」に足を踏み入れた。`, true);
@@ -1499,7 +1808,9 @@ export default function KiriwatariNoMori() {
     const enemies = s.enemies.map((e) => ({ ...e }));
     const discovered = JSON.parse(JSON.stringify(meta.discovered || {}));
     const atkMul = (s.player.atkUp > 0 ? 1.4 : 1);
-    const raw = weapon.atk * atkMul;
+    const masteryMult = (meta?.skills?.bladeMastery && t.dmgType === "斬") ? 1.15
+      : (meta?.skills?.magicMastery && t.dmgType === "魔") ? 1.15 : 1;
+    const raw = weapon.atk * atkMul * masteryMult;
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
     const floats = [];
@@ -1600,9 +1911,9 @@ export default function KiriwatariNoMori() {
       s.enemies = enemies;
       s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
     } else if (c.kind === "meta") {
-      const m2 = { ...meta, slots: meta.slots + 1 };
+      const m2 = { ...meta, dewBank: (meta.dewBank || 0) + 1 };
       setMeta(m2); saveMeta(m2);
-      s = pushLog(s, `宝樹の雫が輝く……魂の継承枠が ${m2.slots} になった。`, true);
+      s = pushLog(s, `宝樹の雫が輝く……精の結晶を得た。(${m2.dewBank}個 / スキルツリーで使用可能)`, true);
     } else if (c.kind === "metaHp") {
       const m2 = { ...meta, bonusHp: (meta.bonusHp || 0) + 6 };
       setMeta(m2); saveMeta(m2);
@@ -1818,7 +2129,7 @@ export default function KiriwatariNoMori() {
   function unequipWeapon(idx) {
     setG((s) => {
       const w = s.weapons[idx];
-      if (!w || s.inv.length >= INV_CAP) return s;
+      if (!w || s.inv.length >= invCap) return s;
       return { ...s, weapons: s.weapons.map((x, i) => (i === idx ? null : x)), inv: [...s.inv, w] };
     });
   }
@@ -1838,7 +2149,7 @@ export default function KiriwatariNoMori() {
       ns.player = { ...ns.player, hp: Math.min(maxHpOf(ns), ns.player.hp + (item.hp || 0)) };
       return pushLog(ns, `${item.name}を身につけた。`);
     }
-    if (ns.inv.length >= INV_CAP) return { ...s, full: true }; // 袋がいっぱい: 拾わない
+    if (ns.inv.length >= invCap) return { ...s, full: true }; // 袋がいっぱい: 拾わない
     ns.inv = [...ns.inv, item];
     return { ...ns, full: false };
   }
@@ -1957,7 +2268,7 @@ export default function KiriwatariNoMori() {
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
       ...eq, cds: {}, enemies: [], drops: [], logs: [{ text: "……灯りに導かれ、魂は再び旅の途中へ還る。", strong: true, k: uid() }], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, stageIntro: stageOf(startFloor),
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false, stageIntro: stageOf(startFloor),
     };
     base.player.hp = maxHpOf(base, m2);
     setG(enterNode(base));
@@ -2029,8 +2340,16 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章 を 選 ぶ</button>
             )}
           </div>
-          <button className="kw-btn ghost" style={{ marginTop: 4, padding: "8px 28px", fontSize: 12 }}
-            onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊 び 方</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
+            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
+              onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊 び 方</button>
+            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
+              onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
+              スキルツリー{(meta.dewBank || 0) > 0 ? ` ✦${meta.dewBank}` : ""}
+            </button>
+            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
+              onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図 鑑</button>
+          </div>
           <div className="kw-tmeta" style={{ marginTop: 10, fontSize: 11.5 }}>
             転生 {meta.deaths} 回 ／ 最深 {floorLabel(meta.bestFloor)} ／ 継承枠 {meta.slots}
             {meta.inherited?.length > 0 && <> ／ 継承品 {meta.inherited.length} 点</>}
@@ -2142,6 +2461,12 @@ export default function KiriwatariNoMori() {
             cssClass=""
           />
         )}
+        {g.skillTree && (
+          <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} />
+        )}
+        {g.bestiary && (
+          <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
+        )}
       </div>
     );
   }
@@ -2176,6 +2501,8 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, settingsOpen: true }))}>
                 <Settings size={14} />
               </button>
+              <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 10, letterSpacing: ".1em" }}
+                onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図鑑</button>
               <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
                 onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
             </div>
@@ -2246,7 +2573,7 @@ export default function KiriwatariNoMori() {
               <div className="kw-panel" style={{ padding: "26px 30px", textAlign: "center", maxWidth: 560, width: "100%" }}>
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>勝 利</div>
                 <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 14px" }}>
-                  {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{INV_CAP}</span></> : "今回は何も落ちていないようだ。"}
+                  {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{invCap}</span></> : "今回は何も落ちていないようだ。"}
                 </div>
                 {g.drops.length > 0 && (
                   <div className="kw-grid">
@@ -2301,8 +2628,8 @@ export default function KiriwatariNoMori() {
             <>
               <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御<span style={{ fontSize: 9, color: "var(--mist)", marginLeft: 3 }}>被ダメ半減</span></button>
               <button className="kw-btn ghost" disabled={g.busy} onClick={() => setG((s) => ({ ...s, bag: true }))}
-                style={g.inv.length >= INV_CAP ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
-                袋 ({g.inv.length}/{INV_CAP}){g.inv.length >= INV_CAP ? " 満杯" : ""}
+                style={g.inv.length >= invCap ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
+                袋 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
               </button>
               {g.pending && (
                 <>
@@ -2317,8 +2644,8 @@ export default function KiriwatariNoMori() {
           )}
           {g.phase !== "battle" && g.phase !== "dead" && g.phase !== "clear" && (
             <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, bag: true }))}
-              style={g.inv.length >= INV_CAP ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
-              袋・装備 ({g.inv.length}/{INV_CAP}){g.inv.length >= INV_CAP ? " 満杯" : ""}
+              style={g.inv.length >= invCap ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
+              袋・装備 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
             </button>
           )}
         </div>
@@ -2367,7 +2694,15 @@ export default function KiriwatariNoMori() {
               </>
             )}
 
-            <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "4px 0 8px" }}>── 袋の中身 ({g.inv.length}/{INV_CAP})</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 8px" }}>
+              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em" }}>── 袋の中身 ({g.inv.length}/{invCap})</div>
+              {(meta.dewBank || 0) > 0 && (
+                <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10 }}
+                  onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
+                  <Sparkles size={10} style={{ display: "inline", marginRight: 3 }} />スキルツリー {meta.dewBank}個
+                </button>
+              )}
+            </div>
             {g.inv.length === 0 && <div className="kw-sub">袋は空です。森で拾い集めましょう。</div>}
             <div className="kw-grid">
               {g.inv.map((it) => {
@@ -2397,8 +2732,8 @@ export default function KiriwatariNoMori() {
             <div className="kw-sub">
               しかし魂は森を巡り、また灯りの下へ還る。<br />
               再開地点: <b style={{ color: "var(--hotaru)" }}>第{Math.min(meta.checkpoint || 1, 10)}章のはじめ</b>(章の主を倒すたび先の章から再開できます)<br />
-              <b style={{ color: "var(--hotaru)" }}>継承枠 {meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。
-              (金枝の精が落とす「宝樹の雫」で枠は永続的に増えます)
+              <b style={{ color: "var(--hotaru)" }}>継承枠 {meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。<br />
+              精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。
             </div>
             <div className="kw-grid">
               {allOwned(g).map((it) => (
@@ -2417,6 +2752,11 @@ export default function KiriwatariNoMori() {
               <div style={{ alignSelf: "center", fontSize: 12, color: g.pick.length >= meta.slots ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
                 選択 {g.pick.length} / {meta.slots}
               </div>
+              {(meta.dewBank || 0) > 0 && (
+                <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
+                  <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />スキルツリー ({meta.dewBank}個)
+                </button>
+              )}
               <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: recommendPick(s, meta.slots) }))}>おすすめ</button>
               <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: [] }))}>全て外す</button>
               <button className="kw-btn primary" onClick={rebirth}>
@@ -2457,7 +2797,7 @@ export default function KiriwatariNoMori() {
             <h2 style={{ color: "var(--hotaru)" }}>拾い忘れがあります</h2>
             <div className="kw-sub">
               まだ手にしていない戦利品が <b style={{ color: "var(--hotaru)" }}>{g.drops.length} 点</b> あります。
-              置いていくと二度と拾えません。<span style={{ color: "var(--paper-dim)" }}>(袋 {g.inv.length}/{INV_CAP})</span>
+              置いていくと二度と拾えません。<span style={{ color: "var(--paper-dim)" }}>(袋 {g.inv.length}/{invCap})</span>
             </div>
             <div className="kw-grid">
               {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
@@ -2596,6 +2936,12 @@ export default function KiriwatariNoMori() {
           sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
           cssClass="top"
         />
+      )}
+      {g.skillTree && (
+        <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} />
+      )}
+      {g.bestiary && (
+        <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
       )}
     </div>
   );
