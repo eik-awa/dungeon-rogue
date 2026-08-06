@@ -68,10 +68,10 @@ struct SplashView: View {
                 }
 
                 VStack(spacing: 4) {
-                    Text("ダンジョンローグ")
-                        .font(.custom("HiraginoMincho-W6", size: 22).weight(.bold))
-                        .foregroundColor(Color(red: 0.91, green: 0.71, blue: 0.29))
-                        .shadow(color: Color(red: 0.91, green: 0.71, blue: 0.29).opacity(0.4), radius: 8)
+                    Text("now loading...")
+                        .font(.system(size: 13, weight: .light, design: .monospaced))
+                        .foregroundColor(Color(red: 0.62, green: 0.71, blue: 0.65).opacity(0.6))
+                        .kerning(3)
                 }
 
                 ProgressView()

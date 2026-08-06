@@ -223,8 +223,8 @@ const CONSUMABLES = {
   antidote:   { label: "解毒草",     asset: "antidote",   desc: "毒を消し、HPを10%回復。", kind: "cure", power: 0.10 },
   spore:      { label: "力の胞子",   asset: "spore",      desc: "3ターンの間、攻撃力+40%。", kind: "buff", power: 0.4, turns: 3 },
   bomb:       { label: "森火の実",   asset: "bomb",       desc: "敵全体に固定ダメージ(深い階ほど強力)。", kind: "bomb", power: 25 },
-  dew:        { label: "宝樹の雫",   asset: "dew",        desc: "金枝の精だけが落とす精の結晶。スキルツリーの習得に使う。", kind: "meta" },
-  mossHeart:  { label: "苔の心臓",   asset: "mossHeart",  desc: "使うと最大HPが永続+6。章の主だけが落とす。", kind: "metaHp" },
+  dew:        { label: "宝樹の雫",   asset: "dew",        desc: "金枝の精だけが落とす稀少な雫。継承枠を増やしたり、スキルツリーの結晶に変換できる。", kind: "orb" },
+  mossHeart:  { label: "苔の心臓",   asset: "mossHeart",  desc: "使うと最大HPが永続+6。章の主だけが落とす。一度使うと二度と手に入らない。", kind: "metaHp" },
 };
 
 /* ------------------------------------------------------------
@@ -426,9 +426,9 @@ function weaponSlotsOf(m) {
   const s = m?.skills || {};
   return 3 + (s.weaponSlot4 ? 1 : 0) + (s.weaponSlot5 ? 1 : 0) + (s.weaponSlot6 ? 1 : 0);
 }
-function invCapOf(m) {
+function invCapOf(m, runBonus = 0) {
   const s = m?.skills || {};
-  return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0);
+  return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0) + runBonus;
 }
 function rareChanceOf(m) {
   return 0.08 + ((m?.skills?.goldSense) ? 0.04 : 0);
@@ -527,10 +527,14 @@ const RARE_COOLDOWN = 7; // この階数は金枝の精が出現しない
 function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   const stage = STAGES[stageOf(floor)];
   const fis = floorInStage(floor);
-  const avail = stage.enemies.slice(0, Math.min(stage.enemies.length, 2 + Math.floor((fis - 1) / 2)));
+  // プールは最低3体から開始し、2フロアごとに1体解放(全体上限まで)
+  const poolSize = Math.min(stage.enemies.length, 3 + Math.floor(fis / 2));
+  const avail = stage.enemies.slice(0, poolSize);
   let count = fis <= 2 ? ri(1, 2) : fis <= 5 ? 2 : ri(2, 3);
   if (stageOf(floor) >= 3) count = Math.max(count, 2);
-  const list = Array.from({ length: count }, () => makeEnemy(pick(avail), floor));
+  // シャッフルして順番に取ることで同一フロアでの重複を減らす
+  const shuffled = [...avail].sort(() => Math.random() - 0.5);
+  const list = Array.from({ length: count }, (_, i) => makeEnemy(shuffled[i % shuffled.length], floor));
   if (floor - lastRareSeen >= RARE_COOLDOWN && Math.random() < rareChance) {
     list.push(makeRareEnemy(floor));
   }
@@ -543,7 +547,7 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {} };
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [] };
 
 /* ------------------------------------------------------------
    スキルツリー定義 (宝樹の雫=精の結晶で解放する永続スキル)
@@ -592,9 +596,10 @@ async function loadRun() {
   } catch {}
   return null;
 }
-async function saveRun(floor, player, weapons, armor, inv, cds, lastRareSeen) {
+async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null) {
   try {
-    const data = { floor, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0 };
+    const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
+    if (enemies && enemies.length > 0) data.enemies = enemies;
     await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
   } catch {}
 }
@@ -869,16 +874,53 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   border: 1px solid rgba(157,180,166,.22); border-radius: 4px; cursor: pointer;
   background: transparent; color: var(--mist); }
 .kw-bestiary-tab.active { border-color: var(--hotaru); color: var(--hotaru); background: rgba(232,180,74,.07); }
-.kw-bestiary-entry { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0;
-  border-bottom: 1px solid rgba(157,180,166,.07); }
-.kw-bestiary-entry:last-child { border-bottom: none; }
-.kw-bestiary-icon { flex: 0 0 36px; display: flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(94,130,101,.22), transparent 70%); }
-.kw-bestiary-name { font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: .06em; }
-.kw-bestiary-note { font-size: 11px; color: var(--mist); line-height: 1.7; margin-top: 3px; }
+.kw-bestiary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 4px 0; }
+.kw-bestiary-cell { display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 8px 4px; border-radius: 8px; border: 1px solid transparent; transition: border-color .15s, background .15s; }
+.kw-bestiary-cell.seen { cursor: pointer; }
+.kw-bestiary-cell.seen:hover { border-color: rgba(157,180,166,.28); background: rgba(157,180,166,.06); }
+.kw-bestiary-cell.unseen { opacity: 0.3; cursor: default; }
+.kw-bestiary-cell-icon { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle, rgba(94,130,101,.25), transparent 70%); }
+.kw-bestiary-cell-icon.boss { background: radial-gradient(circle, rgba(232,180,74,.25), transparent 70%); }
+.kw-bestiary-cell-label { font-size: 9px; color: var(--mist); text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; max-width: 56px; }
 .kw-bestiary-boss-sep { font-size: 9px; letter-spacing: .3em; color: var(--hotaru); opacity: .7;
-  text-align: center; margin: 4px 0 8px; }
+  text-align: center; margin: 12px 0 8px; }
+/* 詳細ポップアップ */
+.kw-bestiary-detail-bg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(10,18,14,.75); z-index: 20; border-radius: inherit; }
+.kw-bestiary-detail-card { background: var(--panel); border: 1px solid rgba(157,180,166,.2); border-radius: 10px;
+  padding: 18px 20px; max-width: 260px; width: 88%; }
+/* 図鑑 章カード */
+.kw-bestiary-ch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.kw-bestiary-ch-card { position: relative; overflow: hidden; height: 88px; border-radius: 8px;
+  border: 1px solid rgba(157,180,166,.18); cursor: pointer; text-align: left; padding: 0;
+  background: none; transition: border-color .15s; }
+.kw-bestiary-ch-card:hover { border-color: rgba(157,180,166,.4); }
+.kw-bestiary-ch-info { position: absolute; inset: 0; padding: 10px 12px; display: flex; flex-direction: column; justify-content: flex-end; }
+/* スキルツリー */
+.kw-sk-cat-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.kw-sk-cat-icon { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  background: rgba(94,130,101,.18); flex-shrink: 0; }
+.kw-sk-cat-line { flex: 1; height: 1px; background: linear-gradient(to right, rgba(157,180,166,.25), transparent); }
+.kw-sk-row { display: flex; align-items: stretch; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.kw-sk-card { position: relative; overflow: hidden; padding: 11px 13px 10px; border-radius: 10px;
+  flex: 1; min-width: 110px; max-width: 200px;
+  border: 1px solid rgba(157,180,166,.14); background: rgba(94,130,101,.04);
+  transition: border-color .18s, background .18s, box-shadow .18s; }
+.kw-sk-card.owned { border-color: rgba(232,180,74,.55);
+  background: linear-gradient(145deg, rgba(232,180,74,.1), rgba(94,130,101,.07));
+  box-shadow: 0 0 16px rgba(232,180,74,.16), inset 0 0 24px rgba(232,180,74,.04); }
+.kw-sk-card.buyable { border-color: rgba(143,211,154,.5); background: rgba(94,130,101,.09); cursor: pointer; }
+.kw-sk-card.buyable:hover { background: rgba(94,130,101,.17); box-shadow: 0 0 10px rgba(143,211,154,.18); }
+.kw-sk-card.blocked { opacity: .28; }
+.kw-sk-card-bg { position: absolute; right: -4px; bottom: -6px; pointer-events: none; }
+.kw-sk-arrow { display: flex; align-items: center; padding: 0 2px; flex-shrink: 0;
+  color: rgba(157,180,166,.3); font-size: 10px; }
+/* ローディング */
+@keyframes kw-dot-fade { 0%,80%,100% { opacity: .2; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
+.kw-loading-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--hotaru); display: inline-block; }
 `;
 
 /* ------------------------------------------------------------
@@ -1308,72 +1350,147 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
 /* ------------------------------------------------------------
    スキルツリー オーバーレイ
 ------------------------------------------------------------ */
+const SKILL_ICON_MAP = {
+  weaponSlot4: Swords, weaponSlot5: Swords, weaponSlot6: Swords,
+  bladeMastery: Sword, magicMastery: Wand2,
+  bagCapI: Package, bagCapII: Package,
+  goldSense: Sparkles,
+  inheritSlot: Heart, startBonus: Apple,
+};
+const CAT_ICON_MAP = { "戦闘拡張": Swords, "探索": Leaf, "転生": Moon };
+
 function SkillTreeOverlay({ meta, onClose, onBuy }) {
   const skills = meta?.skills || {};
   const dewBank = meta?.dewBank || 0;
+  const isOwned = (id) => !!skills[id];
+  const canBuy = (sk) => !skills[sk.id] && dewBank >= sk.cost && (!sk.requires || !!skills[sk.requires]);
+
   const categories = [...new Set(SKILL_TREE.map((s) => s.category))];
-  const canBuy = (skill) => {
-    if (skills[skill.id]) return false;
-    if (dewBank < skill.cost) return false;
-    if (skill.requires && !skills[skill.requires]) return false;
-    return true;
-  };
+
+  function buildRows(catSkills) {
+    const childOf = {};
+    catSkills.forEach((s) => { if (s.requires) childOf[s.requires] = [...(childOf[s.requires] || []), s]; });
+    const roots = catSkills.filter((s) => !catSkills.find((cs) => cs.id === s.requires));
+    const chains = roots.map((root) => {
+      const chain = [root];
+      let cur = root;
+      while (childOf[cur.id]?.length) { cur = childOf[cur.id][0]; chain.push(cur); }
+      return chain;
+    });
+    const singles = chains.filter((c) => c.length === 1).map((c) => c[0]);
+    const multis = chains.filter((c) => c.length > 1);
+    const rows = multis.map((c) => ({ type: "chain", skills: c }));
+    if (singles.length) rows.push({ type: "group", skills: singles });
+    return rows;
+  }
+
+  function SkillCard({ skill, inRow }) {
+    const owned = isOwned(skill.id);
+    const buyable = canBuy(skill);
+    const blocked = !!(skill.requires && !isOwned(skill.requires));
+    const BgIcon = SKILL_ICON_MAP[skill.id] || Gem;
+    const cls = `kw-sk-card${owned ? " owned" : buyable ? " buyable" : blocked ? " blocked" : ""}`;
+    return (
+      <div className={cls} style={inRow ? { flex: 1 } : {}} onClick={() => buyable && onBuy(skill.id)}>
+        {/* 背景アイコン */}
+        <div className="kw-sk-card-bg">
+          <BgIcon size={54} strokeWidth={0.7}
+            color={owned ? "rgba(232,180,74,.13)" : "rgba(157,180,166,.07)"} />
+        </div>
+        {/* コスト/状態バッジ */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{
+            fontSize: 9, letterSpacing: ".12em", padding: "2px 6px", borderRadius: 3,
+            background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
+            color: owned ? "var(--hotaru)" : buyable ? "#8fd39a" : "var(--mist)",
+          }}>
+            {owned ? "✦ 習得済" : `${skill.cost} 結晶`}
+          </span>
+          {owned && <Sparkles size={10} color="var(--hotaru)" />}
+        </div>
+        {/* 名前 */}
+        <div style={{ fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 700, letterSpacing: ".05em",
+          color: owned ? "var(--hotaru)" : "var(--paper)", lineHeight: 1.2 }}>
+          {skill.name}
+        </div>
+        {/* 説明 */}
+        <div style={{ fontSize: 10, color: "var(--mist)", lineHeight: 1.6, marginTop: 5 }}>{skill.desc}</div>
+        {blocked && (
+          <div style={{ fontSize: 9, color: "var(--danger)", marginTop: 4, letterSpacing: ".05em" }}>
+            要: {SKILL_TREE.find((s2) => s2.id === skill.requires)?.name}
+          </div>
+        )}
+        {buyable && (
+          <div style={{ marginTop: 6, fontSize: 9, color: "#8fd39a", letterSpacing: ".12em" }}>▶ タップで習得</div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="kw-overlay top" onClick={onClose}>
-      <div className="kw-panel kw-sheet" style={{ maxWidth: 600 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 560, maxHeight: "88vh", display: "flex", flexDirection: "column" }}
+        onClick={(e) => e.stopPropagation()}>
+
+        {/* ヘッダー */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
           <div>
             <h2 style={{ letterSpacing: ".2em" }}>スキルツリー</h2>
-            <div className="kw-sub">
-              精の結晶(宝樹の雫)を消費してスキルを永続習得する。<br />
-              所持: <b style={{ color: "var(--hotaru)" }}>{dewBank}</b> 精の結晶
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 20,
+                background: "rgba(232,180,74,.1)", border: "1px solid rgba(232,180,74,.3)" }}>
+                <Sparkles size={10} color="var(--hotaru)" />
+                <span style={{ fontSize: 11, color: "var(--hotaru)", fontWeight: 700 }}>{dewBank}</span>
+                <span style={{ fontSize: 10, color: "rgba(232,180,74,.7)" }}>精の結晶</span>
+              </div>
             </div>
           </div>
           <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={onClose}><X size={14} /></button>
         </div>
-        {categories.map((cat) => (
-          <div key={cat} style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 8 }}>── {cat}</div>
-            <div className="kw-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
-              {SKILL_TREE.filter((sk) => sk.category === cat).map((skill) => {
-                const owned = !!skills[skill.id];
-                const buyable = canBuy(skill);
-                const blocked = !!(skill.requires && !skills[skill.requires]);
-                return (
-                  <div key={skill.id}
-                    className={`kw-panel kw-cell ${buyable ? "targetable" : ""}`}
-                    style={{
-                      opacity: blocked ? .38 : 1,
-                      boxShadow: owned ? "0 0 0 1.5px var(--hotaru)" : undefined,
-                      cursor: buyable ? "pointer" : "default",
-                    }}
-                    onClick={() => buyable && onBuy(skill.id)}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 10, color: owned ? "var(--hotaru)" : "var(--mist)", letterSpacing: ".1em" }}>
-                        {owned ? "習得済" : `${skill.cost}個`}
-                      </span>
-                      {owned && <Sparkles size={11} color="var(--hotaru)" />}
-                    </div>
-                    <div className="kw-cname" style={{ color: owned ? "var(--hotaru)" : "var(--paper)", marginTop: 4 }}>
-                      {skill.name}
-                    </div>
-                    <div className="kw-cmeta">{skill.desc}</div>
-                    {blocked && (
-                      <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3 }}>
-                        要: {SKILL_TREE.find((s2) => s2.id === skill.requires)?.name}
-                      </div>
-                    )}
-                    {buyable && (
-                      <div style={{ marginTop: 6, fontSize: 10, color: "var(--hotaru)", letterSpacing: ".1em" }}>タップで習得</div>
-                    )}
+
+        {/* カテゴリ別 */}
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {categories.map((cat) => {
+            const CatIcon = CAT_ICON_MAP[cat] || Gem;
+            const catSkills = SKILL_TREE.filter((s) => s.category === cat);
+            const rows = buildRows(catSkills);
+            return (
+              <div key={cat} style={{ marginBottom: 22 }}>
+                <div className="kw-sk-cat-head">
+                  <div className="kw-sk-cat-icon">
+                    <CatIcon size={14} color="var(--mist)" strokeWidth={1.5} />
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        <div className="kw-actions" style={{ justifyContent: "center", marginTop: 18 }}>
-          <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={onClose}>閉じる</button>
+                  <span style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", whiteSpace: "nowrap" }}>{cat}</span>
+                  <div className="kw-sk-cat-line" />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {rows.map((row, ri) => (
+                    <div key={ri} className="kw-sk-row">
+                      {row.type === "chain"
+                        ? row.skills.map((skill, si) => (
+                            <React.Fragment key={skill.id}>
+                              <SkillCard skill={skill} inRow={false} />
+                              {si < row.skills.length - 1 && (
+                                <div className="kw-sk-arrow">
+                                  <ChevronRight size={14} strokeWidth={1.5} />
+                                </div>
+                              )}
+                            </React.Fragment>
+                          ))
+                        : row.skills.map((skill) => (
+                            <SkillCard key={skill.id} skill={skill} inRow={true} />
+                          ))
+                      }
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ paddingTop: 10, display: "flex", justifyContent: "center" }}>
+          <button className="kw-btn primary" style={{ padding: "10px 36px" }} onClick={onClose}>閉じる</button>
         </div>
       </div>
     </div>
@@ -1384,24 +1501,38 @@ function SkillTreeOverlay({ meta, onClose, onBuy }) {
    図鑑 オーバーレイ
 ------------------------------------------------------------ */
 function BestiaryOverlay({ meta, onClose }) {
-  const [chIdx, setChIdx] = useState(0);
+  const [chIdx, setChIdx] = useState(null); // null = 章選択, number = 敵グリッド
+  const [selected, setSelected] = useState(null); // { bookId, isBoss }
   const seen = meta?.seen || {};
   const discovered = meta?.discovered || {};
-  const stage = STAGES[chIdx];
-  const boss = stage.boss;
+  const checkpoint = meta?.checkpoint || 1;
 
-  const totalSeen = STAGES.reduce((sum, st) => {
-    return sum + st.enemies.filter((id) => seen[id]).length;
+  // 章 i の「固有敵リスト」: それより前の章に同じ敵がいれば除外
+  function uniqueEnemies(stageIdx) {
+    const prior = new Set(STAGES.slice(0, stageIdx).flatMap((s) => s.enemies));
+    return STAGES[stageIdx].enemies.filter((id) => !prior.has(id));
+  }
+
+  // 遭遇済み敵がいる章を表示（クリア未済でも可）
+  const clearedStages = STAGES.map((st, i) => ({ st, i, ch: i + 1 }))
+    .filter(({ i }) => uniqueEnemies(i).some((id) => seen[id]) || (STAGES[i].boss?.id && seen[STAGES[i].boss.id]));
+
+  const totalSeen = clearedStages.reduce((sum, { i, st }) => {
+    const bSeen = st.boss?.id && seen[st.boss.id] ? 1 : 0;
+    return sum + uniqueEnemies(i).filter((id) => seen[id]).length + bSeen;
   }, 0);
-  const totalEnemies = STAGES.reduce((sum, st) => sum + st.enemies.length, 0);
+  const totalEnemies = clearedStages.reduce((sum, { i, st }) => sum + uniqueEnemies(i).length + 1, 0);
+
+  const stage = chIdx !== null ? STAGES[chIdx] : null;
+  const boss = stage?.boss;
 
   function AffinityChips({ bookId, weak, resist }) {
     const d = discovered[bookId] || { w: [], r: [] };
-    const allTypes = [...weak, ...resist];
+    const allTypes = [...(weak || []), ...(resist || [])];
     const anyUnknown = allTypes.some((t) => !d.w.includes(t) && !d.r.includes(t));
     if (d.w.length === 0 && d.r.length === 0 && !anyUnknown) return null;
     return (
-      <div className="kw-affin" style={{ justifyContent: "flex-start", marginTop: 4 }}>
+      <div className="kw-affin" style={{ justifyContent: "flex-start", marginTop: 6 }}>
         {d.w.map((t) => <span key={t} className="kw-chip weak">{t}</span>)}
         {d.r.map((t) => <span key={t} className="kw-chip res">{t}</span>)}
         {anyUnknown && <span className="kw-chip unknown">?</span>}
@@ -1409,44 +1540,53 @@ function BestiaryOverlay({ meta, onClose }) {
     );
   }
 
-  function EnemyEntry({ bookId }) {
-    const b = ENEMY_BOOK[bookId];
+  function EntryCell({ bookId, isBoss }) {
+    const b = isBoss ? boss : ENEMY_BOOK[bookId];
     if (!b) return null;
-    const isSeen = !!seen[bookId];
-    const a = ASSETS[b.asset];
-    const IconC = (a && a.icon) || Package;
+    const id = isBoss ? boss.id : bookId;
+    const isSeen = !!seen[id];
+    const a = isSeen ? ASSETS[b.asset] : null;
+    const IconC = a?.icon || Package;
     return (
-      <div className="kw-bestiary-entry">
-        <div className="kw-bestiary-icon" style={{ opacity: isSeen ? 1 : 0.25 }}>
-          <IconC size={20} color="var(--paper)" strokeWidth={1.6} />
+      <div className={`kw-bestiary-cell ${isSeen ? "seen" : "unseen"}`}
+        onClick={isSeen ? () => setSelected({ bookId: id, isBoss }) : undefined}>
+        <div className={`kw-bestiary-cell-icon${isBoss ? " boss" : ""}`}>
+          {isSeen
+            ? <IconC size={20} color={isBoss ? "var(--hotaru)" : "var(--paper)"} strokeWidth={1.6} />
+            : <span style={{ fontSize: 15, color: "var(--mist)", fontWeight: 700 }}>?</span>
+          }
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="kw-bestiary-name" style={{ color: isSeen ? "var(--paper)" : "var(--mist)", opacity: isSeen ? 1 : 0.4 }}>
-            {isSeen ? b.name : "???"}
-          </div>
-          {isSeen && b.note && <div className="kw-bestiary-note">{b.note}</div>}
-          {isSeen && <AffinityChips bookId={bookId} weak={b.weak} resist={b.resist} />}
+        <div className="kw-bestiary-cell-label" style={{ color: isBoss && isSeen ? "var(--hotaru)" : undefined }}>
+          {isSeen ? b.name : "???"}
         </div>
       </div>
     );
   }
 
-  function BossEntry() {
-    const B = boss;
-    const a = ASSETS[B.asset];
-    const IconC = (a && a.icon) || Package;
+  function DetailCard() {
+    if (!selected || !stage) return null;
+    const { bookId, isBoss } = selected;
+    const b = isBoss ? boss : ENEMY_BOOK[bookId];
+    if (!b) return null;
+    const a = ASSETS[b.asset];
+    const IconC = a?.icon || Package;
     return (
-      <div className="kw-bestiary-entry">
-        <div className="kw-bestiary-icon" style={{ background: "radial-gradient(circle, rgba(232,180,74,.22), transparent 70%)" }}>
-          <IconC size={22} color="var(--hotaru)" strokeWidth={1.6} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 9, letterSpacing: ".25em", color: "var(--hotaru)", marginBottom: 2 }}>ボス</div>
-          <div className="kw-bestiary-name" style={{ color: "var(--hotaru)" }}>{B.name}</div>
-          <div className="kw-affin" style={{ justifyContent: "flex-start", marginTop: 4 }}>
-            {B.weak.map((t) => <span key={t} className="kw-chip weak">{t}</span>)}
-            {B.resist.map((t) => <span key={t} className="kw-chip res">{t}</span>)}
+      <div className="kw-bestiary-detail-bg" onClick={() => setSelected(null)}>
+        <div className="kw-bestiary-detail-card" onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+            <div className={`kw-bestiary-cell-icon${isBoss ? " boss" : ""}`} style={{ width: 48, height: 48 }}>
+              <IconC size={24} color={isBoss ? "var(--hotaru)" : "var(--paper)"} strokeWidth={1.5} />
+            </div>
+            <div>
+              {isBoss && <div style={{ fontSize: 9, letterSpacing: ".25em", color: "var(--hotaru)", marginBottom: 2 }}>ボス</div>}
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, letterSpacing: ".06em",
+                color: isBoss ? "var(--hotaru)" : "var(--paper)" }}>{b.name}</div>
+            </div>
           </div>
+          {b.note && <div style={{ fontSize: 11, color: "var(--mist)", lineHeight: 1.7, marginBottom: 4 }}>{b.note}</div>}
+          <AffinityChips bookId={bookId} weak={b.weak} resist={b.resist} />
+          <button className="kw-btn ghost" style={{ marginTop: 14, padding: "4px 14px", fontSize: 11, width: "100%" }}
+            onClick={() => setSelected(null)}>閉じる</button>
         </div>
       </div>
     );
@@ -1454,28 +1594,71 @@ function BestiaryOverlay({ meta, onClose }) {
 
   return (
     <div className="kw-overlay top" onClick={onClose}>
-      <div className="kw-panel kw-sheet" style={{ maxWidth: 600, maxHeight: "88vh", display: "flex", flexDirection: "column" }}
+      <div className="kw-panel kw-sheet"
+        style={{ maxWidth: 480, maxHeight: "88vh", display: "flex", flexDirection: "column", position: "relative" }}
         onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        {selected && <DetailCard />}
+
+        {/* ヘッダー */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
           <div>
-            <h2 style={{ letterSpacing: ".2em" }}>図鑑</h2>
-            <div className="kw-sub">発見: {totalSeen} / {totalEnemies}</div>
+            <h2 style={{ letterSpacing: ".2em" }}>図 鑑</h2>
+            {chIdx !== null
+              ? <div className="kw-sub">
+                  <button style={{ background: "none", border: "none", color: "var(--mist)", fontSize: 11, cursor: "pointer", padding: 0, letterSpacing: ".05em" }}
+                    onClick={() => { setChIdx(null); setSelected(null); }}>
+                    ← 章一覧へ
+                  </button>
+                </div>
+              : <div className="kw-sub">発見: {totalSeen} / {totalEnemies}</div>
+            }
           </div>
           <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 11 }} onClick={onClose}>閉じる</button>
         </div>
-        <div className="kw-bestiary-tabs">
-          {STAGES.map((st, i) => (
-            <button key={i} className={`kw-bestiary-tab ${chIdx === i ? "active" : ""}`}
-              onClick={() => setChIdx(i)}>
-              {i + 1}. {st.name}
-            </button>
-          ))}
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", marginTop: 12, paddingRight: 2 }}>
-          {stage.enemies.map((bookId) => <EnemyEntry key={bookId} bookId={bookId} />)}
-          <div className="kw-bestiary-boss-sep">── ボス ──</div>
-          <BossEntry />
-        </div>
+
+        {/* 章選択 */}
+        {chIdx === null && (
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {clearedStages.length === 0 ? (
+              <div style={{ textAlign: "center", color: "var(--mist)", fontSize: 12, padding: "30px 0" }}>
+                まだ図鑑に記録がありません。<br />章をクリアすると解放されます。
+              </div>
+            ) : (
+              <div className="kw-bestiary-ch-grid">
+                {clearedStages.map(({ st, i, ch }) => {
+                  const uq = uniqueEnemies(i);
+                  const stSeen = uq.filter((id) => seen[id]).length + (st.boss?.id && seen[st.boss.id] ? 1 : 0);
+                  const stTotal = uq.length + 1;
+                  return (
+                    <button key={i} className="kw-bestiary-ch-card" onClick={() => setChIdx(i)}>
+                      <StageBackdrop floor={i * 10 + 1} preview={true} />
+                      <div className="kw-bestiary-ch-info">
+                        <div style={{ fontSize: 9, color: "rgba(157,180,166,.7)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)", lineHeight: 1.3 }}>{st.name}</div>
+                        <div style={{ fontSize: 9, color: "#8fd39a", marginTop: 2 }}>発見 {stSeen}/{stTotal}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 敵グリッド */}
+        {chIdx !== null && stage && (
+          <div style={{ flex: 1, overflowY: "auto", paddingRight: 2 }}>
+            <div className="kw-bestiary-grid">
+              {uniqueEnemies(chIdx).map((bookId) => <EntryCell key={bookId} bookId={bookId} isBoss={false} />)}
+            </div>
+            <div className="kw-bestiary-boss-sep">── ボス ──</div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{ width: "calc(20% - 3px)" }}>
+                <EntryCell isBoss={true} />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1503,6 +1686,8 @@ export default function KiriwatariNoMori() {
     try { const v = localStorage.getItem("kw-se-v");  return v !== null ? Math.max(0, Math.min(100, parseInt(v))) : 80; } catch { return 80; }
   });
   const [savedRun, setSavedRun] = useState(null);
+  const [confirmAbandon, setConfirmAbandon] = useState(false);
+  const [confirmNewRun, setConfirmNewRun] = useState(null); // null or callback fn
 
   const [sleepDisabled, setSleepDisabled] = useState(() => {
     try { return localStorage.getItem("kw-sleep") !== "0"; } catch { return true; }
@@ -1636,7 +1821,7 @@ export default function KiriwatariNoMori() {
     loadRun().then((run) => { if (run && run.floor) setSavedRun(run); });
   }, []);
 
-  const invCap = invCapOf(meta);
+  const invCap = invCapOf(meta, g?.orbBagBonus || 0);
 
   async function buySkill(skillId) {
     if (!meta) return;
@@ -1703,28 +1888,41 @@ export default function KiriwatariNoMori() {
       ...eq, cds: {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
       confirm: null, full: false, lastRareSeen: 0, skillTree: false,
+      orbBagBonus: 0, orbSlotBonus: 0, orbChoice: false,
       coach: chapterIdx === 0 && (m.checkpoint || 1) === 1,
       stageIntro: chapterIdx,
     };
     base.player.hp = maxHpOf(base, m);
     clearRun(); setSavedRun(null);
-    setG(enterNode(base));
+    const first = enterNode(base);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    setG(first);
   }
   // チェックポイント(前回到達章)から続ける
   function startRun() { startFromChapter((meta.checkpoint || 1) - 1); }
 
   // タスクキル後の再開: 保存済みフロア状態を復元する
   function resumeRun(run) {
+    const savedEnemies = (run.enemies || []).filter((e) => e.hp > 0);
     const base = {
-      screen: "run", floor: run.floor, node: 0, nodes: floorNodes(run.floor), phase: "battle",
+      screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "battle",
       player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
-      cds: run.cds || {}, enemies: [], drops: [], logs: [], floats: [],
+      cds: run.cds || {}, drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
       confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false,
+      orbBagBonus: run.orbBagBonus || 0, orbSlotBonus: run.orbSlotBonus || 0, orbChoice: false,
       coach: false, stageIntro: null,
     };
-    clearRun(); setSavedRun(null);
-    setG(enterNode(base));
+    setSavedRun(null);
+    if (savedEnemies.length > 0) {
+      const restored = { ...base, enemies: savedEnemies };
+      saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, restored.enemies);
+      setG(restored);
+    } else {
+      const next = enterNode(base);
+      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+      setG(next);
+    }
   }
 
   function enterNode(st) {
@@ -1766,20 +1964,23 @@ export default function KiriwatariNoMori() {
     let s = { ...st };
     if (s.node + 1 < s.nodes.length) {
       s.node += 1;
-      return enterNode(s);
+      const next = enterNode(s);
+      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+      return next;
     }
     // 次の階へ
     const nf = s.floor + 1;
     if (nf > 100) return s; // 100層クリアはボス撃破側で処理
     s.floor = nf; s.node = 0; s.nodes = floorNodes(nf);
-    saveRun(nf, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen); // タスクキル対策: フロア移行時に保存
     if (floorInStage(nf) === 1) {
       s.stageIntro = stageOf(nf); // 新章に入ったらタイトル演出を挟む
       s = pushLog(s, `第${stageOf(nf) + 1}章「${STAGES[stageOf(nf)].name}」に足を踏み入れた。`, true);
     } else {
       s = pushLog(s, `第 ${floorLabel(nf)} 層へ降りた。霧が濃くなる……`);
     }
-    return enterNode(s);
+    const next = enterNode(s);
+    saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+    return next;
   }
 
   /* ---------- ダメージ計算 ---------- */
@@ -1910,15 +2111,13 @@ export default function KiriwatariNoMori() {
       }
       s.enemies = enemies;
       s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
-    } else if (c.kind === "meta") {
-      const m2 = { ...meta, dewBank: (meta.dewBank || 0) + 1 };
-      setMeta(m2); saveMeta(m2);
-      s = pushLog(s, `宝樹の雫が輝く……精の結晶を得た。(${m2.dewBank}個 / スキルツリーで使用可能)`, true);
     } else if (c.kind === "metaHp") {
       const m2 = { ...meta, bonusHp: (meta.bonusHp || 0) + 6 };
       setMeta(m2); saveMeta(m2);
       s.player = { ...s.player, hp: s.player.hp + 6 };
       s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
+    } else if (c.kind === "orb") {
+      s = { ...s, orbChoice: true, busy: false };
     } else {
       s.busy = false;
     }
@@ -1959,7 +2158,7 @@ export default function KiriwatariNoMori() {
   }
   const killedAll = (st) => st.enemies;
 
-  function rollDrops(enemies, floor) {
+  function rollDrops(enemies, floor, inv) {
     const drops = [];
     for (const e of enemies) {
       if (e.rare) {
@@ -1968,7 +2167,9 @@ export default function KiriwatariNoMori() {
         continue;
       }
       if (e.boss) {
-        drops.push(makeConsumable("mossHeart"));
+        // ステージごとに1回だけドロップ(mossHeartStagesに章インデックスが記録されたら二度と出ない)
+        const sIdx = stageOf(floor);
+        if (!(meta.mossHeartStages || []).includes(sIdx)) drops.push(makeConsumable("mossHeart"));
         drops.push(makeWeapon(floor, { rarity: "legend" }));
         drops.push(makeArmor(floor, { rarity: "epic" }));
         continue;
@@ -1986,15 +2187,20 @@ export default function KiriwatariNoMori() {
   async function battleWon(enemies) {
     const st = gRef.current;
     const isBoss = enemies.some((e) => e.boss);
-    const drops = rollDrops(enemies.filter((e) => e.hp <= 0 && !e.fled), st.floor);
+    const drops = rollDrops(enemies.filter((e) => e.hp <= 0 && !e.fled), st.floor, st.inv);
     let s = { ...st, busy: false, phase: "reward", drops };
     s.player = { ...s.player, guard: false };
     if (isBoss) {
       const stage = stageOf(st.floor) + 1; // 1..10
+      const sIdx = stage - 1;
+      // 苔の心臓がドロップした章をフラグ登録(以降その章では出なくなる)
+      const mhStages = drops.some((d) => d.itemId === "mossHeart")
+        ? [...(meta.mossHeartStages || []), sIdx]
+        : (meta.mossHeartStages || []);
       if (stage >= 10) {
         // 百層踏破 — エンディング
         const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops];
-        const m2 = { ...meta, clears: meta.clears + 1, slots: meta.slots + 1, bestFloor: 100, inherited: keep };
+        const m2 = { ...meta, mossHeartStages: mhStages, clears: meta.clears + 1, slots: meta.slots + 1, bestFloor: 100, inherited: keep };
         setMeta(m2); await saveMeta(m2);
         s.phase = "ending";
         // 初回全章踏破でレビューを促す
@@ -2004,7 +2210,7 @@ export default function KiriwatariNoMori() {
       } else {
         // 章クリア: 継承枠+1、次章から再出発できるようになる
         const m2 = {
-          ...meta, slots: meta.slots + 1,
+          ...meta, mossHeartStages: mhStages, slots: meta.slots + 1,
           bestFloor: Math.max(meta.bestFloor, st.floor),
           checkpoint: Math.max(meta.checkpoint || 1, stage + 1),
         };
@@ -2093,10 +2299,13 @@ export default function KiriwatariNoMori() {
       setMeta(m2); saveMeta(m2);
       clearRun(); setSavedRun(null); // 死亡時は再開データを消去
       const stDead = { ...s, enemies, player, cds };
-      setG({ ...stDead, busy: false, phase: "dead", pick: recommendPick(stDead, meta.slots) });
+      const effSlots = meta.slots + (s.orbSlotBonus || 0);
+      setG({ ...stDead, busy: false, phase: "dead", pick: recommendPick(stDead, effSlots), effSlots });
       return;
     }
-    setG({ ...s, enemies, player, cds, busy: false });
+    const finalState = { ...s, enemies, player, cds, busy: false };
+    setG(finalState);
+    saveRun(finalState.floor, finalState.node, finalState.player, finalState.weapons, finalState.armor, finalState.inv, finalState.cds, finalState.lastRareSeen, finalState.orbBagBonus, finalState.enemies);
   }
 
   /* ---------- 装備・袋 ---------- */
@@ -2245,7 +2454,7 @@ export default function KiriwatariNoMori() {
     setG((s) => {
       const pick = s.pick.includes(item.id)
         ? s.pick.filter((x) => x !== item.id)
-        : s.pick.length < meta.slots ? [...s.pick, item.id] : s.pick;
+        : s.pick.length < (s.effSlots ?? meta.slots) ? [...s.pick, item.id] : s.pick;
       return { ...s, pick };
     });
   }
@@ -2278,8 +2487,22 @@ export default function KiriwatariNoMori() {
      描画
   ============================================================ */
   if (!meta) {
-    return (<div className="kw-root"><style>{CSS}</style>
-      <div className="kw-title"><div className="kw-tsub">森の記憶を読んでいます……</div></div></div>);
+    return (
+      <div className="kw-root" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{CSS}</style>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 10, letterSpacing: ".55em", color: "rgba(157,180,166,.45)", marginBottom: 14 }}>
+            now loading
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="kw-loading-dot"
+                style={{ animation: `kw-dot-fade 1.4s ${i * 0.22}s ease-in-out infinite` }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   /* ---------- タイトル ---------- */
@@ -2326,13 +2549,20 @@ export default function KiriwatariNoMori() {
             </div>
           )}
           {savedRun && (
-            <button className="kw-btn" style={{ marginTop: 6, padding: "10px 28px", fontSize: 13, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
-              onClick={() => resumeRun(savedRun)}>
-              前回の冒険を再開（{floorLabel(savedRun.floor)}層）
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", justifyContent: "center" }}>
+              <button className="kw-btn" style={{ padding: "10px 28px", fontSize: 13, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+                onClick={() => resumeRun(savedRun)}>
+                冒険を再開（{floorLabel(savedRun.floor)}層）
+              </button>
+              <button className="kw-btn ghost" style={{ padding: "10px 16px", fontSize: 12, color: "var(--danger)", borderColor: "rgba(220,80,80,.35)" }}
+                onClick={() => setConfirmAbandon(true)}>
+                放棄する
+              </button>
+            </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
-            <button className="kw-btn primary" style={{ padding: "13px 36px", fontSize: 15 }} onClick={startRun}>
+            <button className="kw-btn primary" style={{ padding: "13px 36px", fontSize: 15 }}
+              onClick={() => savedRun ? setConfirmNewRun(() => startRun) : startRun()}>
               {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章 から 続 け る` : "森 へ 入 る"}
             </button>
             {meta.checkpoint > 1 && (
@@ -2386,7 +2616,13 @@ export default function KiriwatariNoMori() {
                         borderRadius: 8, border: current ? "1.5px solid var(--hotaru)" : "1px solid rgba(157,180,166,.18)",
                         textAlign: "left", cursor: "pointer", padding: 0,
                       }}
-                      onClick={() => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i); }}>
+                      onClick={() => {
+                        if (savedRun) {
+                          setConfirmNewRun(() => () => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i); });
+                        } else {
+                          setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i);
+                        }
+                      }}>
                       {/* ステージ背景プレビュー */}
                       <StageBackdrop floor={i * 10 + 1} preview={true} />
                       {/* テキスト */}
@@ -2412,6 +2648,45 @@ export default function KiriwatariNoMori() {
             </div>
           </div>
         )}
+        {confirmAbandon && (
+          <div className="kw-overlay top" onClick={() => setConfirmAbandon(false)}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ color: "var(--danger)" }}>冒険を放棄しますか?</h2>
+              <div className="kw-sub">
+                中断セーブを削除します。<br />
+                所持していたアイテムや進行状況はすべて失われます。<br />
+                転生回数・継承品・スキルなどのメタ記録は保たれます。
+              </div>
+              <div className="kw-actions">
+                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                  onClick={() => setConfirmAbandon(false)}>← キャンセル</button>
+                <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+                  onClick={() => { clearRun(); setSavedRun(null); setConfirmAbandon(false); }}>
+                  放棄する
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {confirmNewRun && (
+          <div className="kw-overlay top" onClick={() => setConfirmNewRun(null)}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+              <h2>中断データがあります</h2>
+              <div className="kw-sub">
+                新しく始めると、中断中の冒険データは失われます。<br />
+                転生回数・継承品・スキルなどのメタ記録は保たれます。
+              </div>
+              <div className="kw-actions">
+                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                  onClick={() => setConfirmNewRun(null)}>← キャンセル</button>
+                <button className="kw-btn primary"
+                  onClick={() => { clearRun(); setSavedRun(null); confirmNewRun(); setConfirmNewRun(null); }}>
+                  新しく始める
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {g.confirmReset && (
           <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, confirmReset: false }))}>
             <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
@@ -2429,7 +2704,7 @@ export default function KiriwatariNoMori() {
                     const m2 = { ...meta, checkpoint: 1, inherited: [] };
                     setMeta(m2); await saveMeta(m2);
                     setG({ screen: "title" });
-                  }}>第1章からやり直す</button>
+                  }}>始めからやり直す</button>
               </div>
             </div>
           </div>
@@ -2732,7 +3007,7 @@ export default function KiriwatariNoMori() {
             <div className="kw-sub">
               しかし魂は森を巡り、また灯りの下へ還る。<br />
               再開地点: <b style={{ color: "var(--hotaru)" }}>第{Math.min(meta.checkpoint || 1, 10)}章のはじめ</b>(章の主を倒すたび先の章から再開できます)<br />
-              <b style={{ color: "var(--hotaru)" }}>継承枠 {meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。<br />
+              <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 10 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
               精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。
             </div>
             <div className="kw-grid">
@@ -2749,15 +3024,15 @@ export default function KiriwatariNoMori() {
               </div>
             )}
             <div className="kw-actions">
-              <div style={{ alignSelf: "center", fontSize: 12, color: g.pick.length >= meta.slots ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
-                選択 {g.pick.length} / {meta.slots}
+              <div style={{ alignSelf: "center", fontSize: 12, color: g.pick.length >= (g.effSlots ?? meta.slots) ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
+                選択 {g.pick.length} / {g.effSlots ?? meta.slots}
               </div>
               {(meta.dewBank || 0) > 0 && (
                 <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
                   <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />スキルツリー ({meta.dewBank}個)
                 </button>
               )}
-              <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: recommendPick(s, meta.slots) }))}>おすすめ</button>
+              <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: recommendPick(s, s.effSlots ?? meta.slots) }))}>おすすめ</button>
               <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: [] }))}>全て外す</button>
               <button className="kw-btn primary" onClick={rebirth}>
                 {g.pick.length > 0 ? `${g.pick.length}点と共に、生まれ変わる` : "何も持たずに、生まれ変わる"}
@@ -2915,15 +3190,20 @@ export default function KiriwatariNoMori() {
       {g.confirm === "title" && (
         <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, confirm: null }))}>
           <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ color: "var(--hotaru)" }}>タイトルに戻りますか?</h2>
+            <h2 style={{ color: "var(--hotaru)" }}>冒険を中断しますか?</h2>
             <div className="kw-sub">
-              いまの潜行は終わります。<br />
-              転生回数・継承枠・到達章などの記録は保存されています。<br />
-              次にタイトルから入ると、到達済みの章のはじめから再開できます。
+              現在の状態を中断セーブしてタイトルへ戻ります。<br />
+              タイトルから「再開」を選ぶと同じ場所から続けられます。
             </div>
             <div className="kw-actions">
               <button className="kw-btn ghost" style={{ marginRight: "auto" }} onClick={() => setG((s) => ({ ...s, confirm: null }))}>← 続ける</button>
-              <button className="kw-btn primary" onClick={() => { clearRun(); setSavedRun(null); setG({ screen: "title" }); }}>タイトルへ戻る</button>
+              <button className="kw-btn primary" onClick={() => {
+                const aliveEnemies = (g.enemies || []).filter((e) => e.hp > 0);
+                const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies };
+                saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies);
+                setSavedRun(rd);
+                setG({ screen: "title" });
+              }}>中断してタイトルへ</button>
             </div>
           </div>
         </div>
@@ -2942,6 +3222,44 @@ export default function KiriwatariNoMori() {
       )}
       {g.bestiary && (
         <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
+      )}
+      {g.orbChoice && (
+        <div className="kw-overlay top">
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: "radial-gradient(circle, rgba(232,180,74,.25), transparent 70%)",
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Sparkles size={18} color="var(--hotaru)" strokeWidth={1.5} />
+              </div>
+              <div>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, color: "var(--hotaru)" }}>宝樹の雫</div>
+                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 2 }}>使いみちを選んでください</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
+                onClick={() => {
+                  const m2 = { ...meta, slots: (meta.slots || 0) + 1 };
+                  setMeta(m2); saveMeta(m2);
+                  setG((s) => ({ ...s, orbChoice: false,
+                    logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が輝く……継承枠が永続+1された。(${m2.slots}枠)`, hi: true }] }));
+                }}>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>継承枠 +1</div>
+                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
+              </button>
+              <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
+                onClick={() => {
+                  const m2 = { ...meta, dewBank: (meta.dewBank || 0) + 1 };
+                  setMeta(m2); saveMeta(m2);
+                  setG((s) => ({ ...s, orbChoice: false,
+                    logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が砕け、精の結晶に変わった。(${m2.dewBank}個)`, hi: true }] }));
+                }}>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>精の結晶 +1</div>
+                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>スキルツリーの習得に使える結晶に変換する。現在 {meta.dewBank || 0} 個。</div>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
