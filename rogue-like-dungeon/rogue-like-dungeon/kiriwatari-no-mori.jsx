@@ -793,7 +793,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-cell .kw-cmeta { font-size: 10.5px; color: var(--mist); line-height: 1.5; }
 .kw-cell.picked { box-shadow: 0 0 0 1.5px var(--hotaru); }
 .kw-cell.equipped-mark::after { content: "装備中"; position: absolute; top: 7px; right: 8px; font-size: 9px; color: var(--hotaru); letter-spacing: .1em; }
-.kw-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+.kw-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 
 /* --- タイトル --- */
 .kw-title { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;
@@ -2549,36 +2549,36 @@ export default function KiriwatariNoMori() {
             </div>
           )}
           {savedRun && (
-            <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", justifyContent: "center" }}>
-              <button className="kw-btn" style={{ padding: "10px 28px", fontSize: 13, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+            <div style={{ display: "flex", gap: 8, marginTop: 6, justifyContent: "center" }}>
+              <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
                 onClick={() => resumeRun(savedRun)}>
-                冒険を再開（{floorLabel(savedRun.floor)}層）
+                再開（{floorLabel(savedRun.floor)}層）
               </button>
-              <button className="kw-btn ghost" style={{ padding: "10px 16px", fontSize: 12, color: "var(--danger)", borderColor: "rgba(220,80,80,.35)" }}
+              <button className="kw-btn ghost" style={{ padding: "10px 14px", fontSize: 12, color: "var(--danger)", borderColor: "rgba(220,80,80,.35)" }}
                 onClick={() => setConfirmAbandon(true)}>
-                放棄する
+                放棄
               </button>
             </div>
           )}
-          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
-            <button className="kw-btn primary" style={{ padding: "13px 36px", fontSize: 15 }}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "center" }}>
+            <button className="kw-btn primary" style={{ padding: "13px 32px", fontSize: 14 }}
               onClick={() => savedRun ? setConfirmNewRun(() => startRun) : startRun()}>
-              {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章 から 続 け る` : "森 へ 入 る"}
+              {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章から続ける` : "森 へ 入 る"}
             </button>
             {meta.checkpoint > 1 && (
-              <button className="kw-btn ghost" style={{ padding: "13px 22px", fontSize: 13 }}
-                onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章 を 選 ぶ</button>
+              <button className="kw-btn ghost" style={{ padding: "13px 18px", fontSize: 13 }}
+                onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
-            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
-              onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊 び 方</button>
-            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
+              onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊び方</button>
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
               onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
               スキルツリー{(meta.dewBank || 0) > 0 ? ` ✦${meta.dewBank}` : ""}
             </button>
-            <button className="kw-btn ghost" style={{ padding: "8px 22px", fontSize: 12 }}
-              onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図 鑑</button>
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
+              onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図鑑</button>
           </div>
           <div className="kw-tmeta" style={{ marginTop: 10, fontSize: 11.5 }}>
             転生 {meta.deaths} 回 ／ 最深 {floorLabel(meta.bestFloor)} ／ 継承枠 {meta.slots}
@@ -2638,12 +2638,12 @@ export default function KiriwatariNoMori() {
                 })}
               </div>
               <div className="kw-divider" />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                <button className="kw-btn ghost" style={{ fontSize: 11, color: "var(--mist)", padding: "6px 14px" }}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <button className="kw-btn ghost" style={{ fontSize: 11, color: "var(--mist)", padding: "6px 12px" }}
                   onClick={() => setG((s) => ({ ...s, chapterSelect: false, confirmReset: true }))}>
-                  第1章から継承品なしでやり直す
+                  やり直す
                 </button>
-                <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>閉じる</button>
+                <button className="kw-btn ghost" style={{ padding: "6px 16px", fontSize: 12 }} onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>閉じる</button>
               </div>
             </div>
           </div>
@@ -2704,7 +2704,7 @@ export default function KiriwatariNoMori() {
                     const m2 = { ...meta, checkpoint: 1, inherited: [] };
                     setMeta(m2); await saveMeta(m2);
                     setG({ screen: "title" });
-                  }}>始めからやり直す</button>
+                  }}>やり直す</button>
               </div>
             </div>
           </div>
@@ -3080,8 +3080,8 @@ export default function KiriwatariNoMori() {
             {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。一度戻って「袋」から整理するか、置いていきましょう。</div>}
             <div className="kw-actions">
               <button className="kw-btn ghost" style={{ marginRight: "auto" }} onClick={() => setG((s) => ({ ...s, confirm: null }))}>← 戻る</button>
-              <button className="kw-btn ghost" onClick={takeAllAndGo}>全部拾って進む</button>
-              <button className="kw-btn primary" onClick={proceedLeaving}>置いて先へ進む →</button>
+              <button className="kw-btn ghost" onClick={takeAllAndGo}>全部拾う</button>
+              <button className="kw-btn primary" onClick={proceedLeaving}>置いて進む →</button>
             </div>
           </div>
         </div>

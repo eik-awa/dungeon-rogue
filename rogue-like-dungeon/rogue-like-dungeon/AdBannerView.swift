@@ -11,7 +11,7 @@ import SwiftUI
 import GoogleMobileAds
 
 /// AdMob バナー(320x50)を SwiftUI へ橋渡しする。
-struct AdBannerView: UIViewRepresentable {
+private struct AdBannerUIView: UIViewRepresentable {
     let adUnitID: String
 
     func makeUIView(context: Context) -> BannerView {
@@ -27,6 +27,17 @@ struct AdBannerView: UIViewRepresentable {
         if uiView.rootViewController == nil {
             uiView.rootViewController = UIApplication.shared.kwRootViewController
             uiView.load(Request())
+        }
+    }
+}
+
+/// デバッグ端末では広告を完全にスキップする。
+struct AdBannerView: View {
+    let adUnitID: String
+
+    var body: some View {
+        if !DebugDeviceConfig.isDebugDevice {
+            AdBannerUIView(adUnitID: adUnitID)
         }
     }
 }
