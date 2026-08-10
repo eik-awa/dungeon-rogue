@@ -11,9 +11,9 @@ import SwiftUI
 import Combine
 import IronSource
 
-/// LevelPlay の App Key。Unity Dashboard(Grow > LevelPlay > Apps)でアプリを登録して取得する。
-/// TODO: 取得した実際の App Key に差し替えること。
-let levelPlayAppKey = "YOUR_LEVELPLAY_APP_KEY"
+/// LevelPlay の App Key。IronSource/LevelPlay ダッシュボード → Apps → App Key の値を使用。
+/// Unity Dashboard の Game ID とは別の値なので注意。
+let levelPlayAppKey = "278b7dd0d"
 
 /// LevelPlay SDK の初期化状態をアプリ全体で共有する。
 /// バナー広告オブジェクトは初期化完了(onInitSuccess)後に生成する必要があるため、
@@ -28,12 +28,14 @@ final class LevelPlayAdsController: ObservableObject {
     /// ATT の応答後に一度だけ呼び出す。
     func initialize() {
         guard !isInitialized else { return }
-        let requestBuilder = LPMInitRequestBuilder(appKey: levelPlayAppKey)
-        LevelPlay.initWith(requestBuilder.build()) { [weak self] _, error in
-            guard error == nil else { return }
-            DispatchQueue.main.async {
-                self?.isInitialized = true
+        let request = LPMInitRequestBuilder(appKey: levelPlayAppKey).build()
+        LevelPlay.initWith(request) { [weak self] _, error in
+            if let error = error {
+                print("[AdBanner] init failed: \(error)")
+                return
             }
+            print("[AdBanner] init success")
+            DispatchQueue.main.async { self?.isInitialized = true }
         }
     }
 }
@@ -66,24 +68,32 @@ private struct AdBannerUIView: UIViewRepresentable {
     final class Coordinator: NSObject, LPMBannerAdViewDelegate {
         var requestedLoad = false
 
-        func didLoadAd(with adInfo: LPMAdInfo) {}
-        func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {}
+        func didLoadAd(with adInfo: LPMAdInfo) {
+            print("[AdBanner] banner loaded: \(adInfo.adUnitId)")
+        }
+        func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
+            print("[AdBanner] banner load failed (\(adUnitId)): \(error)")
+        }
+        func didDisplayAd(with adInfo: LPMAdInfo) {
+            print("[AdBanner] banner displayed")
+        }
+        func didFailToDisplayAd(with adInfo: LPMAdInfo, error: Error) {
+            print("[AdBanner] banner display failed: \(error)")
+        }
         func didClickAd(with adInfo: LPMAdInfo) {}
-        func didDisplayAd(with adInfo: LPMAdInfo) {}
-        func didFailToDisplayAd(with adInfo: LPMAdInfo, error: Error) {}
         func didLeaveApp(with adInfo: LPMAdInfo) {}
         func didExpandAd(with adInfo: LPMAdInfo) {}
         func didCollapseAd(with adInfo: LPMAdInfo) {}
     }
 }
 
-/// デバッグ端末、または SDK 未初期化時は広告を完全にスキップする。
+/// SDK 初期化完了後にバナーを表示する。
 struct AdBannerView: View {
     let adUnitID: String
     @ObservedObject private var ads = LevelPlayAdsController.shared
 
     var body: some View {
-        if !DebugDeviceConfig.isDebugDevice && ads.isInitialized {
+        if ads.isInitialized {
             AdBannerUIView(adUnitID: adUnitID)
         }
     }

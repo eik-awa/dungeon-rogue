@@ -43,7 +43,6 @@ struct GameWebView: UIViewRepresentable {
         config.userContentController.add(proxy, name: "appReady")
         config.userContentController.add(proxy, name: "settings")
         config.userContentController.add(proxy, name: "openURL")
-        config.userContentController.add(proxy, name: "deviceInfo")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -95,12 +94,6 @@ struct GameWebView: UIViewRepresentable {
                 else { return }
                 DispatchQueue.main.async {
                     UIApplication.shared.open(url)
-                }
-            case "deviceInfo":
-                let identifier = DebugDeviceConfig.persistentDeviceID
-                let js = "window.__initDebugBadge__ && window.__initDebugBadge__('\(identifier)')"
-                DispatchQueue.main.async {
-                    message.webView?.evaluateJavaScript(js, completionHandler: nil)
                 }
             default:
                 break
@@ -299,29 +292,7 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
         <body>
         <div id="root"></div>
         <pre id="kw-error"></pre>
-        <div id="debug-badge"></div>
-        <script src="debug-config.js" onerror="void 0"></script>
         <script>
-          const _debugCfg = window.__DEBUG_CONFIG__;
-          const _vendorIds = (_debugCfg && _debugCfg.VENDOR_IDS) || [];
-          let _resolveIsDebugDevice;
-          const _isDebugDevicePromise = new Promise(resolve=>{
-            _resolveIsDebugDevice = resolve;
-            setTimeout(()=>resolve(false), 1500);
-          });
-          window.__initDebugBadge__ = function(vendorId){
-            const isDebug = _vendorIds.includes(vendorId);
-            if(isDebug){
-              const b=document.getElementById("debug-badge");
-              if(b) b.style.display="block";
-            }
-            _resolveIsDebugDevice(isDebug);
-          };
-          try{
-            window.webkit.messageHandlers.deviceInfo.postMessage({});
-          }catch(e){
-            _resolveIsDebugDevice(false);
-          }
           window.kwAppVersion = "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")";
           // JSX の永続データ層 (window.storage) を localStorage で満たす。
           window.storage = {

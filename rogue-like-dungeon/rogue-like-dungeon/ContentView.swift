@@ -8,9 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
-    // LevelPlay Dashboard で発行されるバナー広告の Ad Unit ID。
-    // TODO: 取得した実際の Ad Unit ID に差し替えること。
-    private let adUnitID = "YOUR_LEVELPLAY_BANNER_AD_UNIT_ID"
+    // LevelPlay Dashboard の Ad Units(Placements)で発行されたバナー広告の ID。
+    private let adUnitID = "r8t6g9flx8vpz74y"
     @State private var gameReady = false
     @Environment(\.scenePhase) private var scenePhase
 
