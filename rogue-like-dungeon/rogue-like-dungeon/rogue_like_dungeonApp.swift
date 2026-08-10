@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import GoogleMobileAds
 import AppTrackingTransparency
 import AVFoundation
 
@@ -38,7 +37,7 @@ struct rogue_like_dungeonApp: App {
         }
     }
 
-    /// トラッキング許可ダイアログを提示し、応答後に AdMob を初期化する。
+    /// トラッキング許可ダイアログを提示し、応答後に LevelPlay(Unity Ads)を初期化する。
     /// 許可・拒否のいずれでも広告 SDK は起動する(拒否時は非パーソナライズ広告)。
     private func requestTrackingThenStartAds() {
         guard !didRequestTracking else { return }
@@ -49,7 +48,7 @@ struct rogue_like_dungeonApp: App {
             // わずかに待ってからダイアログを提示して確実に表示させる。
             try? await Task.sleep(nanoseconds: 500_000_000)
             await ATTrackingManager.requestTrackingAuthorization()
-            await MobileAds.shared.start()
+            LevelPlayAdsController.shared.initialize()
         }
     }
 }
