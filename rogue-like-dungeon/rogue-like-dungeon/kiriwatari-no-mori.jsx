@@ -606,6 +606,12 @@ async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSe
 async function clearRun() {
   try { await window.storage.set(RUN_SAVE_KEY, ""); } catch {}
 }
+async function saveDeadRun(floor, weapons, armor, inv, orbBagBonus = 0, orbSlotBonus = 0) {
+  try {
+    const data = { phase: "dead", floor, weapons, armor, inv, orbBagBonus, orbSlotBonus };
+    await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
+  } catch {}
+}
 
 /* ------------------------------------------------------------
    スタイル — 「霧渡りの森」
@@ -645,7 +651,7 @@ const CSS = `
   --font-display: 'Shippori Mincho', 'Hiragino Mincho ProN', serif;
   --font-body: 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', sans-serif;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
 html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-root {
   height: 100dvh; width: 100%;
@@ -743,8 +749,11 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-tag.bad { color: var(--danger); border-color: rgba(217,106,90,.4); }
 
 /* --- 手札(武器) --- */
-.kw-hand { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; flex-shrink: 0; }
-.kw-wcard { position: relative; padding: 10px 12px; text-align: left; cursor: pointer; width: 100%;
+.kw-hand { display: flex; flex-direction: row; overflow-x: auto; overflow-y: visible; gap: 8px; flex-shrink: 0;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 6px 4px 8px; margin: -6px -4px -8px; }
+.kw-hand::-webkit-scrollbar { display: none; }
+.kw-wcard { position: relative; padding: 16px 12px; text-align: left; cursor: pointer;
+  flex: 1; min-width: 150px;
   transition: transform .15s ease, box-shadow .15s ease; color: var(--paper); font-family: var(--font-body); }
 .kw-wcard:hover:not(:disabled) { transform: translateY(-3px); }
 .kw-wcard:disabled { opacity: .38; cursor: default; }
@@ -889,8 +898,8 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   text-align: center; margin: 12px 0 8px; }
 /* 詳細ポップアップ */
 .kw-bestiary-detail-bg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(10,18,14,.75); z-index: 20; border-radius: inherit; }
-.kw-bestiary-detail-card { background: var(--panel); border: 1px solid rgba(157,180,166,.2); border-radius: 10px;
+  background: rgba(6,11,8,.82); z-index: 20; border-radius: inherit; }
+.kw-bestiary-detail-card { background: linear-gradient(180deg, rgb(28,45,34), rgb(19,32,24)); border: 1px solid rgba(157,180,166,.3); border-radius: 10px;
   padding: 18px 20px; max-width: 260px; width: 88%; }
 /* 図鑑 章カード */
 .kw-bestiary-ch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -1083,7 +1092,7 @@ function StageBackdrop({ floor = 1, preview = false }) {
   const dim = Math.round(depth * 6);
 
   const moonInfo = st.moonPhase || { phase: 1.0, waning: false };
-  const moonClipPath = moonPhasePath(880, 150, 46, moonInfo.phase, moonInfo.waning);
+  const moonClipPath = moonPhasePath(700, 120, 46, moonInfo.phase, moonInfo.waning);
   const skyId = `kwSky${sIdx}`, moonGradId = `kwMoon${sIdx}`, mistId = `kwMist${sIdx}`, moonClipId = `kwMoonClip${sIdx}`;
 
   return (
@@ -1109,9 +1118,9 @@ function StageBackdrop({ floor = 1, preview = false }) {
         </defs>
         <rect width="1200" height="800" fill={`url(#${skyId})`} />
         {stars.map((s, i) => <circle key={i} cx={s.x} cy={s.y} r={s.r} fill={`rgba(230,235,255,${s.o})`} />)}
-        <circle cx="880" cy="150" r="150" fill={`url(#${moonGradId})`} />
-        <circle cx="880" cy="150" r="46" fill={st.bg.moon} clipPath={moonClipPath ? `url(#${moonClipId})` : undefined} />
-        <polygon points="820,150 940,150 1090,800 640,800" fill="rgba(235,226,196,0.045)" />
+        <circle cx="700" cy="120" r="150" fill={`url(#${moonGradId})`} />
+        <circle cx="700" cy="120" r="46" fill={st.bg.moon} clipPath={moonClipPath ? `url(#${moonClipId})` : undefined} />
+        <polygon points="640,120 760,120 910,800 460,800" fill="rgba(235,226,196,0.045)" />
         {layers.roots && <path d={layers.roots} fill={st.bg.layers[1]} />}
         {isl.map((o, i) => (
           <g key={i}>
@@ -1818,7 +1827,7 @@ export default function KiriwatariNoMori() {
 
   useEffect(() => {
     loadMeta().then(setMeta);
-    loadRun().then((run) => { if (run && run.floor) setSavedRun(run); });
+    loadRun().then((run) => { if (run && (run.floor || run.phase === "dead")) setSavedRun(run); });
   }, []);
 
   const invCap = invCapOf(meta, g?.orbBagBonus || 0);
@@ -1903,6 +1912,23 @@ export default function KiriwatariNoMori() {
 
   // タスクキル後の再開: 保存済みフロア状態を復元する
   function resumeRun(run) {
+    if (run.phase === "dead") {
+      // タスキル後の死亡画面復元: 継承選択画面を直接表示
+      const stDead = {
+        screen: "run", floor: run.floor, node: 0, nodes: floorNodes(run.floor), phase: "dead",
+        player: { hp: 0, poison: 0, atkUp: 0, guard: false },
+        weapons: run.weapons, armor: run.armor, inv: run.inv,
+        cds: {}, drops: [], logs: [], floats: [],
+        pending: null, busy: false, bag: false, hitId: null, eventDone: false,
+        confirm: null, full: false, lastRareSeen: 0, skillTree: false,
+        orbBagBonus: run.orbBagBonus || 0, orbSlotBonus: run.orbSlotBonus || 0, orbChoice: false,
+        coach: false, stageIntro: null, enemies: [],
+      };
+      const effSlots = meta.slots + (run.orbSlotBonus || 0);
+      setSavedRun(null);
+      setG({ ...stDead, pick: recommendPick(stDead, effSlots), effSlots });
+      return;
+    }
     const savedEnemies = (run.enemies || []).filter((e) => e.hp > 0);
     const base = {
       screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "battle",
@@ -2223,6 +2249,19 @@ export default function KiriwatariNoMori() {
       }
     }
     setG(s);
+    // タスキル対策: 勝利後に即セーブ
+    if (s.phase === "ending") {
+      clearRun(); // 100層踏破完了、ランデータをクリア
+    } else if (s.phase === "clear") {
+      // ボスクリア: 次の章の頭から再開できるよう保存（ドロップは未回収でも進める）
+      const nextFloor = s.floor + 1;
+      if (nextFloor <= 100) {
+        saveRun(nextFloor, 0, s.player, s.weapons, s.armor, s.inv, {}, s.lastRareSeen, s.orbBagBonus);
+      }
+    } else {
+      // 通常戦闘: 敵なし状態で保存（再開時は同ノードで新しい戦闘を生成）
+      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen, s.orbBagBonus);
+    }
   }
 
   /* ---------- 敵の行動 ---------- */
@@ -2297,7 +2336,9 @@ export default function KiriwatariNoMori() {
     if (player.hp <= 0) {
       const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, s.floor) };
       setMeta(m2); saveMeta(m2);
-      clearRun(); setSavedRun(null); // 死亡時は再開データを消去
+      // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
+      saveDeadRun(s.floor, s.weapons, s.armor, s.inv, s.orbBagBonus || 0, s.orbSlotBonus || 0);
+      setSavedRun(null);
       const stDead = { ...s, enemies, player, cds };
       const effSlots = meta.slots + (s.orbSlotBonus || 0);
       setG({ ...stDead, busy: false, phase: "dead", pick: recommendPick(stDead, effSlots), effSlots });
@@ -2469,6 +2510,7 @@ export default function KiriwatariNoMori() {
     }
     const m2 = { ...meta, inherited };
     setMeta(m2); await saveMeta(m2);
+    clearRun(); // 死亡セーブを消去して新しい旅を始める
     // 新しい旅へ(到達済みの章の頭から)
     const eq = starterState(m2);
     const startFloor = (Math.min(m2.checkpoint || 1, 10) - 1) * 10 + 1;
@@ -2480,7 +2522,9 @@ export default function KiriwatariNoMori() {
       confirm: null, full: false, lastRareSeen: 0, skillTree: false, stageIntro: stageOf(startFloor),
     };
     base.player.hp = maxHpOf(base, m2);
-    setG(enterNode(base));
+    const first = enterNode(base);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    setG(first);
   }
 
   /* ============================================================
@@ -2550,10 +2594,17 @@ export default function KiriwatariNoMori() {
           )}
           {savedRun && (
             <div style={{ display: "flex", gap: 8, marginTop: 6, justifyContent: "center" }}>
-              <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
-                onClick={() => resumeRun(savedRun)}>
-                再開（{floorLabel(savedRun.floor)}層）
-              </button>
+              {savedRun.phase === "dead" ? (
+                <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--danger)", color: "var(--danger)" }}
+                  onClick={() => resumeRun(savedRun)}>
+                  転生を選ぶ（旅人は倒れた）
+                </button>
+              ) : (
+                <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+                  onClick={() => resumeRun(savedRun)}>
+                  再開（{floorLabel(savedRun.floor)}層）
+                </button>
+              )}
               <button className="kw-btn ghost" style={{ padding: "10px 14px", fontSize: 12, color: "var(--danger)", borderColor: "rgba(220,80,80,.35)" }}
                 onClick={() => setConfirmAbandon(true)}>
                 放棄
@@ -2901,11 +2952,15 @@ export default function KiriwatariNoMori() {
         <div className="kw-subbar">
           {g.phase === "battle" && (
             <>
-              <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御<span style={{ fontSize: 9, color: "var(--mist)", marginLeft: 3 }}>被ダメ半減</span></button>
-              <button className="kw-btn ghost" disabled={g.busy} onClick={() => setG((s) => ({ ...s, bag: true }))}
-                style={g.inv.length >= invCap ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
-                袋 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
-              </button>
+              {!g.pending && (
+                <>
+                  <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御<span style={{ fontSize: 9, color: "var(--mist)", marginLeft: 3 }}>被ダメ半減</span></button>
+                  <button className="kw-btn ghost" disabled={g.busy} onClick={() => setG((s) => ({ ...s, bag: true }))}
+                    style={g.inv.length >= invCap ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
+                    袋 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
+                  </button>
+                </>
+              )}
               {g.pending && (
                 <>
                   <span className="kw-panel kw-hint" style={{ fontSize: 12, color: "var(--hotaru)", letterSpacing: ".05em", padding: "5px 10px", border: "1px solid var(--hotaru-dim)", animation: "kwFade .3s ease" }}>
@@ -2937,14 +2992,14 @@ export default function KiriwatariNoMori() {
 
       {/* ---------- 袋オーバーレイ ---------- */}
       {g.bag && (
-        <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, bag: false }))}>
+        <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, bag: false }))}>
           <div className="kw-panel kw-sheet" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
                 <h2>旅の袋</h2>
                 <div className="kw-sub">
                   {g.phase === "battle"
-                    ? "戦闘中は消耗品のみ使えます(1ターン消費)。"
+                    ? "戦闘中は回復・バフのみ使用可(1ターン消費)。不要品は「捨てる」で手放せます。"
                     : "消耗品を使う・武具を装備する・不要品は「捨てる」ボタンで手放せます。"}
                 </div>
               </div>
@@ -2979,12 +3034,12 @@ export default function KiriwatariNoMori() {
               )}
             </div>
             {g.inv.length === 0 && <div className="kw-sub">袋は空です。森で拾い集めましょう。</div>}
-            <div className="kw-grid">
-              {g.inv.map((it) => {
-                const inBattle = g.phase === "battle";
-                if (it.kind === "item") {
-                  return <ItemCell key={it.id} item={it} actionLabel="使う" onClick={() => useItem(it)} />;
-                }
+            {(() => {
+              const inBattle = g.phase === "battle";
+              const catLabel = (label) => (
+                <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
+              );
+              const renderEquip = (it) => {
                 if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -2993,8 +3048,38 @@ export default function KiriwatariNoMori() {
                       onClick={(e) => { e.stopPropagation(); discardItem(it); }}>捨てる</button>
                   </div>
                 );
-              })}
-            </div>
+              };
+              const renderConsumable = (it) => {
+                const c = CONSUMABLES[it.itemId];
+                const canUseNow = inBattle ? c?.kind !== "orb" && c?.kind !== "metaHp" : c?.kind !== "bomb";
+                return (
+                  <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {canUseNow
+                      ? <ItemCell item={it} actionLabel="使う" onClick={() => useItem(it)} />
+                      : <ItemCell item={it} actionLabel={inBattle ? "戦闘後のみ" : "戦闘中のみ"} onClick={() => {}} />
+                    }
+                    <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
+                      onClick={(e) => { e.stopPropagation(); discardItem(it); }}>捨てる</button>
+                  </div>
+                );
+              };
+              const weapons  = g.inv.filter(it => it.kind === "weapon");
+              const armors   = g.inv.filter(it => it.kind === "armor");
+              const heals    = g.inv.filter(it => it.kind === "item" && ["heal","cure"].includes(CONSUMABLES[it.itemId]?.kind));
+              const buffs    = g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "buff");
+              const attacks  = g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "bomb");
+              const specials = g.inv.filter(it => it.kind === "item" && ["orb","metaHp"].includes(CONSUMABLES[it.itemId]?.kind));
+              return (
+                <>
+                  {weapons.length  > 0 && <>{catLabel("武器")}<div className="kw-grid">{weapons.map(renderEquip)}</div></>}
+                  {armors.length   > 0 && <>{catLabel("防具")}<div className="kw-grid">{armors.map(renderEquip)}</div></>}
+                  {heals.length    > 0 && <>{catLabel("回復")}<div className="kw-grid">{heals.map(renderConsumable)}</div></>}
+                  {buffs.length    > 0 && <>{catLabel("バフ")}<div className="kw-grid">{buffs.map(renderConsumable)}</div></>}
+                  {attacks.length  > 0 && <>{catLabel("攻撃")}<div className="kw-grid">{attacks.map(renderConsumable)}</div></>}
+                  {specials.length > 0 && <>{catLabel("特殊")}<div className="kw-grid">{specials.map(renderConsumable)}</div></>}
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -3056,7 +3141,13 @@ export default function KiriwatariNoMori() {
             <div className="kw-grid" style={{ textAlign: "left" }}>
               {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
             </div>
+            {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋を整理」から不要な物を捨ててください。</div>}
             <div className="kw-actions" style={{ justifyContent: "center" }}>
+              {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
+              <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, bag: true }))}
+                style={g.inv.length >= invCap ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}>
+                袋を整理 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
+              </button>
               <button className="kw-btn primary" onClick={tryProceed}>
                 第{stageOf(g.floor) + 2}章へ降りる ↓
               </button>
@@ -3080,7 +3171,6 @@ export default function KiriwatariNoMori() {
             {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。一度戻って「袋」から整理するか、置いていきましょう。</div>}
             <div className="kw-actions">
               <button className="kw-btn ghost" style={{ marginRight: "auto" }} onClick={() => setG((s) => ({ ...s, confirm: null }))}>← 戻る</button>
-              <button className="kw-btn ghost" onClick={takeAllAndGo}>全部拾う</button>
               <button className="kw-btn primary" onClick={proceedLeaving}>置いて進む →</button>
             </div>
           </div>
@@ -3241,6 +3331,9 @@ export default function KiriwatariNoMori() {
                 onClick={() => {
                   const m2 = { ...meta, slots: (meta.slots || 0) + 1 };
                   setMeta(m2); saveMeta(m2);
+                  // 雫消費後の状態を保存（タスキル後に雫が復活して二重適用されるのを防ぐ）
+                  const cur = gRef.current;
+                  saveRun(cur.floor, cur.node, cur.player, cur.weapons, cur.armor, cur.inv, cur.cds, cur.lastRareSeen, cur.orbBagBonus);
                   setG((s) => ({ ...s, orbChoice: false,
                     logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が輝く……継承枠が永続+1された。(${m2.slots}枠)`, hi: true }] }));
                 }}>
@@ -3251,6 +3344,9 @@ export default function KiriwatariNoMori() {
                 onClick={() => {
                   const m2 = { ...meta, dewBank: (meta.dewBank || 0) + 1 };
                   setMeta(m2); saveMeta(m2);
+                  // 雫消費後の状態を保存（タスキル後に雫が復活して二重適用されるのを防ぐ）
+                  const cur = gRef.current;
+                  saveRun(cur.floor, cur.node, cur.player, cur.weapons, cur.armor, cur.inv, cur.cds, cur.lastRareSeen, cur.orbBagBonus);
                   setG((s) => ({ ...s, orbChoice: false,
                     logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が砕け、精の結晶に変わった。(${m2.dewBank}個)`, hi: true }] }));
                 }}>
