@@ -28,6 +28,16 @@ final class LevelPlayAdsController: ObservableObject {
     /// ATT の応答後に一度だけ呼び出す。
     func initialize() {
         guard !isInitialized else { return }
+        #if targetEnvironment(simulator)
+        // シミュレータは IDFA が無くテストデバイス登録が効かないため SDK を起動しない。
+        print("[AdBanner] simulator: skipping SDK init")
+        return
+        #else
+        // Test Suite はこのメタデータを有効にしてから初期化しないと起動できない。
+        // デバッグ端末以外では本番の広告配信に影響しないよう有効化しない。
+        if DebugDeviceConfig.isDebugDevice {
+            LevelPlay.setMetaDataWithKey("is_test_suite", value: "enable")
+        }
         let request = LPMInitRequestBuilder(appKey: levelPlayAppKey).build()
         LevelPlay.initWith(request) { [weak self] _, error in
             if let error = error {
@@ -37,6 +47,14 @@ final class LevelPlayAdsController: ObservableObject {
             print("[AdBanner] init success")
             DispatchQueue.main.async { self?.isInitialized = true }
         }
+        #endif
+    }
+
+    /// デバッグ端末(DebugDeviceConfig.isDebugDevice)からのみ呼び出す想定。
+    /// LevelPlay の Test Suite を起動し、テストモードで広告在庫を確認できるようにする。
+    func launchTestSuite() {
+        guard let vc = UIApplication.shared.kwRootViewController else { return }
+        LevelPlay.launchTestSuite(vc)
     }
 }
 
@@ -87,15 +105,50 @@ private struct AdBannerUIView: UIViewRepresentable {
     }
 }
 
-/// SDK 初期化完了後にバナーを表示する。
+/// シミュレータ用のダミーバナー。
+private struct SimulatorAdPlaceholder: View {
+    var body: some View {
+        ZStack {
+            Color(white: 0.18)
+            Text("[広告プレースホルダー / テスト用]")
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(white: 0.55))
+        }
+    }
+}
+
+/// デバッグ端末用のプレースホルダー。タップすると LevelPlay の Test Suite が起動する。
+private struct DebugAdPlaceholder: View {
+    var body: some View {
+        ZStack {
+            Color(white: 0.18)
+            Text("テストモード")
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(white: 0.55))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            LevelPlayAdsController.shared.launchTestSuite()
+        }
+    }
+}
+
+/// SDK 初期化完了後にバナーを表示する。シミュレータではプレースホルダーを表示。
+/// デバッグ端末(DebugDeviceConfig.isDebugDevice)では本番広告を配信せずプレースホルダーを表示する。
 struct AdBannerView: View {
     let adUnitID: String
     @ObservedObject private var ads = LevelPlayAdsController.shared
 
     var body: some View {
-        if ads.isInitialized {
+        #if targetEnvironment(simulator)
+        SimulatorAdPlaceholder()
+        #else
+        if DebugDeviceConfig.isDebugDevice {
+            DebugAdPlaceholder()
+        } else if ads.isInitialized {
             AdBannerUIView(adUnitID: adUnitID)
         }
+        #endif
     }
 }
 

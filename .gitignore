@@ -13,3 +13,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# デバッグ端末登録ファイル(端末IDFVを含むため git 管理外)
+**/debug-config.js

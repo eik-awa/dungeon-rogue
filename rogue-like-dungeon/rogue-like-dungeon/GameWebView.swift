@@ -16,6 +16,7 @@ import SwiftUI
 import WebKit
 import StoreKit
 import AVFoundation
+import FirebaseAnalytics
 
 /// JSX ゲームを表示する WKWebView のラッパ。
 struct GameWebView: UIViewRepresentable {
@@ -43,6 +44,7 @@ struct GameWebView: UIViewRepresentable {
         config.userContentController.add(proxy, name: "appReady")
         config.userContentController.add(proxy, name: "settings")
         config.userContentController.add(proxy, name: "openURL")
+        config.userContentController.add(proxy, name: "progress")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -95,6 +97,33 @@ struct GameWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     UIApplication.shared.open(url)
                 }
+            case "progress":
+                guard let body = message.body as? [String: Any],
+                      let event = body["event"] as? String else { return }
+                logProgress(event: event, body: body)
+            default:
+                break
+            }
+        }
+
+        /// ステージ進行度(章クリア・全踏破・死亡到達フロア)を Firebase Analytics に記録する。
+        /// 端末ローカルの meta 保存(bestFloor/checkpoint/clears)と同じタイミングで JS 側から送られてくる。
+        private func logProgress(event: String, body: [String: Any]) {
+            switch event {
+            case "stage_clear":
+                Analytics.logEvent("stage_clear", parameters: [
+                    "stage": (body["stage"] as? Int) ?? 0,
+                    "checkpoint": (body["checkpoint"] as? Int) ?? 0,
+                ])
+            case "game_clear":
+                Analytics.logEvent("game_clear", parameters: [
+                    "clears": (body["clears"] as? Int) ?? 0,
+                ])
+            case "death":
+                Analytics.logEvent("player_death", parameters: [
+                    "floor": (body["floor"] as? Int) ?? 0,
+                    "best_floor": (body["bestFloor"] as? Int) ?? 0,
+                ])
             default:
                 break
             }
@@ -269,12 +298,6 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
           #kw-error { position: fixed; inset: 0; z-index: 999; display: none;
             padding: 24px; color: #d96a5a; background: rgba(6,10,8,.95);
             font: 13px/1.7 -apple-system, sans-serif; white-space: pre-wrap; overflow: auto; }
-          #debug-badge{
-            display:none;
-            position:fixed;right:20px;bottom:20px;z-index:9999;
-            width:4px;height:4px;pointer-events:none;
-            background:#fff;transform:rotate(45deg);
-          }
         </style>
         <script type="importmap">
         {

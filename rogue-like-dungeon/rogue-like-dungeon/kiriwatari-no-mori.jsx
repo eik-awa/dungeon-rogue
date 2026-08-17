@@ -69,8 +69,11 @@ const ASSETS = {
   ruinBat:    { icon: Cat,         img: null },
   ruinTurtle: { icon: Turtle,      img: null },
   ruinPyramid:{ icon: Pyramid,    img: null },
+  // 敵(第1章追加)
   enchantedRabbit: { icon: Rabbit, img: null },
+  // 敵(第2章: 茸の湿原 追加)
   bogFish:    { icon: Fish,        img: null },
+  // 敵(第7章: 氷樹の森 追加)
   snowHound:  { icon: Dog,         img: null },
   // 敵(第4章: 花霞の谷)
   bee:        { icon: Bug,         img: null },
@@ -391,7 +394,7 @@ const STAGES = [
   },
   {
     name: "星降りの浮島", read: "ほしふりのうきしま", tate: "第九章",
-    enemies: ["starSlime", "meteorBug", "starCore", "paperCrane", "nightHerald", "silentShade"],
+    enemies: ["starSlime", "meteorBug", "starCore", "paperCrane", "nightHerald", "silentShade", "judgmentScale"],
     terrain: "islands",
     bg: { skyTop: [6, 8, 20], skyMid: [16, 20, 44], layers: ["rgba(24,28,56,.85)", "rgba(16,18,40,.92)", "rgba(6,7,18,1)"], moon: "rgba(200,210,255,.9)", mist: "150,160,220", stars: true },
     moonPhase: { phase: 0.33, waning: true },
@@ -2229,6 +2232,8 @@ export default function KiriwatariNoMori() {
         const m2 = { ...meta, mossHeartStages: mhStages, clears: meta.clears + 1, slots: meta.slots + 1, bestFloor: 100, inherited: keep };
         setMeta(m2); await saveMeta(m2);
         s.phase = "ending";
+        // 進行度をFirebaseに記録(全章踏破)
+        try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "game_clear", clears: m2.clears }); } catch (_) {}
         // 初回全章踏破でレビューを促す
         if (meta.clears === 0) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
@@ -2242,6 +2247,8 @@ export default function KiriwatariNoMori() {
         };
         setMeta(m2); await saveMeta(m2);
         s.phase = "clear";
+        // 進行度をFirebaseに記録(章クリア=到達点更新)
+        try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "stage_clear", stage, checkpoint: m2.checkpoint }); } catch (_) {}
         // 第2・3章ボス初クリア時にレビューを促す
         if ((stage === 2 || stage === 3) && (meta.checkpoint || 1) <= stage) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
@@ -2336,6 +2343,8 @@ export default function KiriwatariNoMori() {
     if (player.hp <= 0) {
       const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, s.floor) };
       setMeta(m2); saveMeta(m2);
+      // 進行度をFirebaseに記録(死亡=到達フロア)
+      try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "death", floor: s.floor, bestFloor: m2.bestFloor }); } catch (_) {}
       // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
       saveDeadRun(s.floor, s.weapons, s.armor, s.inv, s.orbBagBonus || 0, s.orbSlotBonus || 0);
       setSavedRun(null);
