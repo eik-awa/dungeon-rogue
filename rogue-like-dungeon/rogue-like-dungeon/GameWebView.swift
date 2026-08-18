@@ -45,6 +45,7 @@ struct GameWebView: UIViewRepresentable {
         config.userContentController.add(proxy, name: "settings")
         config.userContentController.add(proxy, name: "openURL")
         config.userContentController.add(proxy, name: "progress")
+        config.userContentController.add(proxy, name: "rewardAd")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -101,6 +102,17 @@ struct GameWebView: UIViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let event = body["event"] as? String else { return }
                 logProgress(event: event, body: body)
+            case "rewardAd":
+                guard let body = message.body as? [String: Any],
+                      let context = body["context"] as? String,
+                      ["dew", "revive"].contains(context) else { return }
+                let webView = message.webView
+                DispatchQueue.main.async {
+                    RewardedAdController.shared.show { success in
+                        let js = "window.__onRewardAdResult__ && window.__onRewardAdResult__('\(context)', \(success))"
+                        webView?.evaluateJavaScript(js, completionHandler: nil)
+                    }
+                }
             default:
                 break
             }
@@ -123,6 +135,16 @@ struct GameWebView: UIViewRepresentable {
                 Analytics.logEvent("player_death", parameters: [
                     "floor": (body["floor"] as? Int) ?? 0,
                     "best_floor": (body["bestFloor"] as? Int) ?? 0,
+                ])
+            case "weapon_run_start":
+                Analytics.logEvent("weapon_run_start", parameters: [
+                    "weapon_type": (body["weapon_type"] as? String) ?? "",
+                    "floor": (body["floor"] as? Int) ?? 0,
+                ])
+            case "weapon_boss_kill":
+                Analytics.logEvent("weapon_boss_kill", parameters: [
+                    "weapon_type": (body["weapon_type"] as? String) ?? "",
+                    "stage": (body["stage"] as? Int) ?? 0,
                 ])
             default:
                 break

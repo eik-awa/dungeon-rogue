@@ -434,7 +434,7 @@ function invCapOf(m, runBonus = 0) {
   return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0) + runBonus;
 }
 function rareChanceOf(m) {
-  return 0.08 + ((m?.skills?.goldSense) ? 0.04 : 0);
+  return 0.12 + skillEffectTotal(m?.skills, "rareChancePct");
 }
 
 // レアリティ抽選 (luckBonus>0 でチェスト等の高レア補正)
@@ -474,12 +474,22 @@ function makeArmor(floor, opts = {}) {
   };
 }
 
-function makeConsumable(idOverride) {
-  const table = [
-    ["berrySmall", 34], ["antidote", 16], ["spore", 16], ["bomb", 18], ["berryBig", 16],
+// 回復アイテムの「進化」感: 序盤は解毒草(弱)中心 → 中盤は癒しの実(中) → 終盤は生命の果実(強)が増えていく。
+// spore/bomb は回復ラインとは別枠として階層に関わらず一定の重みを保つ。
+function consumableTableFor(floor) {
+  const t = Math.min(1, Math.max(0, (floor - 1) / 99));
+  return [
+    ["antidote", Math.round(30 - 24 * t)],
+    ["berrySmall", Math.round(30 - 10 * t)],
+    ["berryBig", Math.round(4 + 34 * t)],
+    ["spore", 16],
+    ["bomb", 18],
   ];
+}
+function makeConsumable(idOverride, floor = 1) {
   let id = idOverride;
   if (!id) {
+    const table = consumableTableFor(floor);
     const total = table.reduce((a, [, w]) => a + w, 0);
     let roll = Math.random() * total;
     for (const [cid, w] of table) { roll -= w; if (roll <= 0) { id = cid; break; } }
@@ -489,13 +499,20 @@ function makeConsumable(idOverride) {
 }
 
 // 敵の生成 (floor: 1〜100 の絶対階層)
+// 章が進むほど、階層あたりの伸び自体が急になる(stageMult)。
+// スキルツリーで底上げしないと後半の章で足踏みするような強さを狙っている。
+function stageMultOf(floor) {
+  return 1 + stageOf(floor) * 0.14; // 第1章:1.0 〜 第10章:2.26
+}
 function makeEnemy(bookId, floor) {
   const b = ENEMY_BOOK[bookId];
-  const hp = Math.round((15 + floor * 8) * b.hpK * rnd(0.9, 1.1));
-  const atk = Math.round((4 + floor * 1.2) * b.atkK);
+  const sIdx = stageOf(floor);
+  const stageMult = stageMultOf(floor);
+  const hp = Math.round((15 + floor * 8) * stageMult * b.hpK * rnd(0.9, 1.1));
+  const atk = Math.round((4 + floor * 1.2) * stageMult * b.atkK);
   return {
     id: uid(), bookId, name: b.name, asset: b.asset,
-    hp, maxHp: hp, atk, def: b.def + Math.floor(floor / 12),
+    hp, maxHp: hp, atk, def: b.def + Math.floor(floor / 12) + sIdx,
     weak: b.weak, resist: b.resist,
     poison: !!b.poison, drain: !!b.drain, atkDown: 0, rare: false, boss: false,
   };
@@ -511,11 +528,11 @@ function makeRareEnemy(floor) {
 function makeBoss(floor) {
   const sIdx = stageOf(floor);
   const B = STAGES[sIdx].boss;
-  const hp = Math.round((15 + floor * 8) * (3.2 + sIdx * 0.5));
-  const atk = Math.round((4 + floor * 1.2) * 1.3);
+  const hp = Math.round((15 + floor * 8) * (3.4 + sIdx * 0.62));
+  const atk = Math.round((4 + floor * 1.2) * (1.3 + sIdx * 0.09));
   return {
     id: uid(), bookId: B.id, name: B.name, asset: B.asset,
-    hp, maxHp: hp, atk, def: 3 + sIdx * 2,
+    hp, maxHp: hp, atk, def: Math.round(3 + sIdx * 2.4),
     weak: B.weak, resist: B.resist,
     rare: false, boss: true, atkDown: 0, charge: false,
     poison: !!B.poison, drain: false,
@@ -526,7 +543,7 @@ function makeBoss(floor) {
 
 // フロアごとの出現テーブル(章の進みに応じて敵種と数が増える)
 // lastRareSeen: 直近で金枝の精を目撃したフロア番号(連続出現を防ぐ)
-const RARE_COOLDOWN = 7; // この階数は金枝の精が出現しない
+const RARE_COOLDOWN = 5; // この階数は金枝の精が出現しない
 function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   const stage = STAGES[stageOf(floor)];
   const fis = floorInStage(floor);
@@ -550,36 +567,198 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [] };
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false };
+
+/* ------------------------------------------------------------
+   リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
+------------------------------------------------------------ */
+const REWARD_AD_DAILY_LIMIT = 3;
+const rewardAdTodayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+};
+const rewardAdUsesLeft = (meta) => {
+  const ra = meta?.rewardAd;
+  if (!ra || ra.date !== rewardAdTodayKey()) return REWARD_AD_DAILY_LIMIT;
+  return Math.max(0, REWARD_AD_DAILY_LIMIT - ra.count);
+};
+const consumeRewardAdUse = (meta) => {
+  const today = rewardAdTodayKey();
+  const ra = meta?.rewardAd;
+  const count = ra && ra.date === today ? ra.count + 1 : 1;
+  return { ...meta, rewardAd: { date: today, count } };
+};
 
 /* ------------------------------------------------------------
    スキルツリー定義 (宝樹の雫=精の結晶で解放する永続スキル)
 ------------------------------------------------------------ */
+// 以前のスキルツリー(再設計前)のコストのスナップショット。
+// 再設計で存在しなくなった(または統合された)スキルを所持していた場合の結晶還元に使う。
+const LEGACY_SKILL_COSTS = {
+  weaponSlot4: 4, weaponSlot5: 7, weaponSlot6: 12,
+  bladeBasics: 4, bladeMastery: 8, magicBasics: 4, magicMastery: 8,
+  pierceBasics: 4, pierceMastery: 8, bluntBasics: 4, bluntMastery: 8,
+  soundBasics: 4, soundMastery: 8, critUp: 6, powerSeal: 14,
+  vitalityI: 4, vitalityII: 7, guardMastery: 5, regen: 9, lastStand: 8,
+  bagCapI: 3, bagCapII: 6, goldSenseI: 4, goldSenseII: 6, goldSenseIII: 8, goldSenseIV: 10,
+  startBonus: 3, startBonus2: 5,
+};
+
+// requires: 単一の前提スキルID。requiresAll: 複数の前提スキルIDをすべて満たす必要がある場合に使用(requiresより優先)。
+// effect: { type, value, ... } — skillEffectTotal() で集計してゲームロジックに反映する(構造的なもの[武器枠/鞄容量/開始品]は個別に直接参照)。
 const SKILL_TREE = [
-  // 戦闘拡張
+  // 戦闘拡張 — 属性ごとに「心得」(地味な第一歩) → 分岐して「極意」(数値をさらに伸ばす)と「余韻」(攻撃吸収) →「奥義」(属性ごとの個性)
   { id: "weaponSlot4", name: "武器IV", category: "戦闘拡張", cost: 4, requires: null,
     desc: "武器スロット 3→4。属性の幅が広がる。" },
   { id: "weaponSlot5", name: "武器V", category: "戦闘拡張", cost: 7, requires: "weaponSlot4",
     desc: "武器スロット 4→5。" },
   { id: "weaponSlot6", name: "武器VI", category: "戦闘拡張", cost: 12, requires: "weaponSlot5",
     desc: "武器スロット 5→6 (最大)。" },
-  { id: "bladeMastery", name: "斬の極意", category: "戦闘拡張", cost: 5, requires: null,
-    desc: "斬属性武器のダメージ+15%。" },
-  { id: "magicMastery", name: "魔の極意", category: "戦闘拡張", cost: 5, requires: null,
-    desc: "魔属性武器のダメージ+15%。" },
+
+  { id: "bladeBasics", name: "斬の心得", category: "戦闘拡張", cost: 3, requires: null,
+    desc: "斬属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "斬", value: 0.05 } },
+  { id: "bladeMastery", name: "斬の極意", category: "戦闘拡張", cost: 9, requires: "bladeBasics",
+    desc: "斬属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "斬", value: 0.15 } },
+  { id: "bladeEdge", name: "斬の余韻", category: "戦闘拡張", cost: 6, requires: "bladeBasics",
+    desc: "斬属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+  { id: "critUp", name: "会心の極意", category: "戦闘拡張", cost: 11, requires: "bladeMastery",
+    desc: "短剣の会心率 25%→40%。斬の極みに至った証。", effect: { type: "critChancePct", value: 0.15 } },
+
+  { id: "magicBasics", name: "魔の心得", category: "戦闘拡張", cost: 3, requires: null,
+    desc: "魔属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "魔", value: 0.05 } },
+  { id: "magicMastery", name: "魔の極意", category: "戦闘拡張", cost: 9, requires: "magicBasics",
+    desc: "魔属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "魔", value: 0.15 } },
+  { id: "magicEdge", name: "魔の余韻", category: "戦闘拡張", cost: 6, requires: "magicBasics",
+    desc: "魔属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+  { id: "magicWard", name: "魔の守り", category: "戦闘拡張", cost: 11, requires: "magicMastery",
+    desc: "体を魔力の膜が覆い、毒を受け付けなくなる。", effect: { type: "poisonImmune", value: 1 } },
+
+  { id: "pierceBasics", name: "突の心得", category: "戦闘拡張", cost: 3, requires: null,
+    desc: "突属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "突", value: 0.05 } },
+  { id: "pierceMastery", name: "突の極意", category: "戦闘拡張", cost: 9, requires: "pierceBasics",
+    desc: "突属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "突", value: 0.15 } },
+  { id: "pierceEdge", name: "突の余韻", category: "戦闘拡張", cost: 6, requires: "pierceBasics",
+    desc: "突属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+  { id: "pierceDepth", name: "貫きの真髄", category: "戦闘拡張", cost: 11, requires: "pierceMastery",
+    desc: "突属性武器のダメージ、さらに+7%(合計+27%)。矢と穂先がさらに冴える。", effect: { type: "elementDmgPct", element: "突", value: 0.07 } },
+
+  { id: "bluntBasics", name: "打の心得", category: "戦闘拡張", cost: 3, requires: null,
+    desc: "打属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "打", value: 0.05 } },
+  { id: "bluntMastery", name: "打の極意", category: "戦闘拡張", cost: 9, requires: "bluntBasics",
+    desc: "打属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "打", value: 0.15 } },
+  { id: "bluntEdge", name: "打の余韻", category: "戦闘拡張", cost: 6, requires: "bluntBasics",
+    desc: "打属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+  { id: "bluntWeight", name: "破砕の真髄", category: "戦闘拡張", cost: 11, requires: "bluntMastery",
+    desc: "打属性武器のダメージ、さらに+7%(合計+27%)。一撃がさらに深く食い込む。", effect: { type: "elementDmgPct", element: "打", value: 0.07 } },
+
+  { id: "soundBasics", name: "音の心得", category: "戦闘拡張", cost: 3, requires: null,
+    desc: "音属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "音", value: 0.05 } },
+  { id: "soundMastery", name: "音の極意", category: "戦闘拡張", cost: 9, requires: "soundBasics",
+    desc: "音属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "音", value: 0.15 } },
+  { id: "soundEdge", name: "音の余韻", category: "戦闘拡張", cost: 6, requires: "soundBasics",
+    desc: "音属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+  { id: "soundEcho", name: "残響の真髄", category: "戦闘拡張", cost: 11, requires: "soundMastery",
+    desc: "音属性武器のダメージ、さらに+7%(合計+27%)。旋律の残響がさらに響く。", effect: { type: "elementDmgPct", element: "音", value: 0.07 } },
+
+  { id: "powerSeal", name: "力の刻印", category: "戦闘拡張", cost: 20, requiresAll: ["bladeMastery", "magicMastery", "pierceMastery", "bluntMastery", "soundMastery"],
+    desc: "全武器のダメージ+10%(属性の極意と重複可)。五属性すべての極意を極めた者だけが辿り着ける。", effect: { type: "allDmgPct", value: 0.10 } },
+
+  // 生存 — 「種」(地味な一歩)から二方向に分かれ、最後は不屈へ収束する
+  { id: "vitalitySeed", name: "生命の芽", category: "生存", cost: 3, requires: null,
+    desc: "最大HPが永続+6。すべての生存術の起点。", effect: { type: "maxHp", value: 6 } },
+  { id: "vitalityI", name: "生命の器I", category: "生存", cost: 6, requires: "vitalitySeed",
+    desc: "最大HPがさらに永続+8(合計+14)。", effect: { type: "maxHp", value: 8 } },
+  { id: "vitalityII", name: "生命の器II", category: "生存", cost: 10, requires: "vitalityI",
+    desc: "最大HPがさらに永続+12(合計+26)。", effect: { type: "maxHp", value: 12 } },
+  { id: "dodgeI", name: "健脚の心得", category: "生存", cost: 5, requires: "vitalitySeed",
+    desc: "敵の攻撃を5%の確率で完全に避ける。", effect: { type: "dodgeChancePct", value: 0.05 } },
+  { id: "dodgeII", name: "疾風の心得", category: "生存", cost: 9, requires: "dodgeI",
+    desc: "回避率、さらに+7%(合計12%)。", effect: { type: "dodgeChancePct", value: 0.07 } },
+  { id: "guardSeed", name: "守りの構え", category: "生存", cost: 3, requires: null,
+    desc: "防具の防御力+6%。堅牢への第一歩。", effect: { type: "defPct", value: 0.06 } },
+  { id: "guardMastery", name: "堅牢の心得", category: "生存", cost: 8, requires: "guardSeed",
+    desc: "防具の防御力、さらに+12%(合計18%)。", effect: { type: "defPct", value: 0.12 } },
+  { id: "regenSeed", name: "呼吸法", category: "生存", cost: 3, requires: null,
+    desc: "戦闘開始時にHPを6%回復する。再生術の第一歩。", effect: { type: "battleStartHealPct", value: 0.06 } },
+  { id: "regen", name: "再生の心得", category: "生存", cost: 10, requires: "regenSeed",
+    desc: "戦闘開始時の回復、さらに+12%(合計18%)。", effect: { type: "battleStartHealPct", value: 0.12 } },
+  { id: "lastStand", name: "不屈の心得", category: "生存", cost: 15, requiresAll: ["vitalityII", "guardMastery"],
+    desc: "HPが最大値の25%以下のとき、被ダメージ-30%。生命と堅牢、両方を極めた者だけが辿り着ける。", effect: { type: "lowHpDmgReduction", value: 0.30, threshold: 0.25 } },
+
   // 探索
   { id: "bagCapI", name: "大きな鞄", category: "探索", cost: 3, requires: null,
     desc: "鞄の容量 14→19。" },
   { id: "bagCapII", name: "巨大な鞄", category: "探索", cost: 6, requires: "bagCapI",
     desc: "鞄の容量 19→24。" },
-  { id: "goldSense", name: "精霊の気配", category: "探索", cost: 4, requires: null,
-    desc: "金枝の精の出現率+4%。" },
-  // 転生
-  { id: "inheritSlot", name: "魂の脈絡", category: "転生", cost: 5, requires: null,
-    desc: "継承枠が永続+1。" },
-  { id: "startBonus", name: "旅装の記憶", category: "転生", cost: 3, requires: null,
-    desc: "旅の始まりに生命の果実が1つ追加される。" },
+  { id: "goldSenseI", name: "精霊の気配I", category: "探索", cost: 4, requires: null,
+    desc: "金枝の精の出現率+1%。", effect: { type: "rareChancePct", value: 0.01 } },
+  { id: "goldSenseII", name: "精霊の気配II", category: "探索", cost: 6, requires: "goldSenseI",
+    desc: "金枝の精の出現率、さらに+1%(合計+2%)。", effect: { type: "rareChancePct", value: 0.01 } },
+  { id: "goldSenseIII", name: "精霊の気配III", category: "探索", cost: 8, requires: "goldSenseII",
+    desc: "金枝の精の出現率、さらに+1%(合計+3%)。", effect: { type: "rareChancePct", value: 0.01 } },
+  { id: "goldSenseIV", name: "精霊の気配IV", category: "探索", cost: 10, requires: "goldSenseIII",
+    desc: "金枝の精の出現率、さらに+1%(合計+4%、最大)。", effect: { type: "rareChancePct", value: 0.01 } },
+  { id: "luckyEyeI", name: "商人の目利き", category: "探索", cost: 5, requires: null,
+    desc: "戦闘での武器・防具ドロップのレア度がわずかに上がる。", effect: { type: "dropLuck", value: 0.15 } },
+  { id: "luckyEyeII", name: "掘り出し物", category: "探索", cost: 9, requires: "luckyEyeI",
+    desc: "ドロップのレア度補正、さらに上昇(合計+0.35)。", effect: { type: "dropLuck", value: 0.20 } },
+
+  // 転生 — 解毒草(弱)→ 癒しの実 → 力の胞子 → 生命の果実(強)と段階的に強化するスキルツリー
+  { id: "startAntidote", name: "旅装の記憶I", category: "転生", cost: 2, requires: null,
+    desc: "旅の始まりに解毒草が1つ追加される。毒に備えた旅の第一歩。" },
+  { id: "startAntidote2", name: "旅装の記憶II", category: "転生", cost: 3, requires: "startAntidote",
+    desc: "旅の始まりにさらに解毒草が1つ追加される(合計2つ)。" },
+  { id: "startBerryS", name: "旅装の記憶III", category: "転生", cost: 4, requires: "startAntidote",
+    desc: "旅の始まりに癒しの実(HP35%回復)が1つ追加される。" },
+  { id: "startBerryS2", name: "旅装の記憶IV", category: "転生", cost: 5, requires: "startBerryS",
+    desc: "旅の始まりにさらに癒しの実が1つ追加される(合計2つ)。" },
+  { id: "fateMemory", name: "宿命の記憶I", category: "転生", cost: 5, requires: "startBerryS",
+    desc: "旅の始まりに力の胞子が1つ追加される。3ターン攻撃力+40%。" },
+  { id: "fateMemory2", name: "宿命の記憶II", category: "転生", cost: 8, requires: "fateMemory",
+    desc: "旅の始まりにさらに力の胞子が1つ追加される(合計2つ)。" },
+  { id: "startBerryB", name: "旅装の記憶V", category: "転生", cost: 9, requires: "fateMemory",
+    desc: "旅の始まりに生命の果実(HP75%回復)が1つ追加される。" },
+  { id: "startBerryB2", name: "旅装の記憶VI", category: "転生", cost: 12, requires: "startBerryB",
+    desc: "旅の始まりにさらに生命の果実が1つ追加される(合計2つ)。" },
 ];
+
+// スキル効果の合計値を集計する(構造的な効果[武器枠/鞄容量/開始品]はここでは扱わない)。
+function skillEffectTotal(skills, type, filter) {
+  let sum = 0;
+  for (const s of SKILL_TREE) {
+    if (!skills?.[s.id] || !s.effect || s.effect.type !== type) continue;
+    if (filter && !filter(s.effect)) continue;
+    sum += s.effect.value || 0;
+  }
+  return sum;
+}
+
+// スキルツリー再設計に伴う互換性維持。新ツリーに存在しなくなったスキルを所持していた場合、
+// 結晶で全額還元する(旧コストは LEGACY_SKILL_COSTS を参照)。一度きりしか実行しない。
+const SKILLTREE_MIGRATION_VERSION = 3;
+function migrateSkillTree(meta) {
+  if ((meta.skillTreeGen || 1) >= SKILLTREE_MIGRATION_VERSION) return meta;
+  const owned = Object.keys(meta.skills || {}).filter((id) => meta.skills[id]);
+  const orphaned = owned.filter((id) => !SKILL_TREE.some((s) => s.id === id));
+  if (orphaned.length === 0) return { ...meta, skillTreeGen: SKILLTREE_MIGRATION_VERSION };
+  const refund = orphaned.reduce((sum, id) => sum + (LEGACY_SKILL_COSTS[id] || 5), 0);
+  const newSkills = { ...meta.skills };
+  orphaned.forEach((id) => { delete newSkills[id]; });
+  return {
+    ...meta,
+    skills: newSkills,
+    dewBank: (meta.dewBank || 0) + refund,
+    skillTreeGen: SKILLTREE_MIGRATION_VERSION,
+    skillRefundNotice: refund,
+  };
+}
+
+// requires(単一)/requiresAll(複数)のどちらであっても前提条件を満たしているか判定する。
+function skillPrereqsMet(skill, skills) {
+  if (skill.requiresAll) return skill.requiresAll.every((id) => !!skills?.[id]);
+  if (skill.requires) return !!skills?.[skill.requires];
+  return true;
+}
 
 async function loadMeta() {
   try {
@@ -911,25 +1090,6 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   background: none; transition: border-color .15s; }
 .kw-bestiary-ch-card:hover { border-color: rgba(157,180,166,.4); }
 .kw-bestiary-ch-info { position: absolute; inset: 0; padding: 10px 12px; display: flex; flex-direction: column; justify-content: flex-end; }
-/* スキルツリー */
-.kw-sk-cat-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.kw-sk-cat-icon { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
-  background: rgba(94,130,101,.18); flex-shrink: 0; }
-.kw-sk-cat-line { flex: 1; height: 1px; background: linear-gradient(to right, rgba(157,180,166,.25), transparent); }
-.kw-sk-row { display: flex; align-items: stretch; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.kw-sk-card { position: relative; overflow: hidden; padding: 11px 13px 10px; border-radius: 10px;
-  flex: 1; min-width: 110px; max-width: 200px;
-  border: 1px solid rgba(157,180,166,.14); background: rgba(94,130,101,.04);
-  transition: border-color .18s, background .18s, box-shadow .18s; }
-.kw-sk-card.owned { border-color: rgba(232,180,74,.55);
-  background: linear-gradient(145deg, rgba(232,180,74,.1), rgba(94,130,101,.07));
-  box-shadow: 0 0 16px rgba(232,180,74,.16), inset 0 0 24px rgba(232,180,74,.04); }
-.kw-sk-card.buyable { border-color: rgba(143,211,154,.5); background: rgba(94,130,101,.09); cursor: pointer; }
-.kw-sk-card.buyable:hover { background: rgba(94,130,101,.17); box-shadow: 0 0 10px rgba(143,211,154,.18); }
-.kw-sk-card.blocked { opacity: .28; }
-.kw-sk-card-bg { position: absolute; right: -4px; bottom: -6px; pointer-events: none; }
-.kw-sk-arrow { display: flex; align-items: center; padding: 0 2px; flex-shrink: 0;
-  color: rgba(157,180,166,.3); font-size: 10px; }
 /* ローディング */
 @keyframes kw-dot-fade { 0%,80%,100% { opacity: .2; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
 .kw-loading-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--hotaru); display: inline-block; }
@@ -1289,7 +1449,14 @@ function starterState(meta, initialWeaponType = "dagger") {
   inv.push(makeConsumable("berrySmall"));
   inv.push(makeConsumable("berrySmall"));
   inv.push(makeConsumable("antidote"));
-  if (meta?.skills?.startBonus) inv.push(makeConsumable("berryBig"));
+  if (meta?.skills?.startAntidote) inv.push(makeConsumable("antidote"));
+  if (meta?.skills?.startAntidote2) inv.push(makeConsumable("antidote"));
+  if (meta?.skills?.startBerryS) inv.push(makeConsumable("berrySmall"));
+  if (meta?.skills?.startBerryS2) inv.push(makeConsumable("berrySmall"));
+  if (meta?.skills?.fateMemory) inv.push(makeConsumable("spore"));
+  if (meta?.skills?.fateMemory2) inv.push(makeConsumable("spore"));
+  if (meta?.skills?.startBerryB) inv.push(makeConsumable("berryBig"));
+  if (meta?.skills?.startBerryB2) inv.push(makeConsumable("berryBig"));
   return { weapons, armor, inv };
 }
 
@@ -1364,146 +1531,248 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
 ------------------------------------------------------------ */
 const SKILL_ICON_MAP = {
   weaponSlot4: Swords, weaponSlot5: Swords, weaponSlot6: Swords,
-  bladeMastery: Sword, magicMastery: Wand2,
+  bladeBasics: Sword, bladeMastery: Sword, bladeEdge: Waves, critUp: Zap,
+  magicBasics: Wand2, magicMastery: Wand2, magicEdge: Waves, magicWard: Shield,
+  pierceBasics: Crosshair, pierceMastery: Crosshair, pierceEdge: Waves, pierceDepth: Crosshair,
+  bluntBasics: Axe, bluntMastery: Axe, bluntEdge: Waves, bluntWeight: Axe,
+  soundBasics: Music, soundMastery: Music, soundEdge: Waves, soundEcho: Music,
+  powerSeal: Flame,
+  vitalitySeed: Heart, vitalityI: Heart, vitalityII: Heart,
+  dodgeI: Wind, dodgeII: Wind,
+  guardSeed: Shield, guardMastery: Shield,
+  regenSeed: Sprout, regen: Sprout,
+  lastStand: Bone,
   bagCapI: Package, bagCapII: Package,
-  goldSense: Sparkles,
-  inheritSlot: Heart, startBonus: Apple,
+  goldSenseI: Sparkles, goldSenseII: Sparkles, goldSenseIII: Sparkles, goldSenseIV: Sparkles,
+  luckyEyeI: PiggyBank, luckyEyeII: PiggyBank,
+  startAntidote: Leaf, startAntidote2: Leaf, startBerryS: Apple, startBerryS2: Apple,
+  fateMemory: Cherry, fateMemory2: Cherry, startBerryB: Heart, startBerryB2: Heart,
 };
-const CAT_ICON_MAP = { "戦闘拡張": Swords, "探索": Leaf, "転生": Moon };
+const CAT_ICON_MAP = { "戦闘拡張": Swords, "生存": Heart, "探索": Leaf, "転生": Moon };
+const SKILL_BY_ID = Object.fromEntries(SKILL_TREE.map((s) => [s.id, s]));
+const SKILL_TREE_CATEGORIES = [...new Set(SKILL_TREE.map((s) => s.category))];
 
-function SkillTreeOverlay({ meta, onClose, onBuy }) {
+function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
+  const [selectedId, setSelectedId] = useState(null);
   const skills = meta?.skills || {};
   const dewBank = meta?.dewBank || 0;
+
   const isOwned = (id) => !!skills[id];
-  const canBuy = (sk) => !skills[sk.id] && dewBank >= sk.cost && (!sk.requires || !!skills[sk.requires]);
+  const isRevealed = (skill) => skillPrereqsMet(skill, skills);
+  const canBuy = (sk) => !isOwned(sk.id) && isRevealed(sk) && dewBank >= sk.cost;
 
-  const categories = [...new Set(SKILL_TREE.map((s) => s.category))];
+  const selected = selectedId ? SKILL_BY_ID[selectedId] : null;
+  const selectedOwned = selected ? isOwned(selected.id) : false;
+  const selectedBuyable = selected ? canBuy(selected) : false;
+  const selectedRevealed = selected ? isRevealed(selected) : false;
 
-  function buildRows(catSkills) {
-    const childOf = {};
-    catSkills.forEach((s) => { if (s.requires) childOf[s.requires] = [...(childOf[s.requires] || []), s]; });
-    const roots = catSkills.filter((s) => !catSkills.find((cs) => cs.id === s.requires));
-    const chains = roots.map((root) => {
-      const chain = [root];
-      let cur = root;
-      while (childOf[cur.id]?.length) { cur = childOf[cur.id][0]; chain.push(cur); }
-      return chain;
+  // カテゴリ内スキルを木構造でフラット展開
+  function buildRows(cat) {
+    const catSkills = SKILL_TREE.filter(s => s.category === cat);
+    const catIds = new Set(catSkills.map(s => s.id));
+    const childrenOf = {};
+    catSkills.forEach(s => {
+      const parents = s.requiresAll || (s.requires ? [s.requires] : []);
+      const inCatParent = parents.find(pid => catIds.has(pid));
+      if (inCatParent) {
+        if (!childrenOf[inCatParent]) childrenOf[inCatParent] = [];
+        childrenOf[inCatParent].push(s.id);
+      }
     });
-    const singles = chains.filter((c) => c.length === 1).map((c) => c[0]);
-    const multis = chains.filter((c) => c.length > 1);
-    const rows = multis.map((c) => ({ type: "chain", skills: c }));
-    if (singles.length) rows.push({ type: "group", skills: singles });
-    return rows;
-  }
-
-  function SkillCard({ skill, inRow }) {
-    const owned = isOwned(skill.id);
-    const buyable = canBuy(skill);
-    const blocked = !!(skill.requires && !isOwned(skill.requires));
-    const BgIcon = SKILL_ICON_MAP[skill.id] || Gem;
-    const cls = `kw-sk-card${owned ? " owned" : buyable ? " buyable" : blocked ? " blocked" : ""}`;
-    return (
-      <div className={cls} style={inRow ? { flex: 1 } : {}} onClick={() => buyable && onBuy(skill.id)}>
-        {/* 背景アイコン */}
-        <div className="kw-sk-card-bg">
-          <BgIcon size={54} strokeWidth={0.7}
-            color={owned ? "rgba(232,180,74,.13)" : "rgba(157,180,166,.07)"} />
-        </div>
-        {/* コスト/状態バッジ */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <span style={{
-            fontSize: 9, letterSpacing: ".12em", padding: "2px 6px", borderRadius: 3,
-            background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
-            color: owned ? "var(--hotaru)" : buyable ? "#8fd39a" : "var(--mist)",
-          }}>
-            {owned ? "✦ 習得済" : `${skill.cost} 結晶`}
-          </span>
-          {owned && <Sparkles size={10} color="var(--hotaru)" />}
-        </div>
-        {/* 名前 */}
-        <div style={{ fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 700, letterSpacing: ".05em",
-          color: owned ? "var(--hotaru)" : "var(--paper)", lineHeight: 1.2 }}>
-          {skill.name}
-        </div>
-        {/* 説明 */}
-        <div style={{ fontSize: 10, color: "var(--mist)", lineHeight: 1.6, marginTop: 5 }}>{skill.desc}</div>
-        {blocked && (
-          <div style={{ fontSize: 9, color: "var(--danger)", marginTop: 4, letterSpacing: ".05em" }}>
-            要: {SKILL_TREE.find((s2) => s2.id === skill.requires)?.name}
-          </div>
-        )}
-        {buyable && (
-          <div style={{ marginTop: 6, fontSize: 9, color: "#8fd39a", letterSpacing: ".12em" }}>▶ タップで習得</div>
-        )}
-      </div>
-    );
+    const hasParent = new Set(Object.values(childrenOf).flat());
+    const roots = catSkills.filter(s => !hasParent.has(s.id));
+    const result = [];
+    const visited = new Set();
+    function traverse(id, depth) {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const skill = SKILL_BY_ID[id];
+      if (!skill) return;
+      result.push({ skill, depth });
+      (childrenOf[id] || []).forEach(cid => traverse(cid, depth + 1));
+    }
+    roots.forEach(r => traverse(r.id, 0));
+    return result;
   }
 
   return (
-    <div className="kw-overlay top" onClick={onClose}>
-      <div className="kw-panel kw-sheet" style={{ maxWidth: 560, maxHeight: "88vh", display: "flex", flexDirection: "column" }}
-        onClick={(e) => e.stopPropagation()}>
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 30,
+      background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "var(--font-body)", overflow: "hidden",
+    }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        display: "flex", flexDirection: "column",
+        background: "linear-gradient(180deg, rgba(16,27,21,.98), rgba(10,18,14,.99))",
+        border: "1px solid rgba(157,180,166,.2)",
+        borderRadius: 14,
+        width: "calc(100% - 32px)", maxWidth: 480,
+        maxHeight: "82vh",
+        overflow: "hidden",
+      }}>
+      {/* ── ヘッダー ── */}
+      <div style={{
+        flexShrink: 0,
+        padding: "12px 18px 10px",
+        borderBottom: "1px solid rgba(157,180,166,.12)",
+        background: "rgba(10,18,14,.7)",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+      }}>
+        <div>
+          <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 20, letterSpacing: ".2em", color: "var(--paper)" }}>スキルツリー</div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4,
+            padding: "2px 10px", borderRadius: 12,
+            background: "rgba(232,180,74,.1)", border: "1px solid rgba(232,180,74,.3)" }}>
+            <Sparkles size={10} color="var(--hotaru)" />
+            <span style={{ fontSize: 11, color: "var(--hotaru)", fontWeight: 700 }}>{dewBank}</span>
+            <span style={{ fontSize: 10, color: "rgba(232,180,74,.7)" }}>精の結晶</span>
+          </div>
+        </div>
+        <button className="kw-btn ghost" style={{ padding: "6px 14px", flexShrink: 0 }} onClick={onClose}><X size={14} /></button>
+      </div>
 
-        {/* ヘッダー */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <div>
-            <h2 style={{ letterSpacing: ".2em" }}>スキルツリー</h2>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 20,
-                background: "rgba(232,180,74,.1)", border: "1px solid rgba(232,180,74,.3)" }}>
-                <Sparkles size={10} color="var(--hotaru)" />
-                <span style={{ fontSize: 11, color: "var(--hotaru)", fontWeight: 700 }}>{dewBank}</span>
-                <span style={{ fontSize: 10, color: "rgba(232,180,74,.7)" }}>精の結晶</span>
+      {/* ── スキルリスト(スクロール) ── */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: "12px 14px 6px" }}>
+
+        {/* 結晶還元通知 */}
+        {!!meta?.skillRefundNotice && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            padding: "8px 12px", marginBottom: 14, borderRadius: 8,
+            background: "rgba(232,180,74,.12)", border: "1px solid rgba(232,180,74,.35)",
+          }}>
+            <div style={{ fontSize: 10, color: "var(--hotaru)", lineHeight: 1.6 }}>
+              スキルツリーが再構成されました。失効したスキルの分、結晶を{meta.skillRefundNotice}個還元しました。
+            </div>
+            <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 10, flexShrink: 0 }} onClick={onDismissRefund}>OK</button>
+          </div>
+        )}
+
+        {SKILL_TREE_CATEGORIES.map((cat) => {
+          const CatIcon = CAT_ICON_MAP[cat] || Gem;
+          const rows = buildRows(cat);
+          return (
+            <div key={cat} style={{ marginBottom: 22 }}>
+              {/* カテゴリヘッダー */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ width: 22, height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "rgba(94,130,101,.18)", flexShrink: 0 }}>
+                  <CatIcon size={12} color="var(--mist)" strokeWidth={1.5} />
+                </div>
+                <span style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", whiteSpace: "nowrap" }}>{cat}</span>
+                <div style={{ flex: 1, height: 1, background: "linear-gradient(to right, rgba(157,180,166,.2), transparent)" }} />
+              </div>
+
+              {rows.map(({ skill, depth }) => {
+                const owned = isOwned(skill.id);
+                const revealed = isRevealed(skill);
+                const buyable = canBuy(skill);
+                const isSelected = selectedId === skill.id;
+                const Icon = SKILL_ICON_MAP[skill.id] || Gem;
+                const accent = owned ? "var(--hotaru)" : buyable ? "#8fd39a" : revealed ? "var(--mist)" : "rgba(157,180,166,.2)";
+                const INDENT = 16;
+                return (
+                  <div key={skill.id} style={{ display: "flex", alignItems: "center", marginBottom: 5 }}>
+                    {depth > 0 && (
+                      <div style={{ width: Math.min(depth, 3) * INDENT, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 5 }}>
+                        <div style={{ width: 8, height: 1, background: "rgba(157,180,166,.22)" }} />
+                      </div>
+                    )}
+                    <div
+                      role="button"
+                      onClick={() => setSelectedId(isSelected ? null : skill.id)}
+                      style={{
+                        flex: 1, display: "flex", alignItems: "center", gap: 9,
+                        padding: "8px 11px", borderRadius: 8, cursor: "pointer",
+                        border: `1px solid ${isSelected ? "var(--hotaru)" : owned ? "rgba(232,180,74,.32)" : buyable ? "rgba(143,211,154,.28)" : "rgba(157,180,166,.1)"}`,
+                        background: isSelected ? "rgba(232,180,74,.08)" : owned ? "rgba(232,180,74,.05)" : buyable ? "rgba(143,211,154,.04)" : "transparent",
+                        transition: "border-color .15s",
+                      }}
+                    >
+                      <Icon size={15} strokeWidth={1.6} color={accent} style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: 13, fontWeight: 700, fontFamily: "var(--font-display)",
+                          letterSpacing: ".04em", lineHeight: 1.25,
+                          color: owned ? "var(--hotaru)" : revealed ? "var(--paper)" : "rgba(157,180,166,.28)",
+                        }}>
+                          {revealed ? skill.name : "???"}
+                        </div>
+                        {revealed && (
+                          <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 1, lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {skill.desc}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{
+                        fontSize: 9, letterSpacing: ".08em", padding: "2px 7px", borderRadius: 3, flexShrink: 0,
+                        background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
+                        color: accent,
+                      }}>
+                        {owned ? "✦ 済" : revealed ? `${skill.cost}結晶` : "???"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── 詳細パネル(選択時) ── */}
+      {selected && (
+        <div style={{
+          flexShrink: 0, borderTop: "1px solid rgba(157,180,166,.14)",
+          padding: "11px 16px", background: "rgba(10,18,14,.7)",
+        }}>
+          {!selectedRevealed ? (
+            <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", padding: "4px 0" }}>
+              ??? 前提スキルを習得すると解放されます。
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, marginTop: 2 }}>
+                {React.createElement(SKILL_ICON_MAP[selected.id] || Gem, { size: 18, strokeWidth: 1.5, color: selectedOwned ? "var(--hotaru)" : "var(--mist)" })}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 700, color: selectedOwned ? "var(--hotaru)" : "var(--paper)" }}>
+                    {selected.name}
+                  </div>
+                  <span style={{
+                    fontSize: 9, padding: "2px 8px", borderRadius: 3, flexShrink: 0, letterSpacing: ".08em",
+                    background: selectedOwned ? "rgba(232,180,74,.18)" : selectedBuyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
+                    color: selectedOwned ? "var(--hotaru)" : selectedBuyable ? "#8fd39a" : "var(--mist)",
+                  }}>
+                    {selectedOwned ? "✦ 習得済" : `${selected.cost} 結晶`}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--mist)", lineHeight: 1.6, marginTop: 3 }}>{selected.desc}</div>
+                {selected.requiresAll && (
+                  <div style={{ fontSize: 9, color: "var(--mist)", marginTop: 3, opacity: .7 }}>
+                    前提: {selected.requiresAll.map(pid => SKILL_BY_ID[pid]?.name || pid).join(" ・ ")}
+                  </div>
+                )}
+                {selectedBuyable && (
+                  <button className="kw-btn primary" style={{ marginTop: 8, padding: "5px 18px", fontSize: 11 }}
+                    onClick={() => onBuy(selected.id)}>この結晶で習得する</button>
+                )}
+                {!selectedOwned && !selectedBuyable && dewBank < (selected.cost || 0) && selectedRevealed && (
+                  <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 4 }}>
+                    結晶が足りません（あと{selected.cost - dewBank}個）。
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-          <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={onClose}><X size={14} /></button>
+          )}
         </div>
+      )}
 
-        {/* カテゴリ別 */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {categories.map((cat) => {
-            const CatIcon = CAT_ICON_MAP[cat] || Gem;
-            const catSkills = SKILL_TREE.filter((s) => s.category === cat);
-            const rows = buildRows(catSkills);
-            return (
-              <div key={cat} style={{ marginBottom: 22 }}>
-                <div className="kw-sk-cat-head">
-                  <div className="kw-sk-cat-icon">
-                    <CatIcon size={14} color="var(--mist)" strokeWidth={1.5} />
-                  </div>
-                  <span style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", whiteSpace: "nowrap" }}>{cat}</span>
-                  <div className="kw-sk-cat-line" />
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {rows.map((row, ri) => (
-                    <div key={ri} className="kw-sk-row">
-                      {row.type === "chain"
-                        ? row.skills.map((skill, si) => (
-                            <React.Fragment key={skill.id}>
-                              <SkillCard skill={skill} inRow={false} />
-                              {si < row.skills.length - 1 && (
-                                <div className="kw-sk-arrow">
-                                  <ChevronRight size={14} strokeWidth={1.5} />
-                                </div>
-                              )}
-                            </React.Fragment>
-                          ))
-                        : row.skills.map((skill) => (
-                            <SkillCard key={skill.id} skill={skill} inRow={true} />
-                          ))
-                      }
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{ paddingTop: 10, display: "flex", justifyContent: "center" }}>
-          <button className="kw-btn primary" style={{ padding: "10px 36px" }} onClick={onClose}>閉じる</button>
-        </div>
+      {/* ── フッター ── */}
+      <div style={{ flexShrink: 0, padding: "8px 18px 12px", display: "flex", justifyContent: "center", borderTop: "1px solid rgba(157,180,166,.08)" }}>
+        <button className="kw-btn primary" style={{ padding: "9px 48px" }} onClick={onClose}>閉じる</button>
+      </div>
       </div>
     </div>
   );
@@ -1680,6 +1949,7 @@ export default function KiriwatariNoMori() {
   const [meta, setMeta] = useState(null);
   const [g, setG] = useState({ screen: "title" });
   const gRef = useRef(g); gRef.current = g;
+  const metaRef = useRef(meta); metaRef.current = meta;
   const logRef = useRef(null);
 
   // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
@@ -1720,6 +1990,47 @@ export default function KiriwatariNoMori() {
   const openURL = (url) => {
     try { window.webkit?.messageHandlers?.openURL?.postMessage({ url }); } catch {}
   };
+
+  // リワード広告(ネイティブ側の LevelPlay)を要求する。結果は __onRewardAdResult__ に届く。
+  const requestRewardAd = (contextId) => {
+    setG((s) => ({ ...s, rewardAdPending: contextId }));
+    try { window.webkit?.messageHandlers?.rewardAd?.postMessage({ action: "show", context: contextId }); } catch (_) {
+      setG((s) => (s.rewardAdPending === contextId ? { ...s, rewardAdPending: null } : s));
+    }
+  };
+
+  // リワード広告の結果コールバック。gRef/metaRef 経由で常に最新の状態を扱う。
+  useEffect(() => {
+    window.__onRewardAdResult__ = (contextId, success) => {
+      const s0 = gRef.current;
+      if (s0.rewardAdPending !== contextId) return; // 別画面に移動済みなら無視
+      if (!success) {
+        setG((s) => ({ ...s, rewardAdPending: null, rewardAdFailedAt: Date.now() }));
+        return;
+      }
+      const nm = contextId === "revive"
+        ? { ...consumeRewardAdUse(metaRef.current), reviveUsedThisRun: true }
+        : consumeRewardAdUse(metaRef.current);
+      setMeta(nm); saveMeta(nm);
+      if (contextId === "dew") {
+        setG((s) => {
+          if (s.rewardAdPending !== "dew") return s;
+          let ns = pushLog({ ...s, drops: [...s.drops, makeConsumable("dew")], rewardAdPending: null, dewAdClaimed: true },
+            "広告視聴の報酬。宝樹の雫がもう一つ生まれた!", true);
+          return ns;
+        });
+      } else if (contextId === "revive") {
+        setG((s) => {
+          if (s.rewardAdPending !== "revive") return s;
+          const mx = maxHpOf(s, metaRef.current);
+          const revived = { ...s.player, hp: mx, poison: 0, atkDown: 0 };
+          return pushLog({ ...s, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
+            "広告の加護で、満身の力で息を吹き返した!", true);
+        });
+      }
+    };
+    return () => { delete window.__onRewardAdResult__; };
+  }, []);
 
   function toggleSleep() {
     const next = !sleepDisabled;
@@ -1829,7 +2140,11 @@ export default function KiriwatariNoMori() {
   }
 
   useEffect(() => {
-    loadMeta().then(setMeta);
+    loadMeta().then((m) => {
+      const migrated = migrateSkillTree(m);
+      if (migrated !== m) saveMeta(migrated);
+      setMeta(migrated);
+    });
     loadRun().then((run) => { if (run && (run.floor || run.phase === "dead")) setSavedRun(run); });
   }, []);
 
@@ -1839,20 +2154,30 @@ export default function KiriwatariNoMori() {
     if (!meta) return;
     const skill = SKILL_TREE.find((s) => s.id === skillId);
     if (!skill || (meta.dewBank || 0) < skill.cost) return;
-    if (skill.requires && !meta.skills?.[skill.requires]) return;
+    if (!skillPrereqsMet(skill, meta.skills)) return;
     if (meta.skills?.[skillId]) return;
     const m2 = {
       ...meta,
       dewBank: meta.dewBank - skill.cost,
       skills: { ...meta.skills, [skillId]: true },
-      ...(skillId === "inheritSlot" ? { slots: meta.slots + 1 } : {}),
     };
     setMeta(m2);
     await saveMeta(m2);
   }
 
-  const armorDef = (st) => Object.values(st.armor).reduce((a, x) => a + (x ? x.def : 0), 0);
+  async function dismissRefundNotice() {
+    if (!meta) return;
+    const m2 = { ...meta, skillRefundNotice: undefined };
+    setMeta(m2);
+    await saveMeta(m2);
+  }
+
+  const armorDef = (st, m = meta) => {
+    const base = Object.values(st.armor).reduce((a, x) => a + (x ? x.def : 0), 0);
+    return Math.round(base * (1 + skillEffectTotal(m?.skills, "defPct")));
+  };
   const maxHpOf = (st, m = meta) => BASE_HP + (m?.bonusHp || 0) +
+    skillEffectTotal(m?.skills, "maxHp") +
     Object.values(st.armor).reduce((a, x) => a + (x ? x.hp : 0), 0);
 
   const pushLog = (st, text, strong = false) =>
@@ -1899,15 +2224,19 @@ export default function KiriwatariNoMori() {
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
       ...eq, cds: {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, lastRareSeen: 0, skillTree: false,
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: false,
       orbBagBonus: 0, orbSlotBonus: 0, orbChoice: false,
       coach: chapterIdx === 0 && (m.checkpoint || 1) === 1,
       stageIntro: chapterIdx,
     };
     base.player.hp = maxHpOf(base, m);
+    m = { ...m, reviveUsedThisRun: false };
+    setMeta(m); saveMeta(m);
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
     saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    // ラン開始時の装備武器を記録(武器バランス調整の参考用)
+    try { first.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_run_start", weapon_type: w.type, floor: startFloor })); } catch (_) {}
     setG(first);
   }
   // チェックポイント(前回到達章)から続ける
@@ -1923,7 +2252,7 @@ export default function KiriwatariNoMori() {
         weapons: run.weapons, armor: run.armor, inv: run.inv,
         cds: {}, drops: [], logs: [], floats: [],
         pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-        confirm: null, full: false, lastRareSeen: 0, skillTree: false,
+        confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: false,
         orbBagBonus: run.orbBagBonus || 0, orbSlotBonus: run.orbSlotBonus || 0, orbChoice: false,
         coach: false, stageIntro: null, enemies: [],
       };
@@ -1938,7 +2267,7 @@ export default function KiriwatariNoMori() {
       player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
       cds: run.cds || {}, drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false,
+      confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false, reviveUsed: false,
       orbBagBonus: run.orbBagBonus || 0, orbSlotBonus: run.orbSlotBonus || 0, orbChoice: false,
       coach: false, stageIntro: null,
     };
@@ -1956,7 +2285,7 @@ export default function KiriwatariNoMori() {
 
   function enterNode(st) {
     const kind = st.nodes[st.node];
-    let s = { ...st, pending: null, drops: [], eventDone: false };
+    let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false };
     if (kind === "battle" || kind === "boss") {
       // 武器スロットが全空なら袋から最強武器を自動装備。袋にもなければ応急の短剣を生成。
       if (!s.weapons.some(Boolean)) {
@@ -1981,6 +2310,13 @@ export default function KiriwatariNoMori() {
         for (const e of s.enemies) { if (e.bookId && !ns[e.bookId]) { ns[e.bookId] = true; ch = true; } }
         if (ch) { const m2 = { ...meta, seen: ns }; setMeta(m2); saveMeta(m2); } }
       s.cds = {};
+      // 呼吸法・再生の心得: 戦闘開始時にHPを回復
+      const battleStartHealPct = skillEffectTotal(meta?.skills, "battleStartHealPct");
+      if (battleStartHealPct > 0 && s.player.hp > 0) {
+        const mx = maxHpOf(s);
+        const heal = Math.round(mx * battleStartHealPct);
+        if (heal > 0 && s.player.hp < mx) s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+      }
       s = pushLog(s, kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss");
       if (s.enemies.some((e) => e.rare)) s = pushLog(s, "……金色の光。金枝の精が紛れている!", true);
     } else {
@@ -2038,9 +2374,12 @@ export default function KiriwatariNoMori() {
     const enemies = s.enemies.map((e) => ({ ...e }));
     const discovered = JSON.parse(JSON.stringify(meta.discovered || {}));
     const atkMul = (s.player.atkUp > 0 ? 1.4 : 1);
-    const masteryMult = (meta?.skills?.bladeMastery && t.dmgType === "斬") ? 1.15
-      : (meta?.skills?.magicMastery && t.dmgType === "魔") ? 1.15 : 1;
-    const raw = weapon.atk * atkMul * masteryMult;
+    // 属性ごとの心得・極意・真髄が積み上がる(この属性のものだけ合計)。
+    const masteryMult = 1 + skillEffectTotal(meta?.skills, "elementDmgPct", (e) => e.element === t.dmgType);
+    const powerSealMult = 1 + skillEffectTotal(meta?.skills, "allDmgPct");
+    const raw = weapon.atk * atkMul * masteryMult * powerSealMult;
+    const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct");
+    let dmgDealtThisAction = 0;
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
     const floats = [];
@@ -2051,10 +2390,12 @@ export default function KiriwatariNoMori() {
     };
 
     if (weapon.type === "dagger") {
+      const critChance = 0.25 + skillEffectTotal(meta?.skills, "critChancePct");
       for (let i = 0; i < 2; i++) {
         if (target.hp <= 0) break;
-        const crit = Math.random() < 0.25;
+        const crit = Math.random() < critChance;
         const r = hitEnemy(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered);
+        dmgDealtThisAction += r.dmg;
         if (crit) {
           floats.push({ key: uid(), targetId: target.id, text: `会心 ${r.dmg}`, color: "var(--hotaru)", size: 24, t: Date.now() });
         } else {
@@ -2063,39 +2404,49 @@ export default function KiriwatariNoMori() {
       }
       s = pushLog(s, `${weapon.name}の二連撃。`);
     } else if (weapon.type === "greatsword") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 2.2, discovered); F(target.id, r);
+      const r = hitEnemy(s, target, raw, t.dmgType, 2.2, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       s = pushLog(s, `${weapon.name}を振り抜いた!`);
     } else if (weapon.type === "bow") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1, discovered); F(target.id, r);
+      const r = hitEnemy(s, target, raw, t.dmgType, 1, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       const others = enemies.filter((e) => e.hp > 0 && e.id !== target.id);
-      if (others.length) { const o = pick(others); const r2 = hitEnemy(s, o, raw, t.dmgType, 0.5, discovered); F(o.id, r2); }
+      if (others.length) { const o = pick(others); const r2 = hitEnemy(s, o, raw, t.dmgType, 0.5, discovered); F(o.id, r2); dmgDealtThisAction += r2.dmg; }
       s = pushLog(s, `${weapon.name}で射抜き、流れ矢が走る。`);
     } else if (weapon.type === "axe") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.6, discovered); F(target.id, r);
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.6, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       target.def = Math.max(0, target.def - 2);
       floats.push({ key: uid(), targetId: target.id, text: "防御破壊", color: "var(--mist)", size: 13, t: Date.now() });
       s = pushLog(s, `${weapon.name}が守りを砕く。`);
     } else if (weapon.type === "spear") {
       const idx = enemies.findIndex((e) => e.id === target.id);
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered); F(target.id, r);
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       const behind = enemies.slice(idx + 1).find((e) => e.hp > 0);
-      if (behind) { const r2 = hitEnemy(s, behind, raw, t.dmgType, 0.7, discovered); F(behind.id, r2); }
+      if (behind) { const r2 = hitEnemy(s, behind, raw, t.dmgType, 0.7, discovered); F(behind.id, r2); dmgDealtThisAction += r2.dmg; }
       s = pushLog(s, `${weapon.name}の貫きが奥まで届く。`);
     } else if (weapon.type === "book") {
-      for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); }
+      for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg; }
       s = pushLog(s, `${weapon.name}の一節が森を薙ぐ。`);
     } else if (weapon.type === "staff") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered); F(target.id, r);
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       const heal = Math.round(maxHpOf(s) * 0.1);
       s.player = { ...s.player, hp: Math.min(maxHpOf(s), s.player.hp + heal) };
       floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
       s = pushLog(s, `${weapon.name}の光が敵を打ち、身体を癒す。`);
     } else if (weapon.type === "instrument") {
       for (const e of enemies) if (e.hp > 0) {
-        const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r);
+        const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg;
         e.atkDown = 2;
       }
       s = pushLog(s, `${weapon.name}の旋律が敵を怯ませる(攻撃弱体)。`);
+    }
+
+    // 余韻(ライフスティール): 与えたダメージの一部を吸収する。
+    if (lifestealPct > 0 && dmgDealtThisAction > 0) {
+      const mx = maxHpOf(s);
+      const heal = Math.round(dmgDealtThisAction * lifestealPct);
+      if (heal > 0 && s.player.hp < mx) {
+        s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+        floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
+      }
     }
 
     if (t.cd > 0) s.cds = { ...s.cds, [weapon.id]: t.cd + 1 }; // このターン終了時に-1される
@@ -2189,6 +2540,7 @@ export default function KiriwatariNoMori() {
 
   function rollDrops(enemies, floor, inv) {
     const drops = [];
+    const dropLuck = skillEffectTotal(meta?.skills, "dropLuck");
     for (const e of enemies) {
       if (e.rare) {
         drops.push(makeConsumable("dew"));
@@ -2205,11 +2557,11 @@ export default function KiriwatariNoMori() {
       }
       const roll = Math.random();
       const wMax = floor <= 10 ? 0.64 : 0.62; // 第1章は武器ドロップ率アップ
-      if (roll < 0.38) drops.push(makeConsumable());
-      else if (roll < wMax) drops.push(makeWeapon(floor));
-      else if (roll < wMax + 0.12) drops.push(makeArmor(floor));
+      if (roll < 0.38) drops.push(makeConsumable(null, floor));
+      else if (roll < wMax) drops.push(makeWeapon(floor, { luck: dropLuck }));
+      else if (roll < wMax + 0.12) drops.push(makeArmor(floor, { luck: dropLuck }));
     }
-    if (drops.length === 0) drops.push(makeConsumable());
+    if (drops.length === 0) drops.push(makeConsumable(null, floor));
     return drops;
   }
 
@@ -2249,6 +2601,8 @@ export default function KiriwatariNoMori() {
         s.phase = "clear";
         // 進行度をFirebaseに記録(章クリア=到達点更新)
         try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "stage_clear", stage, checkpoint: m2.checkpoint }); } catch (_) {}
+        // ボス撃破時の装備武器を記録(武器バランス調整の参考用)
+        try { s.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_boss_kill", weapon_type: w.type, stage })); } catch (_) {}
         // 第2・3章ボス初クリア時にレビューを促す
         if ((stage === 2 || stage === 3) && (meta.checkpoint || 1) <= stage) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
@@ -2271,6 +2625,19 @@ export default function KiriwatariNoMori() {
     }
   }
 
+  // 死亡確定処理(復活オファーを断った/広告に失敗した場合もここを通る)
+  function finalizeDeath(stFainted) {
+    const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, stFainted.floor) };
+    setMeta(m2); saveMeta(m2);
+    // 進行度をFirebaseに記録(死亡=到達フロア)
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "death", floor: stFainted.floor, bestFloor: m2.bestFloor }); } catch (_) {}
+    // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
+    saveDeadRun(stFainted.floor, stFainted.weapons, stFainted.armor, stFainted.inv, stFainted.orbBagBonus || 0, stFainted.orbSlotBonus || 0);
+    setSavedRun(null);
+    const effSlots = meta.slots + (stFainted.orbSlotBonus || 0);
+    setG({ ...stFainted, phase: "dead", pick: recommendPick(stFainted, effSlots), effSlots });
+  }
+
   /* ---------- 敵の行動 ---------- */
   async function enemyPhase() {
     let s = { ...gRef.current };
@@ -2278,6 +2645,8 @@ export default function KiriwatariNoMori() {
     let player = { ...s.player };
     const mx = maxHpOf(s);
     const def = armorDef(s);
+    const dodgeChance = skillEffectTotal(meta?.skills, "dodgeChancePct");
+    const poisonImmune = skillEffectTotal(meta?.skills, "poisonImmune") > 0;
 
     const n0 = enemies.length; // このターン開始時にいた敵だけ行動(召喚された敵は次ターンから)
     for (let i = 0; i < n0; i++) {
@@ -2308,8 +2677,18 @@ export default function KiriwatariNoMori() {
         else if (Math.random() < 0.28) { e.charge = true; s = pushLog(s, `${e.chargeLine}(次は大技)`, true); continue; }
       }
       if (player.guard) dmg = Math.max(1, Math.round(dmg / 2));
+      // 健脚/疾風の心得: 完全回避
+      const dodged = dodgeChance > 0 && Math.random() < dodgeChance;
+      if (dodged) {
+        dmg = 0;
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: "回避!", color: "#8fd39a", size: 18, t: Date.now() }] };
+      } else {
+        // 不屈の心得: 残りHPが最大値の25%以下のとき被ダメージ軽減
+        const lowHpCut = skillEffectTotal(meta?.skills, "lowHpDmgReduction", (eff) => player.hp <= mx * (eff.threshold ?? 0.25));
+        if (lowHpCut > 0) dmg = Math.max(1, Math.round(dmg * (1 - lowHpCut)));
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `${dmg}`, color: "var(--danger)", size: 20, t: Date.now() }] };
+      }
       player.hp = Math.max(0, player.hp - dmg);
-      s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `${dmg}`, color: "var(--danger)", size: 20, t: Date.now() }] };
       // 吸収(与ダメの半分を回復)
       if (e.drain && dmg > 0) {
         const rec = Math.round(dmg / 2);
@@ -2317,7 +2696,7 @@ export default function KiriwatariNoMori() {
         s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `+${rec}`, color: "#8fd39a", size: 15, t: Date.now() }] };
       }
       // 毒攻撃
-      if (e.poison && Math.random() < 0.4 && player.poison <= 0) {
+      if (e.poison && !poisonImmune && Math.random() < 0.4 && player.poison <= 0) {
         player.poison = 3;
         s = pushLog(s, `${e.name}の毒! 身体が痺れていく。`);
       }
@@ -2341,16 +2720,13 @@ export default function KiriwatariNoMori() {
     for (const [k, v] of Object.entries(s.cds)) if (v - 1 > 0) cds[k] = v - 1;
 
     if (player.hp <= 0) {
-      const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, s.floor) };
-      setMeta(m2); saveMeta(m2);
-      // 進行度をFirebaseに記録(死亡=到達フロア)
-      try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "death", floor: s.floor, bestFloor: m2.bestFloor }); } catch (_) {}
-      // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
-      saveDeadRun(s.floor, s.weapons, s.armor, s.inv, s.orbBagBonus || 0, s.orbSlotBonus || 0);
-      setSavedRun(null);
-      const stDead = { ...s, enemies, player, cds };
-      const effSlots = meta.slots + (s.orbSlotBonus || 0);
-      setG({ ...stDead, busy: false, phase: "dead", pick: recommendPick(stDead, effSlots), effSlots });
+      const stFainted = { ...s, enemies, player, cds, busy: false };
+      // 広告視聴の残り回数があれば、死亡確定前に復活オファーを挟む
+      if (rewardAdUsesLeft(meta) > 0 && !stFainted.reviveUsed && !meta.reviveUsedThisRun) {
+        setG({ ...stFainted, phase: "reviveOffer" });
+        return;
+      }
+      finalizeDeath(stFainted);
       return;
     }
     const finalState = { ...s, enemies, player, cds, busy: false };
@@ -2475,7 +2851,7 @@ export default function KiriwatariNoMori() {
       let ns = { ...s, eventDone: true };
       ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + heal), poison: 0 };
       ns = addFloat(ns, "player", `+${heal}`, "#8fd39a", 22);
-      if (Math.random() < 0.35) { ns.drops = [makeConsumable()]; return pushLog(ns, "泉の底に何かが沈んでいた。", true); }
+      if (Math.random() < 0.35) { ns.drops = [makeConsumable(null, s.floor)]; return pushLog(ns, "泉の底に何かが沈んでいた。", true); }
       return pushLog(ns, "泉の水が傷と毒を洗い流した。");
     });
   }
@@ -2517,7 +2893,7 @@ export default function KiriwatariNoMori() {
       const weapons = all.filter((x) => x.kind === "weapon");
       if (weapons.length) inherited = [...inherited, weapons.reduce((a, b) => (b.atk > a.atk ? b : a))];
     }
-    const m2 = { ...meta, inherited };
+    const m2 = { ...meta, inherited, reviveUsedThisRun: false };
     setMeta(m2); await saveMeta(m2);
     clearRun(); // 死亡セーブを消去して新しい旅を始める
     // 新しい旅へ(到達済みの章の頭から)
@@ -2528,7 +2904,7 @@ export default function KiriwatariNoMori() {
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
       ...eq, cds: {}, enemies: [], drops: [], logs: [{ text: "……灯りに導かれ、魂は再び旅の途中へ還る。", strong: true, k: uid() }], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      confirm: null, full: false, lastRareSeen: 0, skillTree: false, stageIntro: stageOf(startFloor),
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: false, stageIntro: stageOf(startFloor),
     };
     base.player.hp = maxHpOf(base, m2);
     const first = enterNode(base);
@@ -2797,7 +3173,7 @@ export default function KiriwatariNoMori() {
           />
         )}
         {g.skillTree && (
-          <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} />
+          <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} onDismissRefund={dismissRefundNotice} />
         )}
         {g.bestiary && (
           <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
@@ -2916,6 +3292,14 @@ export default function KiriwatariNoMori() {
                   </div>
                 )}
                 {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
+                {g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && (
+                  <div style={{ marginTop: 4, marginBottom: 10 }}>
+                    <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("dew")}>
+                      <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />
+                      {g.rewardAdPending === "dew" ? "広告を読み込み中…" : `広告を見て宝樹の雫を2倍にする(本日あと${rewardAdUsesLeft(meta)}回)`}
+                    </button>
+                  </div>
+                )}
                 <div className="kw-actions" style={{ justifyContent: "center" }}>
                   {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
                   <button className="kw-btn primary" onClick={tryProceed}>
@@ -3089,6 +3473,32 @@ export default function KiriwatariNoMori() {
                 </>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- 力尽きた直後: 広告視聴で復活するか選ぶ ---------- */}
+      {g.phase === "reviveOffer" && (
+        <div className="kw-overlay">
+          <div className="kw-panel kw-sheet" style={{ textAlign: "center", maxWidth: 340 }}>
+            <h2 style={{ color: "var(--danger)" }}>力尽きかけている……</h2>
+            <div className="kw-sub" style={{ marginTop: 10 }}>
+              広告を見ると、HP満タンでこの場に踏みとどまれる。<br />
+              この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+              <button className="kw-btn primary" style={{ padding: "7px 14px", fontSize: 12 }}
+                disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("revive")}>
+                {g.rewardAdPending === "revive" ? "広告を読み込み中…" : "広告を見て復活する"}
+              </button>
+              <button className="kw-btn ghost" style={{ padding: "7px 14px", fontSize: 12 }}
+                onClick={() => finalizeDeath(g)}>あきらめる</button>
+            </div>
+            {g.rewardAdFailedAt && (
+              <div className="kw-notice" style={{ marginTop: 10 }}>
+                広告を表示できませんでした。もう一度お試しいただくか、あきらめて進んでください。
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3317,7 +3727,7 @@ export default function KiriwatariNoMori() {
         />
       )}
       {g.skillTree && (
-        <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} />
+        <SkillTreeOverlay meta={meta} onClose={() => setG((s) => ({ ...s, skillTree: false }))} onBuy={buySkill} onDismissRefund={dismissRefundNotice} />
       )}
       {g.bestiary && (
         <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />

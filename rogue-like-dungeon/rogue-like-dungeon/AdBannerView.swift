@@ -45,7 +45,10 @@ final class LevelPlayAdsController: ObservableObject {
                 return
             }
             print("[AdBanner] init success")
-            DispatchQueue.main.async { self?.isInitialized = true }
+            DispatchQueue.main.async {
+                self?.isInitialized = true
+                RewardedAdController.shared.preload()
+            }
         }
         #endif
     }
@@ -110,7 +113,7 @@ private struct SimulatorAdPlaceholder: View {
     var body: some View {
         ZStack {
             Color(white: 0.18)
-            Text("[広告プレースホルダー / テスト用]")
+            Text("テストモード")
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundColor(Color(white: 0.55))
         }
