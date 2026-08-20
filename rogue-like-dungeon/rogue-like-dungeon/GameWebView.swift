@@ -46,6 +46,7 @@ struct GameWebView: UIViewRepresentable {
         config.userContentController.add(proxy, name: "openURL")
         config.userContentController.add(proxy, name: "progress")
         config.userContentController.add(proxy, name: "rewardAd")
+        config.userContentController.add(proxy, name: "privacy")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -82,7 +83,15 @@ struct GameWebView: UIViewRepresentable {
             case "bgm":
                 bgm.handle(message)
             case "appReady":
-                DispatchQueue.main.async { self.onReady?() }
+                let webView = message.webView
+                DispatchQueue.main.async {
+                    self.onReady?()
+                    // GDPR/米国州法が実際に適用される地域のユーザーにだけ、
+                    // 設定画面の「広告の同意設定を管理」項目を出す。
+                    let applicable = ConsentManager.shared.isRegulationApplicable
+                    let js = "window.__setConsentApplicable__ && window.__setConsentApplicable__(\(applicable))"
+                    webView?.evaluateJavaScript(js, completionHandler: nil)
+                }
             case "settings":
                 guard let body = message.body as? [String: Any],
                       let sleep = body["sleep"] as? Bool else { return }
@@ -111,6 +120,17 @@ struct GameWebView: UIViewRepresentable {
                     RewardedAdController.shared.show { success in
                         let js = "window.__onRewardAdResult__ && window.__onRewardAdResult__('\(context)', \(success))"
                         webView?.evaluateJavaScript(js, completionHandler: nil)
+                    }
+                }
+            case "privacy":
+                guard let body = message.body as? [String: Any],
+                      let action = body["action"] as? String else { return }
+                DispatchQueue.main.async {
+                    switch action {
+                    case "manageConsent":
+                        ConsentManager.shared.reopenConsentUI()
+                    default:
+                        break
                     }
                 }
             default:
@@ -286,6 +306,7 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
         case "woff2": return "font/woff2"
         case "css": return "text/css; charset=utf-8"
         case "js": return "text/javascript; charset=utf-8"
+        case "mjs": return "text/javascript; charset=utf-8"
         case "json": return "application/json; charset=utf-8"
         case "png": return "image/png"
         case "jpg", "jpeg": return "image/jpeg"
@@ -324,15 +345,15 @@ final class GameSchemeHandler: NSObject, WKURLSchemeHandler {
         <script type="importmap">
         {
           "imports": {
-            "react": "https://esm.sh/react@18.3.1",
-            "react-dom": "https://esm.sh/react-dom@18.3.1",
-            "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-            "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-            "lucide-react": "https://esm.sh/lucide-react@0.480.0?external=react"
+            "react": "kwapp://app/react.mjs",
+            "react-dom": "kwapp://app/react-dom.mjs",
+            "react-dom/client": "kwapp://app/client.mjs",
+            "react/jsx-runtime": "kwapp://app/jsx-runtime.mjs",
+            "lucide-react": "kwapp://app/lucide-react.mjs"
           }
         }
         </script>
-        <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+        <script src="kwapp://app/babel.min.js"></script>
         </head>
         <body>
         <div id="root"></div>

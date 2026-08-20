@@ -1,0 +1,7 @@
+platform :ios, '18.6'
+
+target 'rogue-like-dungeon' do
+  use_frameworks!
+
+  pod 'InMobiCMP'
+end

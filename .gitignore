@@ -11,6 +11,9 @@ xcuserdata/
 .build/
 .swiftpm/
 
+# CocoaPods (Podfile / Podfile.lock は追跡、Pods/ は pod install で復元する)
+Pods/
+
 # macOS
 .DS_Store
 

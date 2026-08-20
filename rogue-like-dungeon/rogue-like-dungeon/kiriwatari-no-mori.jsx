@@ -454,7 +454,7 @@ function makeWeapon(floor, opts = {}) {
   const t = WEAPON_TYPES[typeId];
   const rar = opts.rarity ? rarityOf(opts.rarity) : rollRarity(opts.luck || 0);
   const idx = RARITIES.findIndex((r) => r.id === rar.id);
-  const atk = Math.max(2, Math.round(t.base * rar.mult * (1 + floor * 0.09) * rnd(0.92, 1.08)));
+  const atk = Math.max(2, Math.round(t.base * rar.mult * (1 + floor * BALANCE.weaponGrowth) * rnd(0.92, 1.08)));
   return {
     id: uid(), kind: "weapon", type: typeId, name: WEAPON_NAMES[typeId][idx],
     rarity: rar.id, atk, asset: t.asset,
@@ -466,8 +466,8 @@ function makeArmor(floor, opts = {}) {
   const a = ARMOR_TYPES[slot];
   const rar = opts.rarity ? rarityOf(opts.rarity) : rollRarity(opts.luck || 0);
   const idx = RARITIES.findIndex((r) => r.id === rar.id);
-  const def = Math.round(a.baseDef * rar.mult + floor * 0.25);
-  const hp = Math.round(a.baseHp * rar.mult * (1 + floor * 0.06));
+  const def = Math.round(a.baseDef * rar.mult + floor * BALANCE.armorDefGrowth);
+  const hp = Math.round(a.baseHp * rar.mult * (1 + floor * BALANCE.armorHpGrowth));
   return {
     id: uid(), kind: "armor", slot, name: ARMOR_NAMES[slot][idx],
     rarity: rar.id, def, hp, asset: a.asset,
@@ -502,14 +502,14 @@ function makeConsumable(idOverride, floor = 1) {
 // 章が進むほど、階層あたりの伸び自体が急になる(stageMult)。
 // スキルツリーで底上げしないと後半の章で足踏みするような強さを狙っている。
 function stageMultOf(floor) {
-  return 1 + stageOf(floor) * 0.14; // 第1章:1.0 〜 第10章:2.26
+  return 1 + stageOf(floor) * BALANCE.enemyStageMult;
 }
 function makeEnemy(bookId, floor) {
   const b = ENEMY_BOOK[bookId];
   const sIdx = stageOf(floor);
   const stageMult = stageMultOf(floor);
-  const hp = Math.round((15 + floor * 8) * stageMult * b.hpK * rnd(0.9, 1.1));
-  const atk = Math.round((4 + floor * 1.2) * stageMult * b.atkK);
+  const hp = Math.round((BALANCE.enemyHpBase + floor * BALANCE.enemyHpPerFloor) * stageMult * b.hpK * rnd(0.9, 1.1));
+  const atk = Math.round((BALANCE.enemyAtkBase + floor * BALANCE.enemyAtkPerFloor) * stageMult * b.atkK);
   return {
     id: uid(), bookId, name: b.name, asset: b.asset,
     hp, maxHp: hp, atk, def: b.def + Math.floor(floor / 12) + sIdx,
@@ -528,11 +528,11 @@ function makeRareEnemy(floor) {
 function makeBoss(floor) {
   const sIdx = stageOf(floor);
   const B = STAGES[sIdx].boss;
-  const hp = Math.round((15 + floor * 8) * (3.4 + sIdx * 0.62));
-  const atk = Math.round((4 + floor * 1.2) * (1.3 + sIdx * 0.09));
+  const hp = Math.round((BALANCE.enemyHpBase + floor * BALANCE.enemyHpPerFloor) * (BALANCE.bossHpMult + sIdx * BALANCE.bossHpMultStep));
+  const atk = Math.round((BALANCE.enemyAtkBase + floor * BALANCE.enemyAtkPerFloor) * (BALANCE.bossAtkMult + sIdx * BALANCE.bossAtkMultStep));
   return {
     id: uid(), bookId: B.id, name: B.name, asset: B.asset,
-    hp, maxHp: hp, atk, def: Math.round(3 + sIdx * 2.4),
+    hp, maxHp: hp, atk, def: Math.round(BALANCE.bossDefBase + sIdx * BALANCE.bossDefStep),
     weak: B.weak, resist: B.resist,
     rare: false, boss: true, atkDown: 0, charge: false,
     poison: !!B.poison, drain: false,
@@ -705,21 +705,21 @@ const SKILL_TREE = [
 
   // 転生 — 解毒草(弱)→ 癒しの実 → 力の胞子 → 生命の果実(強)と段階的に強化するスキルツリー
   { id: "startAntidote", name: "旅装の記憶I", category: "転生", cost: 2, requires: null,
-    desc: "旅の始まりに解毒草が1つ追加される。毒に備えた旅の第一歩。" },
+    desc: "旅の始まりに解毒草が1つ追加される。" },
   { id: "startAntidote2", name: "旅装の記憶II", category: "転生", cost: 3, requires: "startAntidote",
-    desc: "旅の始まりにさらに解毒草が1つ追加される(合計2つ)。" },
+    desc: "旅の始まりにさらに解毒草が1つ追加される。" },
   { id: "startBerryS", name: "旅装の記憶III", category: "転生", cost: 4, requires: "startAntidote",
     desc: "旅の始まりに癒しの実(HP35%回復)が1つ追加される。" },
   { id: "startBerryS2", name: "旅装の記憶IV", category: "転生", cost: 5, requires: "startBerryS",
-    desc: "旅の始まりにさらに癒しの実が1つ追加される(合計2つ)。" },
+    desc: "旅の始まりにさらに癒しの実が1つ追加される。" },
   { id: "fateMemory", name: "宿命の記憶I", category: "転生", cost: 5, requires: "startBerryS",
-    desc: "旅の始まりに力の胞子が1つ追加される。3ターン攻撃力+40%。" },
+    desc: "旅の始まりに力の胞子が1つ追加される。" },
   { id: "fateMemory2", name: "宿命の記憶II", category: "転生", cost: 8, requires: "fateMemory",
-    desc: "旅の始まりにさらに力の胞子が1つ追加される(合計2つ)。" },
+    desc: "旅の始まりにさらに力の胞子が1つ追加される。" },
   { id: "startBerryB", name: "旅装の記憶V", category: "転生", cost: 9, requires: "fateMemory",
-    desc: "旅の始まりに生命の果実(HP75%回復)が1つ追加される。" },
+    desc: "旅の始まりに生命の果実が1つ追加される。" },
   { id: "startBerryB2", name: "旅装の記憶VI", category: "転生", cost: 12, requires: "startBerryB",
-    desc: "旅の始まりにさらに生命の果実が1つ追加される(合計2つ)。" },
+    desc: "旅の始まりにさらに生命の果実が1つ追加される。" },
 ];
 
 // スキル効果の合計値を集計する(構造的な効果[武器枠/鞄容量/開始品]はここでは扱わない)。
@@ -836,7 +836,7 @@ const CSS = `
 * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
 html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-root {
-  height: 100dvh; width: 100%;
+  height: 100vh; height: 100dvh; width: 100%;
   background: var(--ink);
   color: var(--paper);
   font-family: var(--font-body);
@@ -948,7 +948,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 /* --- ボタン --- */
 .kw-btn { font-family: var(--font-body); font-weight: 700; letter-spacing: .14em; cursor: pointer;
   background: transparent; color: var(--paper); border: 1px solid rgba(233,228,211,.35);
-  border-radius: 8px; padding: 10px 22px; font-size: 13px; white-space: nowrap; transition: all .18s ease; }
+  border-radius: 8px; padding: 8px 18px; font-size: 13px; white-space: nowrap; transition: all .18s ease; }
 .kw-btn:hover { border-color: var(--hotaru); color: var(--hotaru); box-shadow: 0 0 14px var(--hotaru-dim); }
 .kw-btn.primary { border-color: var(--hotaru); color: var(--ink); background: var(--hotaru); }
 .kw-btn.primary:hover { background: #f3c86b; color: var(--ink); }
@@ -972,11 +972,11 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 
 /* --- オーバーレイ画面 --- */
 .kw-overlay { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
-  background: rgba(6,10,8,.82); backdrop-filter: blur(4px); padding: 18px; animation: kwFade .4s ease; }
+  background: rgba(6,10,8,.82); backdrop-filter: blur(4px); padding: 12px; animation: kwFade .4s ease; }
 @keyframes kwFade { from { opacity: 0; } to { opacity: 1; } }
-.kw-sheet { width: 100%; max-width: 660px; max-height: 88vh; overflow-y: auto; padding: 26px 26px 22px; }
-.kw-sheet h2 { font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: .18em; margin-bottom: 4px; }
-.kw-sheet .kw-sub { color: var(--mist); font-size: 12px; margin-bottom: 16px; line-height: 1.8; }
+.kw-sheet { width: 100%; max-width: 660px; max-height: 84vh; overflow-y: auto; padding: 20px 18px 16px; }
+.kw-sheet h2 { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .18em; margin-bottom: 4px; }
+.kw-sheet .kw-sub { color: var(--mist); font-size: 12px; margin-bottom: 12px; line-height: 1.7; }
 .kw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; }
 .kw-cell { padding: 10px; cursor: pointer; text-align: left; position: relative; color: var(--paper);
   font-family: var(--font-body); width: 100%; transition: box-shadow .15s ease; }
@@ -984,7 +984,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-cell .kw-cmeta { font-size: 10.5px; color: var(--mist); line-height: 1.5; }
 .kw-cell.picked { box-shadow: 0 0 0 1.5px var(--hotaru); }
 .kw-cell.equipped-mark::after { content: "装備中"; position: absolute; top: 7px; right: 8px; font-size: 9px; color: var(--hotaru); letter-spacing: .1em; }
-.kw-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.kw-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
 
 /* --- タイトル --- */
 .kw-title { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;
@@ -1422,11 +1422,45 @@ function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
   );
 }
 
+/* ============================================================
+   難易度バランス設定 — すべてここで一元管理
+   ここの数値を変えると難易度が変わります。
+============================================================ */
+const BALANCE = {
+  // ── プレイヤー ──────────────────────────────
+  playerHp: 72,            // 基礎HP
+
+  // ── 通常敵スケーリング ────────────────────────
+  enemyHpBase: 15,         // HP基礎値 (フロア0相当)
+  enemyHpPerFloor: 7,      // フロアごとのHP増加 (小さいほど易しい)
+  enemyAtkBase: 4,         // ATK基礎値
+  enemyAtkPerFloor: 1.05,  // フロアごとのATK増加 (小さいほど易しい)
+  enemyStageMult: 0.14,    // 章ごとの強化係数 (1 + 章番号×この値)
+                           //   第1章:×1.0  第5章:×1.56  第10章:×2.26
+
+  // ── ボス専用スケーリング ───────────────────────
+  bossHpMult: 3.4,         // ボスHP倍率 (第1章基準)
+  bossHpMultStep: 0.62,    // 章ごとに加算される倍率
+  bossAtkMult: 1.3,        // ボスATK倍率 (第1章基準)
+  bossAtkMultStep: 0.09,   // 章ごとに加算される倍率
+  bossDefBase: 3,          // ボスDEF基礎値
+  bossDefStep: 2.4,        // 章ごとのDEF増加
+
+  // ── 武器・防具スケーリング ──────────────────────
+  weaponGrowth: 0.09,      // フロアごとの武器ATK伸び率
+  armorDefGrowth: 0.25,    // フロアごとの防具DEF増加
+  armorHpGrowth: 0.06,     // フロアごとの防具HP伸び率
+
+  // ── 属性相性 ────────────────────────────────
+  affWeak: 1.6,            // 弱点ダメージ倍率
+  affResist: 0.5,          // 耐性ダメージ倍率
+};
+
 /* ------------------------------------------------------------
    メインゲーム
 ------------------------------------------------------------ */
-const BASE_HP = 72;
-const AFF_WEAK = 1.6, AFF_RES = 0.5;
+const BASE_HP = BALANCE.playerHp;
+const AFF_WEAK = BALANCE.affWeak, AFF_RES = BALANCE.affResist;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function starterState(meta, initialWeaponType = "dagger") {
@@ -1468,7 +1502,7 @@ function floorNodes(floor) {
 
 /* ---- 設定オーバーレイ (タイトル・ラン両画面で共用) ---- */
 function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, changeSeVolume,
-                           sleepDisabled, toggleSleep, cssClass }) {
+                           sleepDisabled, toggleSleep, openURL, manageConsent, consentApplicable, cssClass }) {
   const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center",
                      padding: "8px 0", fontSize: 12, color: "var(--mist)", borderBottom: "1px solid rgba(157,180,166,.08)" };
   const sectionLabel = { fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 10, marginTop: 4 };
@@ -1516,6 +1550,36 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
               {sleepDisabled ? "ON" : "OFF"}
             </button>
           </div>
+        </div>
+
+        {/* プライバシー */}
+        <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
+          <div style={sectionLabel}>プライバシー</div>
+          <div style={rowStyle}>
+            <span style={{ letterSpacing: ".05em" }}>プライバシーポリシー</span>
+            <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 11 }}
+              onClick={() => openURL?.("https://eik-awa.github.io/privacy_policy/")}>
+              開く <ExternalLink size={11} style={{ display: "inline", marginLeft: 3, verticalAlign: -1 }} />
+            </button>
+          </div>
+          {consentApplicable && (
+            <div style={{ ...rowStyle, borderBottom: "none" }}>
+              <span style={{ letterSpacing: ".05em", maxWidth: 210, lineHeight: 1.6 }}>
+                広告の同意設定を管理
+                <br />
+                <span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(パーソナライズ広告への同意)</span>
+              </span>
+              <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 11, flexShrink: 0 }}
+                onClick={() => {
+                  // 設定オーバーレイ(WebView側)を閉じてから、少し間を置いてネイティブの同意画面を開く。
+                  // 開いたまま重ねると、同意画面側のタップが正しく反応しないことがあるため。
+                  onClose();
+                  setTimeout(() => manageConsent?.(), 250);
+                }}>
+                開く
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="kw-actions" style={{ justifyContent: "center", marginTop: 24 }}>
@@ -1690,11 +1754,12 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                       }}
                     >
                       <Icon size={15} strokeWidth={1.6} color={accent} style={{ flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                         <div style={{
                           fontSize: 13, fontWeight: 700, fontFamily: "var(--font-display)",
                           letterSpacing: ".04em", lineHeight: 1.25,
                           color: owned ? "var(--hotaru)" : revealed ? "var(--paper)" : "rgba(157,180,166,.28)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         }}>
                           {revealed ? skill.name : "???"}
                         </div>
@@ -1975,20 +2040,31 @@ export default function KiriwatariNoMori() {
     try { return localStorage.getItem("kw-sleep") !== "0"; } catch { return true; }
   });
 
+  // GDPR/米国州法が実際に適用される地域のユーザーかどうか。適用対象外(日本など)では
+  // 設定画面に「広告の同意設定を管理」の項目自体を出さない。appReady 応答で確定するまでは false。
+  const [consentApplicable, setConsentApplicable] = useState(false);
+
   useEffect(() => { bgmVolRef.current = bgmVolume; }, [bgmVolume]);
   useEffect(() => { seVolRef.current  = seVolume;  }, [seVolume]);
 
   // 初回レンダリング完了を Swift に通知してスプラッシュ画面を消す + 起動時設定を復元
   useEffect(() => {
+    window.__setConsentApplicable__ = (value) => setConsentApplicable(!!value);
     try { window.webkit?.messageHandlers?.appReady?.postMessage({}); } catch {}
     try {
       const sl = localStorage.getItem("kw-sleep") !== "0";
       window.webkit?.messageHandlers?.settings?.postMessage({ sleep: sl });
     } catch {}
+    return () => { delete window.__setConsentApplicable__; };
   }, []);
 
   const openURL = (url) => {
     try { window.webkit?.messageHandlers?.openURL?.postMessage({ url }); } catch {}
+  };
+
+  // GDPR/CCPA: 同意の選択(パーソナライズ広告の許諾・販売しない設定等)を後からやり直せるようにする。
+  const manageConsent = () => {
+    try { window.webkit?.messageHandlers?.privacy?.postMessage({ action: "manageConsent" }); } catch {}
   };
 
   // リワード広告(ネイティブ側の LevelPlay)を要求する。結果は __onRewardAdResult__ に届く。
@@ -3169,6 +3245,8 @@ export default function KiriwatariNoMori() {
             bgmVolume={bgmVolume} seVolume={seVolume}
             changeBgmVolume={changeBgmVolume} changeSeVolume={changeSeVolume}
             sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
+            openURL={openURL}
+            manageConsent={manageConsent} consentApplicable={consentApplicable}
             cssClass=""
           />
         )}
@@ -3237,7 +3315,7 @@ export default function KiriwatariNoMori() {
 
           {g.phase === "chest" && (
             <div className="kw-field-panel">
-              <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420, width: "100%" }}>
+              <div className="kw-panel" style={{ padding: "22px 20px", textAlign: "center", maxWidth: 420, width: "100%" }}>
                 <Package size={44} color="var(--hotaru)" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>苔むした宝箱</div>
                 <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
@@ -3257,7 +3335,7 @@ export default function KiriwatariNoMori() {
 
           {g.phase === "spring" && (
             <div className="kw-field-panel">
-              <div className="kw-panel" style={{ padding: "30px 34px", textAlign: "center", maxWidth: 420, width: "100%", position: "relative" }}>
+              <div className="kw-panel" style={{ padding: "22px 20px", textAlign: "center", maxWidth: 420, width: "100%", position: "relative" }}>
                 {floatsFor("player").map((f) => (
                   <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size }}>{f.text}</div>
                 ))}
@@ -3281,7 +3359,7 @@ export default function KiriwatariNoMori() {
 
           {g.phase === "reward" && (
             <div className="kw-field-panel">
-              <div className="kw-panel" style={{ padding: "26px 30px", textAlign: "center", maxWidth: 560, width: "100%" }}>
+              <div className="kw-panel" style={{ padding: "20px 18px", textAlign: "center", maxWidth: 560, width: "100%" }}>
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>勝 利</div>
                 <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 14px" }}>
                   {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{invCap}</span></> : "今回は何も落ちていないようだ。"}
@@ -3487,11 +3565,11 @@ export default function KiriwatariNoMori() {
               この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-              <button className="kw-btn primary" style={{ padding: "7px 14px", fontSize: 12 }}
+              <button className="kw-btn primary" style={{ fontSize: 12 }}
                 disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("revive")}>
                 {g.rewardAdPending === "revive" ? "広告を読み込み中…" : "広告を見て復活する"}
               </button>
-              <button className="kw-btn ghost" style={{ padding: "7px 14px", fontSize: 12 }}
+              <button className="kw-btn ghost" style={{ fontSize: 12 }}
                 onClick={() => finalizeDeath(g)}>あきらめる</button>
             </div>
             {g.rewardAdFailedAt && (
@@ -3536,7 +3614,6 @@ export default function KiriwatariNoMori() {
                   <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />スキルツリー ({meta.dewBank}個)
                 </button>
               )}
-              <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: recommendPick(s, s.effSlots ?? meta.slots) }))}>おすすめ</button>
               <button className="kw-btn ghost" onClick={() => setG((s) => ({ ...s, pick: [] }))}>全て外す</button>
               <button className="kw-btn primary" onClick={rebirth}>
                 {g.pick.length > 0 ? `${g.pick.length}点と共に、生まれ変わる` : "何も持たずに、生まれ変わる"}
@@ -3723,6 +3800,8 @@ export default function KiriwatariNoMori() {
           bgmVolume={bgmVolume} seVolume={seVolume}
           changeBgmVolume={changeBgmVolume} changeSeVolume={changeSeVolume}
           sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
+          openURL={openURL}
+          manageConsent={manageConsent} consentApplicable={consentApplicable}
           cssClass="top"
         />
       )}

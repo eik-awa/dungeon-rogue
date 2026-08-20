@@ -13,7 +13,7 @@ import UIKit
 import IronSource
 
 /// LevelPlay Dashboard で発行したリワード広告の Ad Unit ID。
-let rewardedAdUnitID = "dmywhrj06urqpzsi"
+let rewardedAdUnitID = "abed0f4a-bc7e-4d90-aea0-3275196c6bea"
 
 /// リワード広告のロード・表示・コールバックを一元管理する。
 final class RewardedAdController: NSObject, LPMRewardedAdDelegate {

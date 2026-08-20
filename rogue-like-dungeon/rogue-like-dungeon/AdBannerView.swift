@@ -48,6 +48,11 @@ final class LevelPlayAdsController: ObservableObject {
             DispatchQueue.main.async {
                 self?.isInitialized = true
                 RewardedAdController.shared.preload()
+                // デバッグ端末でのみ、アダプター(Unity Ads等)が正しく統合されているかを
+                // コンソールに出力する(本番端末では余計なログを出さないよう限定)。
+                if DebugDeviceConfig.isDebugDevice {
+                    LevelPlay.validateIntegration()
+                }
             }
         }
         #endif
