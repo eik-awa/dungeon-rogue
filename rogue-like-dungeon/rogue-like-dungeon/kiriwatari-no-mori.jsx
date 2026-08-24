@@ -2544,7 +2544,7 @@ export default function KiriwatariNoMori() {
     if (inBattle && st0.busy) return;
     const c = CONSUMABLES[item.itemId];
     if (c.kind === "bomb" && !inBattle) return; // 森火の実は戦闘中のみ
-    let s = { ...st0, bag: false, busy: inBattle };
+    let s = { ...st0, bag: st0.bag, busy: inBattle };
     s.inv = s.inv.filter((x) => x.id !== item.id);
     const mx = maxHpOf(s);
     if (c.kind === "heal") {
@@ -3464,18 +3464,41 @@ export default function KiriwatariNoMori() {
       {/* ---------- 袋オーバーレイ ---------- */}
       {g.bag && (
         <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, bag: false }))}>
-          <div className="kw-panel kw-sheet" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <h2>旅の袋</h2>
-                <div className="kw-sub">
-                  {g.phase === "battle"
-                    ? "戦闘中は回復・バフのみ使用可(1ターン消費)。不要品は「捨てる」で手放せます。"
-                    : "消耗品を使う・武具を装備する・不要品は「捨てる」ボタンで手放せます。"}
+          <div className="kw-panel kw-sheet" onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }}>
+            {/* スクロールしても常に表示される固定ヘッダー */}
+            <div style={{ padding: "16px 18px 10px", flexShrink: 0, borderBottom: "1px solid rgba(157,180,166,.12)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h2>旅の袋</h2>
+                  <div className="kw-sub">
+                    {g.phase === "battle"
+                      ? "戦闘中は回復・バフのみ使用可(1ターン消費)。不要品は「捨てる」で手放せます。"
+                      : "消耗品を使う・武具を装備する・不要品は「捨てる」ボタンで手放せます。"}
+                  </div>
                 </div>
+                <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={() => setG((s) => ({ ...s, bag: false }))}><X size={14} /></button>
               </div>
-              <button className="kw-btn ghost" style={{ padding: "6px 12px" }} onClick={() => setG((s) => ({ ...s, bag: false }))}><X size={14} /></button>
+              <div style={{ background: "rgba(0,0,0,.28)", borderRadius: 8, padding: "8px 12px", marginTop: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".1em", minWidth: 18 }}>HP</span>
+                  <div className={`kw-mybar${g.player.hp / mx < 0.25 ? " low" : ""}`} style={{ flex: 1 }}>
+                    <i style={{ width: `${(g.player.hp / mx) * 100}%` }} />
+                  </div>
+                  <span style={{ fontSize: 13, fontFamily: "var(--font-display)", minWidth: 66, textAlign: "right", color: g.player.hp / mx < 0.25 ? "var(--danger)" : "var(--paper)" }}>
+                    {g.player.hp} / {mx}
+                  </span>
+                </div>
+                {(g.player.atkUp > 0 || g.player.poison > 0 || g.player.guard) && (
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                    {g.player.atkUp > 0 && <span className="kw-tag buff">攻+40% {g.player.atkUp}T</span>}
+                    {g.player.poison > 0 && <span className="kw-tag bad">毒 {g.player.poison}T</span>}
+                    {g.player.guard && <span className="kw-tag buff">防御中</span>}
+                  </div>
+                )}
+              </div>
             </div>
+            {/* スクロール可能なアイテム一覧 */}
+            <div style={{ overflowY: "auto", flex: 1, padding: "0 18px 16px" }}>
 
             {g.phase !== "battle" && (
               <>
@@ -3551,6 +3574,7 @@ export default function KiriwatariNoMori() {
                 </>
               );
             })()}
+            </div>
           </div>
         </div>
       )}

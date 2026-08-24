@@ -13,7 +13,7 @@ import UIKit
 import IronSource
 
 /// LevelPlay Dashboard で発行したリワード広告の Ad Unit ID。
-let rewardedAdUnitID = "abed0f4a-bc7e-4d90-aea0-3275196c6bea"
+let rewardedAdUnitID = "dmywhrj06urqpzsi"
 
 /// リワード広告のロード・表示・コールバックを一元管理する。
 final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
@@ -21,6 +21,9 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
 
     private var ad: LPMRewardedAd?
     private var onResult: ((Bool) -> Void)?
+    /// show() がロード完了前に呼ばれた場合に保持する待機中コールバック。
+    private var pendingCompletion: ((Bool) -> Void)?
+    private var isLoading = false
 
     private override init() {
         super.init()
@@ -28,13 +31,16 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
 
     /// LevelPlay SDK 初期化完了後に一度呼び、次に見せる広告を先読みしておく。
     func preload() {
-        let ad = LPMRewardedAd(adUnitId: rewardedAdUnitID)
-        ad.setDelegate(self)
-        self.ad = ad
-        ad.loadAd()
+        guard !isLoading else { return }
+        isLoading = true
+        let newAd = LPMRewardedAd(adUnitId: rewardedAdUnitID)
+        newAd.setDelegate(self)
+        ad = newAd
+        newAd.loadAd()
     }
 
     /// 広告を表示する。視聴完了(reward獲得)で true、それ以外(未ロード/失敗/離脱)で false をコールバックする。
+    /// 広告がまだロード中の場合は最大10秒待ってから表示する。
     /// デバッグ端末(DebugDeviceConfig.isDebugDevice)では本番広告を消費せず、
     /// 数秒待って自動的に成功するだけの簡易テスト広告を表示する。
     func show(completion: @escaping (Bool) -> Void) {
@@ -42,12 +48,23 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
             showDebugTestAd(completion: completion)
             return
         }
-        guard let ad = ad, ad.isAdReady(), let vc = UIApplication.shared.kwRootViewController else {
+        guard let vc = UIApplication.shared.kwRootViewController else {
             completion(false)
             return
         }
-        onResult = completion
-        ad.showAd(viewController: vc, placementName: nil)
+        if let ad = ad, ad.isAdReady() {
+            onResult = completion
+            ad.showAd(viewController: vc, placementName: nil)
+            return
+        }
+        // 広告がロード中またはロード前 — 完了を最大10秒待って表示する。
+        pendingCompletion = completion
+        preload()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, let cb = self.pendingCompletion else { return }
+            self.pendingCompletion = nil
+            cb(false)
+        }
     }
 
     private func showDebugTestAd(completion: @escaping (Bool) -> Void) {
@@ -75,12 +92,25 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
 
     func didLoadAd(with adInfo: LPMAdInfo) {
         print("[RewardedAd] loaded")
+        isLoading = false
+        // show() がロード完了前に呼ばれていた場合はここで即表示する。
+        if let cb = pendingCompletion,
+           let ad = ad, ad.isAdReady(),
+           let vc = UIApplication.shared.kwRootViewController {
+            pendingCompletion = nil
+            onResult = cb
+            ad.showAd(viewController: vc, placementName: nil)
+        }
     }
 
     func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
         print("[RewardedAd] load failed: \(error)")
-        // 少し待って次の視聴機会に備え再ロードする。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.preload() }
+        isLoading = false
+        if let cb = pendingCompletion {
+            pendingCompletion = nil
+            cb(false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.preload() }
     }
 
     func didDisplayAd(with adInfo: LPMAdInfo) {}
