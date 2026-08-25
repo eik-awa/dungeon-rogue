@@ -57,21 +57,14 @@ struct rogue_like_dungeonApp: App {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 await ATTrackingManager.requestTrackingAuthorization()
 
-                // resolved=false はオフライン等で CMP が応答できずタイムアウトした場合。
-                // 同意状況が未確定のまま計測・広告配信を有効化しないよう、このセッションでは
-                // 両方とも見送る(didRequestTracking はプロセスの再起動ごとにリセットされるため、
-                // 次回起動時にオンラインであれば自動的に再試行される)。
-                guard resolved else {
-                    print("[Consent] resolution timed out (offline?) — skipping analytics/ads this session")
-                    return
-                }
-
-                // 応答が済んだので、以降のアプリ利用状況の計測を開始する。
-                // ただし GDPR 対象ユーザーが計測目的(TCF Purpose 1)への同意を拒否した
-                // 場合は、setAnalyticsCollectionEnabled を呼んでも Firebase 側は同意状態を
-                // 自動で見てくれないため、ここで明示的にスキップする。
-                if ConsentManager.shared.canEnableAnalytics {
+                // resolved=false はオフライン等で CMP が応答できずタイムアウト/エラーになった場合。
+                // 計測はスキップするが、広告 SDK の初期化は必ず行う。
+                // LevelPlay SDK は UserDefaults の IAB TCF 文字列を自動読取りして GDPR 制限を
+                // 適用するため、CMP が失敗しても SDK 側で安全に処理される。
+                if resolved && ConsentManager.shared.canEnableAnalytics {
                     Analytics.setAnalyticsCollectionEnabled(true)
+                } else if !resolved {
+                    print("[Consent] resolution timed out (offline?) — keeping analytics collection disabled")
                 } else {
                     print("[Consent] analytics purpose consent denied — keeping analytics collection disabled")
                 }
