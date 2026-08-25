@@ -47,8 +47,9 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
     /// 必要な場合はそれが閉じられるまで待ち、不要な場合は即座に completion を呼ぶ。
     /// タイムアウト・エラー時もアプリの起動は止めないが、completion には
     /// 「CMP が実際に応答したか(true)/オフライン等でタイムアウトしたか(false)」を渡す。
-    /// false の場合、呼び出し側は同意状況が未確定であることを踏まえ、
-    /// 計測・広告配信の有効化を見送るべき(次回起動時に自動的に再試行される)。
+    /// false の場合、呼び出し側は Analytics の有効化のみを見送る。広告 SDK の初期化は
+    /// 常に実行し、LevelPlay SDK が IAB TCF 文字列を自動読取りして GDPR 制限を適用する。
+    /// CMP は次回起動時に自動的に再試行される(didRequestTracking がプロセス再起動でリセットされるため)。
     func requestConsentIfNeeded(completion: @escaping (Bool) -> Void) {
         self.completion = completion
         self.didComplete = false
