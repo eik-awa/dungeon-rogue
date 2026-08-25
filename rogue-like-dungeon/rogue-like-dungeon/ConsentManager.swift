@@ -30,6 +30,9 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
 
     private var completion: ((Bool) -> Void)?
     private var didComplete = false
+    /// 同意 UI が実際に画面に表示されているかどうか。
+    /// 表示中はタイムアウトをスキップし、ユーザーが選択を終えるまで待つ。
+    private var consentUIVisible = false
 
     /// GDPR が適用される場合、TCF Purpose 1(端末への情報保存・アクセス)への同意が
     /// 実際に得られているか。GDPR 非適用地域や、IAB ベンダー同意が一度も届いていない
@@ -53,11 +56,14 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
     func requestConsentIfNeeded(completion: @escaping (Bool) -> Void) {
         self.completion = completion
         self.didComplete = false
+        self.consentUIVisible = false
 
         // ネットワーク不調などで CMP からの応答が一切来ない場合の保険。
-        // このタイムアウト経由の完了は「同意未確定」として resolved=false を返す。
+        // 同意 UI が画面に表示されている最中(consentUIVisible == true)はタイムアウトをスキップし、
+        // ユーザーが選択するまで待つ。これにより米国ユーザーの CCPA 選択が確実に SDK へ反映される。
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            self?.finishOnce(resolved: false)
+            guard let self, !self.consentUIVisible else { return }
+            self.finishOnce(resolved: false)
         }
 
         ChoiceCmp.shared.startChoice(pcode: pcode, delegate: self, ccpaDelegate: self,
@@ -128,7 +134,12 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
 
     func cmpDidLoad(info: PingResponse) {
         print("[Consent] cmpDidLoad: displayStatus=\(info.displayStatus.rawValue) gdpr=\(info.gdprApplies)")
-        if info.displayStatus != .visible {
+        if info.displayStatus == .visible {
+            // 同意 UI が表示された — ユーザーが選択するまでタイムアウトをブロックする。
+            // 米国ユーザーが CCPA opt-out を選択し didReceiveUSRegulationsConsent が呼ばれてから
+            // cmpUIStatusChanged(.dismissed) で finishOnce するため、setCCPA が必ず先に完了する。
+            consentUIVisible = true
+        } else {
             finishOnce(resolved: true)
         }
     }
