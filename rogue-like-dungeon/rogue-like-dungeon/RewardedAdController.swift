@@ -122,6 +122,8 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     func didFailToDisplayAd(with adInfo: LPMAdInfo, error: Error) {
         print("[RewardedAd] display failed: \(error)")
         finish(false)
+        // 表示失敗後は次回のために即リロードする。
+        preload()
     }
 
     func didClickAd(with adInfo: LPMAdInfo) {}

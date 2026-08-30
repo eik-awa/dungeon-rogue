@@ -78,7 +78,7 @@ struct GameWebView: UIViewRepresentable {
                     guard let scene = UIApplication.shared.connectedScenes
                         .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
                     else { return }
-                    SKStoreReviewController.requestReview(in: scene)
+                    AppStore.requestReview(in: scene)
                 }
             case "bgm":
                 bgm.handle(message)
@@ -114,7 +114,7 @@ struct GameWebView: UIViewRepresentable {
             case "rewardAd":
                 guard let body = message.body as? [String: Any],
                       let context = body["context"] as? String,
-                      ["dew", "revive"].contains(context) else { return }
+                      ["dew", "revive", "eventDew"].contains(context) else { return }
                 let webView = message.webView
                 DispatchQueue.main.async {
                     RewardedAdController.shared.show { success in

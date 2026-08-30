@@ -22,6 +22,10 @@ import {
   Bot, Scale, EyeClosed, PiggyBank, Atom, Baby, Flower, Dna, Fan, Pyramid, Cherry, Origami, Egg, Snail, Disc2, Turtle, Shrimp,
 } from "lucide-react";
 
+// App Store 上の本アプリ(ダンジョンローグ)の数値 ID。レビュー投稿・他アプリ導線で使用。
+const APP_STORE_ID = "6788750579";
+const DEVELOPER_URL = "https://apps.apple.com/developer/eiki-ogawa/id1701253076";
+
 
 /* ------------------------------------------------------------
    素材レジストリ(ここを編集すれば見た目を差し替え可能)
@@ -547,8 +551,10 @@ const RARE_COOLDOWN = 5; // この階数は金枝の精が出現しない
 function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   const stage = STAGES[stageOf(floor)];
   const fis = floorInStage(floor);
-  // プールは最低3体から開始し、2フロアごとに1体解放(全体上限まで)
-  const poolSize = Math.min(stage.enemies.length, 3 + Math.floor(fis / 2));
+  // プールは最低3体から開始し、2フロアごとに1体解放。
+  // ただし最終通常フロア(fis=9)ではそのステージの全敵を解放し、
+  // fis=10(ボス戦)でしか届かない末尾の敵が図鑑に登録できなくなるのを防ぐ。
+  const poolSize = fis >= 9 ? stage.enemies.length : Math.min(stage.enemies.length, 3 + Math.floor(fis / 2));
   const avail = stage.enemies.slice(0, poolSize);
   let count = fis <= 2 ? ri(1, 2) : fis <= 5 ? 2 : ri(2, 3);
   if (stageOf(floor) >= 3) count = Math.max(count, 2);
@@ -567,7 +573,7 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false };
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null };
 
 /* ------------------------------------------------------------
    リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
@@ -588,6 +594,37 @@ const consumeRewardAdUse = (meta) => {
   const count = ra && ra.date === today ? ra.count + 1 : 1;
   return { ...meta, rewardAd: { date: today, count } };
 };
+
+/* ------------------------------------------------------------
+   宝樹の祠 — 1日1回のデイリーイベント(本編の攻略とは別枠で並行)
+   時刻改ざんはソフト方式で防ぐ: これまで観測した最大時刻(eventSeenMax)より
+   端末時計が前に戻ったら、本来の時刻に追いつくまで挑戦させない(ペナルティなし)。
+------------------------------------------------------------ */
+const EVENT_JST_OFFSET = 9 * 3600_000;        // 日付境界は JST 固定(端末TZに依存させない)
+const EVENT_CLOCK_SKEW = 120_000;             // NTP 揺らぎの許容(2分)
+const EVENT_TURNS = 3;                         // 金枝の古精が留まるターン数
+// 1000ダウンロード記念 — 期間限定(JST。両端を含む)。次回開催時はこの2つを更新する。
+const EVENT_START = "2026-09-01";
+const EVENT_END   = "2026-09-07";
+const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
+function eventStatus(meta) {
+  const now = Date.now();
+  const seenMax = meta?.eventSeenMax || 0;
+  const clockBack = now < seenMax - EVENT_CLOCK_SKEW;
+  const today = eventJstDay(now);
+  const beforePeriod = today < EVENT_START;
+  const afterPeriod = today > EVENT_END;
+  const withinPeriod = !beforePeriod && !afterPeriod;
+  return {
+    now, today, clockBack, withinPeriod, beforePeriod, afterPeriod,
+    claimedToday: meta?.eventDay === today,
+    available: withinPeriod && !clockBack && meta?.eventDay !== today,
+  };
+}
+// 観測した最大時刻を前進させる(巻き戻し検知の基準を更新)
+const touchEventSeen = (meta) => ({ ...meta, eventSeenMax: Math.max(meta?.eventSeenMax || 0, Date.now()) });
+// 当日の挑戦を確定する
+const commitEventDay = (meta) => ({ ...touchEventSeen(meta), eventDay: eventJstDay(Date.now()) });
 
 /* ------------------------------------------------------------
    スキルツリー定義 (宝樹の雫=精の結晶で解放する永続スキル)
@@ -2043,6 +2080,11 @@ export default function KiriwatariNoMori() {
   // GDPR/米国州法が実際に適用される地域のユーザーかどうか。適用対象外(日本など)では
   // 設定画面に「広告の同意設定を管理」の項目自体を出さない。appReady 応答で確定するまでは false。
   const [consentApplicable, setConsentApplicable] = useState(false);
+  // 起動後1回だけ表示するイベント告知バナー(イベント期間外は false で初期化)
+  const [showEventBanner, setShowEventBanner] = useState(() => {
+    const today = eventJstDay(Date.now());
+    return today >= EVENT_START && today <= EVENT_END;
+  });
 
   useEffect(() => { bgmVolRef.current = bgmVolume; }, [bgmVolume]);
   useEffect(() => { seVolRef.current  = seVolume;  }, [seVolume]);
@@ -2062,6 +2104,14 @@ export default function KiriwatariNoMori() {
     try { window.webkit?.messageHandlers?.openURL?.postMessage({ url }); } catch {}
   };
 
+  // ユーザーが自分から「レビューする」を押したときは、App Store のレビュー投稿画面を直接開く。
+  // SKStoreReviewController は年3回・表示保証なしのため、能動的な導線には使わない。
+  // URL を開くと「アドレスが無効」になるケースがあるため、
+  // ネイティブの AppStore.requestReview ダイアログを使う。
+  const writeReview = () => {
+    try { window.webkit?.messageHandlers?.requestReview?.postMessage({}); } catch {}
+  };
+
   // GDPR/CCPA: 同意の選択(パーソナライズ広告の許諾・販売しない設定等)を後からやり直せるようにする。
   const manageConsent = () => {
     try { window.webkit?.messageHandlers?.privacy?.postMessage({ action: "manageConsent" }); } catch {}
@@ -2069,7 +2119,8 @@ export default function KiriwatariNoMori() {
 
   // リワード広告(ネイティブ側の LevelPlay)を要求する。結果は __onRewardAdResult__ に届く。
   const requestRewardAd = (contextId) => {
-    setG((s) => ({ ...s, rewardAdPending: contextId }));
+    // リトライ時に前回の失敗エラーを消す
+    setG((s) => ({ ...s, rewardAdPending: contextId, rewardAdFailedAt: null }));
     try { window.webkit?.messageHandlers?.rewardAd?.postMessage({ action: "show", context: contextId }); } catch (_) {
       setG((s) => (s.rewardAdPending === contextId ? { ...s, rewardAdPending: null } : s));
     }
@@ -2103,6 +2154,18 @@ export default function KiriwatariNoMori() {
           return pushLog({ ...s, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
             "広告の加護で、満身の力で息を吹き返した!", true);
         });
+      } else if (contextId === "eventDew") {
+        setG((s) => {
+          if (s.rewardAdPending !== "eventDew") return s;
+          return { ...s, rewardAdPending: null,
+            event: { ...s.event, reward2x: true, adClaimed: true } };
+        });
+        // meta.eventReward にも reward2x を保存し、× で閉じても復元できるようにする
+        const mr = metaRef.current;
+        if (mr?.eventReward) {
+          const mr2 = { ...mr, eventReward: { ...mr.eventReward, reward2x: true } };
+          setMeta(mr2); saveMeta(mr2);
+        }
       }
     };
     return () => { delete window.__onRewardAdResult__; };
@@ -2988,6 +3051,55 @@ export default function KiriwatariNoMori() {
     setG(first);
   }
 
+  /* ---------- 宝樹の祠(デイリーイベント) ---------- */
+  // 祠を開いている間、観測した最大時刻を前進させておく(時刻の巻き戻し検知の基準)。
+  useEffect(() => {
+    if (g.screen !== "event") return;
+    const m = metaRef.current; if (!m) return;
+    const m2 = touchEventSeen(m);
+    if (m2.eventSeenMax !== m.eventSeenMax) { setMeta(m2); saveMeta(m2); }
+  }, [g.screen]);
+
+  // 「挑戦する」— 遭遇フェーズへ移行するだけ。日付確定は捕獲完了時(reportApproach)に行う。
+  function eventStart() {
+    if (!eventStatus(metaRef.current).available) return;
+    setG((s) => ({ ...s, event: { phase: "encounter", turn: 1, converted: [] } }));
+  }
+
+  // 金枝の古精に近づく。EVENT_TURNS 回で必ず捕獲(v1は取り逃がしなし。将来ここに判定を足せる)。
+  function eventApproach() {
+    const s = gRef.current;
+    const turn = (s.event?.turn || 1) + 1;
+    if (turn > EVENT_TURNS) {
+      // 捕獲完了 — ここで初めて当日分を確定し、報酬状態を保存する
+      const m2 = commitEventDay(metaRef.current);
+      const m3 = { ...m2, eventReward: { converted: [], reward2x: false } };
+      setMeta(m3); saveMeta(m3);
+      try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "event_challenge", reward2x: false }); } catch (_) {}
+      setG((prev) => ({ ...prev, event: { ...prev.event, phase: "reward" } }));
+    } else {
+      setG((prev) => ({ ...prev, event: { ...prev.event, turn } }));
+    }
+  }
+
+  // 宝樹の雫を1つ変換する(継承枠 or 精の結晶)。run 用の saveRun は呼ばない。
+  function eventConvert(kind) {
+    const ev = gRef.current.event || {};
+    const total = 1 + (ev.reward2x ? 1 : 0);
+    if ((ev.converted || []).length >= total) return;   // 連打ガード: これ以上は変換できない
+    const newConverted = [...(ev.converted || []), kind];
+    const m = metaRef.current;
+    const m2 = kind === "slot"
+      ? { ...m, slots: (m.slots || 0) + 1 }
+      : { ...m, dewBank: (m.dewBank || 0) + 1 };
+    // 全報酬受け取り済みなら eventReward をクリア、途中ならカレント状態を保存
+    const m3 = newConverted.length >= total
+      ? { ...m2, eventReward: null }
+      : { ...m2, eventReward: { ...(m.eventReward || {}), converted: newConverted } };
+    setMeta(m3); saveMeta(m3);
+    setG((s) => ({ ...s, event: { ...s.event, converted: newConverted } }));
+  }
+
   /* ============================================================
      描画
   ============================================================ */
@@ -3082,7 +3194,22 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
+          {eventStatus(meta).withinPeriod && (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
+              <button className="kw-btn ghost" style={{ padding: "10px 28px", position: "relative",
+                borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)",
+                textAlign: "center", lineHeight: 1.5 }}
+                onClick={() => { setShowEventBanner(false); setG({ screen: "event", event: { phase: "intro" } }); }}>
+                <div style={{ fontSize: 10, opacity: 0.75, letterSpacing: ".1em" }}>🎉 期間限定イベント</div>
+                <div style={{ fontSize: 14, letterSpacing: ".2em" }}>宝 樹 の 祠</div>
+                {eventStatus(meta).available && (
+                  <span style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%",
+                    background: "var(--hotaru)", boxShadow: "0 0 6px var(--hotaru)" }} />
+                )}
+              </button>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
             <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
               onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊び方</button>
             <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
@@ -3099,11 +3226,11 @@ export default function KiriwatariNoMori() {
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
             <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
-              onClick={() => { try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {} }}>
+              onClick={writeReview}>
               ★ レビューする
             </button>
             <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
-              onClick={() => openURL("https://apps.apple.com/gm/developer/eiki-ogawa/id1701253076")}>
+              onClick={() => openURL(DEVELOPER_URL)}>
               他のアプリも見る
             </button>
           </div>
@@ -3256,6 +3383,188 @@ export default function KiriwatariNoMori() {
         {g.bestiary && (
           <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
         )}
+        {showEventBanner && meta && eventStatus(meta).available && (
+          <div className="kw-overlay top" onClick={() => setShowEventBanner(false)}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 320, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontSize: 28 }}>🎉</div>
+              <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 17 }}>宝 樹 の 祠</h3>
+              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".1em", marginBottom: 14 }}>期間限定イベント開催中</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", marginBottom: 16 }}>
+                {EVENT_START.replaceAll("-", ".")}〜{EVENT_END.replaceAll("-", ".")}<br />
+                毎日1回、金枝の古精に会いに行こう。<br />
+                報酬は継承枠か精の結晶に変えられるよ。
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                <button className="kw-btn ghost" style={{ padding: "9px 18px", fontSize: 13,
+                  borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)" }}
+                  onClick={() => { setShowEventBanner(false); setG({ screen: "event", event: { phase: "intro" } }); }}>
+                  祠 へ 行 く
+                </button>
+                <button className="kw-btn ghost" style={{ padding: "9px 18px", fontSize: 13 }}
+                  onClick={() => setShowEventBanner(false)}>
+                  閉じる
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ---------- 宝樹の祠(デイリーイベント / 本編とは別枠) ---------- */
+  if (g.screen === "event") {
+    const est = eventStatus(meta);
+    // × で閉じた後に再入した場合、meta.eventReward から報酬フェーズを復元する
+    const ev = (() => {
+      const raw = g.event || { phase: "intro" };
+      if (meta?.eventReward && est.claimedToday && raw.phase === "intro") {
+        return { phase: "reward", ...meta.eventReward };
+      }
+      return raw;
+    })();
+    const rewardTotal = 1 + (ev.reward2x ? 1 : 0);
+    const remaining = rewardTotal - (ev.converted || []).length;
+    const adPending = g.rewardAdPending === "eventDew";
+    const canAd = !ev.adClaimed && rewardAdUsesLeft(meta) > 0;
+    const turn = ev.turn || 1;
+    return (
+      <div className="kw-root">
+        <style>{CSS}</style>
+        <StageBackdrop floor={91} />
+        <div className="kw-vignette" />
+        <button className="kw-btn ghost" style={{ position: "fixed", top: "calc(14px + env(safe-area-inset-top))", right: 16, zIndex: 10, padding: "6px 10px" }}
+          onClick={() => setG({ screen: "title" })}>
+          <X size={16} />
+        </button>
+        <div className="kw-title">
+          <div className="kw-tsub">1000 ダウンロード記念</div>
+          <h2 style={{ fontSize: 26 }}>宝 樹 の 祠</h2>
+          <div style={{ fontSize: 10.5, letterSpacing: ".2em", color: "var(--paper-dim)", marginTop: -2 }}>
+            {EVENT_START.replaceAll("-", ".")} 〜 {EVENT_END.replaceAll("-", ".")} 期間限定
+          </div>
+
+          {ev.phase === "intro" && (
+            <div className="kw-panel" style={{ maxWidth: 420, padding: 20, marginTop: 12, textAlign: "center" }}>
+              <div style={{ margin: "6px auto 14px", width: 76, height: 76, borderRadius: "50%",
+                background: "radial-gradient(circle, rgba(232,180,74,.28), transparent 70%)",
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <AssetIcon assetId="goldSprite" size={40} color="var(--hotaru)" />
+              </div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--mist)" }}>
+                記念の祠には、期間中の日ごとに一度だけ金枝の古精が姿を見せる。<br />
+                捕まえれば宝樹の雫を授かり、精の結晶か継承枠に変えられる。
+              </div>
+              {est.clockBack ? (
+                <div style={{ marginTop: 14, fontSize: 11.5, color: "var(--danger)", lineHeight: 1.8 }}>
+                  端末の時刻が実際より前に設定されています。<br />正しい時刻に戻すと挑戦できます。
+                </div>
+              ) : est.afterPeriod ? (
+                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>記念イベントは終了しました。ご参加ありがとう。</div>
+              ) : est.beforePeriod ? (
+                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>{EVENT_START.replaceAll("-", ".")} から開催します。</div>
+              ) : est.available ? (
+                <>
+                  <div style={{ marginTop: 16, fontSize: 10.5, color: "var(--paper-dim)" }}>挑戦すると本日分を消費します</div>
+                  <button className="kw-btn primary" style={{ marginTop: 8, padding: "12px 32px", fontSize: 13 }}
+                    onClick={eventStart}>挑 戦 す る</button>
+                </>
+              ) : (
+                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>本日は挑戦済み。また明日、姿を見せるだろう。</div>
+              )}
+            </div>
+          )}
+
+          {ev.phase === "encounter" && (
+            <div className="kw-panel" style={{ maxWidth: 420, padding: "16px 20px", marginTop: 10 }}>
+              {/* 古精 */}
+              <div style={{ textAlign: "center" }}>
+                <div style={{ margin: "4px auto 6px", width: 88, height: 88, borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(232,180,74,.3), transparent 72%)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  animation: "kw-dot-fade 2s ease-in-out infinite" }}>
+                  <AssetIcon assetId="goldSprite" size={48} color="var(--hotaru)" />
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--hotaru)", letterSpacing: ".1em", marginBottom: 8 }}>金枝の古精</div>
+                {/* 気配バー — ターンが進むほど消えていく */}
+                <div style={{ display: "flex", gap: 4, justifyContent: "center", maxWidth: 140, margin: "0 auto" }}>
+                  {[1, 2, 3].map((i) => {
+                    const lit = i <= Math.max(0, EVENT_TURNS - turn + 1);
+                    return (
+                      <div key={i} style={{ flex: 1, height: 8, borderRadius: 4,
+                        background: lit ? "rgba(232,180,74,.75)" : "rgba(255,255,255,.1)",
+                        transition: "background .4s ease",
+                        boxShadow: lit ? "0 0 6px rgba(232,180,74,.4)" : "none" }} />
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 9, color: "var(--mist)", letterSpacing: ".1em", marginTop: 4 }}>気 配</div>
+              </div>
+
+              {/* ターン進行テキスト */}
+              <div style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.9, color: "var(--mist)", minHeight: 46, textAlign: "center" }}>
+                {turn === 1 && "古精は枝から枝へ、金色の尾を引いて渡っていく。"}
+                {turn === 2 && "そっと手を伸ばす。光の粒が指先をかすめた。"}
+                {turn >= 3 && "いま――。こぼれる光ごと、両手で包み込む。"}
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <button className="kw-btn primary" style={{ marginTop: 10, padding: "12px 32px", fontSize: 13 }}
+                  onClick={eventApproach}>
+                  {turn >= EVENT_TURNS ? "捕 ま え る" : "近 づ く"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {ev.phase === "reward" && (
+            <div className="kw-panel" style={{ maxWidth: 420, padding: 20, marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 6 }}>
+                <AssetIcon assetId="dew" size={22} color="var(--hotaru)" />
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, color: "var(--hotaru)" }}>
+                  宝樹の雫 ×{rewardTotal}
+                </div>
+              </div>
+              <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", marginBottom: 12 }}>
+                古精を捕まえた。{remaining > 0 ? "使いみちを選んでください" : "また明日、祠へ。"}
+              </div>
+
+              {remaining > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
+                    onClick={() => eventConvert("slot")}>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>継承枠 +1</div>
+                    <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
+                  </button>
+                  <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
+                    onClick={() => eventConvert("crystal")}>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>精の結晶 +1</div>
+                    <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>スキルツリーの習得に使える結晶に変換する。現在 {meta.dewBank || 0} 個。</div>
+                  </button>
+                  {remaining > 1 && (
+                    <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--paper-dim)" }}>あと {remaining} つ選べます</div>
+                  )}
+                </div>
+              ) : (
+                <button className="kw-btn primary" style={{ width: "100%", padding: "12px", fontSize: 13 }}
+                  onClick={() => setG({ screen: "title" })}>祠 を 出 る</button>
+              )}
+
+              {canAd && (
+                <button className="kw-btn ghost" style={{ width: "100%", marginTop: 10, padding: "10px", fontSize: 11.5,
+                  color: "var(--hotaru)", borderColor: "rgba(232,180,74,.35)", opacity: adPending ? .6 : 1 }}
+                  disabled={adPending}
+                  onClick={() => requestRewardAd("eventDew")}>
+                  {adPending ? "広告を読み込み中…" : `広告を見て報酬を2倍にする（本日あと${rewardAdUsesLeft(meta)}回）`}
+                </button>
+              )}
+              {g.rewardAdFailedAt && g.rewardAdPending == null && !ev.adClaimed && (
+                <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--danger)", marginTop: 6 }}>
+                  広告を読み込めませんでした。少し待って再度お試しください。
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
