@@ -24,6 +24,9 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     /// show() がロード完了前に呼ばれた場合に保持する待機中コールバック。
     private var pendingCompletion: ((Bool) -> Void)?
     private var isLoading = false
+    /// show() 呼び出し後にロード失敗した場合の自動リトライ回数。
+    private var pendingRetryCount = 0
+    private let maxPendingRetries = 2
 
     private override init() {
         super.init()
@@ -57,12 +60,14 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
             ad.showAd(viewController: vc, placementName: nil)
             return
         }
-        // 広告がロード中またはロード前 — 完了を最大10秒待って表示する。
+        // 広告がロード中またはロード前 — 自動リトライを含め最大30秒待って表示する。
         pendingCompletion = completion
+        pendingRetryCount = 0
         preload()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
             guard let self, let cb = self.pendingCompletion else { return }
             self.pendingCompletion = nil
+            self.pendingRetryCount = 0
             cb(false)
         }
     }
@@ -104,13 +109,21 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     }
 
     func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
-        print("[RewardedAd] load failed: \(error)")
+        print("[RewardedAd] load failed (retry \(pendingRetryCount)/\(maxPendingRetries)): \(error)")
         isLoading = false
-        if let cb = pendingCompletion {
-            pendingCompletion = nil
-            cb(false)
+        if pendingCompletion != nil, pendingRetryCount < maxPendingRetries {
+            // show() 待機中のリトライが残っている — ユーザーへの通知なしに即リトライ
+            pendingRetryCount += 1
+            preload()
+        } else {
+            // リトライ上限到達 or バックグラウンドプリロード失敗 — 呼び出し元へ通知して次回向けに再プリロード
+            pendingRetryCount = 0
+            if let cb = pendingCompletion {
+                pendingCompletion = nil
+                cb(false)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.preload() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.preload() }
     }
 
     func didDisplayAd(with adInfo: LPMAdInfo) {}
