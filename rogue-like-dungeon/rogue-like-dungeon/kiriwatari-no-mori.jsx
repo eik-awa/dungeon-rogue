@@ -437,8 +437,11 @@ function invCapOf(m, runBonus = 0) {
   const s = m?.skills || {};
   return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0) + runBonus;
 }
-function rareChanceOf(m) {
-  return 0.12 + skillEffectTotal(m?.skills, "rareChancePct");
+// 章ごとの金枝の精の基本出現率: 8〜12%は+1%刻み、以降+2%刻み
+const RARE_CHANCE_BY_STAGE = [0.08, 0.09, 0.10, 0.11, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22];
+function rareChanceOf(m, floor = 0) {
+  const base = RARE_CHANCE_BY_STAGE[Math.min(stageOf(floor), RARE_CHANCE_BY_STAGE.length - 1)];
+  return base + skillEffectTotal(m?.skills, "rareChancePct");
 }
 
 // レアリティ抽選 (luckBonus>0 でチェスト等の高レア補正)
@@ -547,7 +550,8 @@ function makeBoss(floor) {
 
 // フロアごとの出現テーブル(章の進みに応じて敵種と数が増える)
 // lastRareSeen: 直近で金枝の精を目撃したフロア番号(連続出現を防ぐ)
-const RARE_COOLDOWN = 5; // この階数は金枝の精が出現しない
+// 直近で金枝の精を見てから次に出現するまでの最小フロア数(章が進むと短縮)
+const rareCooldownOf = (floor) => stageOf(floor) >= 7 ? 2 : stageOf(floor) >= 3 ? 3 : 5;
 function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   const stage = STAGES[stageOf(floor)];
   const fis = floorInStage(floor);
@@ -561,7 +565,7 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   // シャッフルして順番に取ることで同一フロアでの重複を減らす
   const shuffled = [...avail].sort(() => Math.random() - 0.5);
   const list = Array.from({ length: count }, (_, i) => makeEnemy(shuffled[i % shuffled.length], floor));
-  if (floor - lastRareSeen >= RARE_COOLDOWN && Math.random() < rareChance) {
+  if (floor - lastRareSeen >= rareCooldownOf(floor) && Math.random() < rareChance) {
     list.push(makeRareEnemy(floor));
   }
   return list;
@@ -2072,6 +2076,7 @@ export default function KiriwatariNoMori() {
   const [savedRun, setSavedRun] = useState(null);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
   const [confirmNewRun, setConfirmNewRun] = useState(null); // null or callback fn
+  const [discardConfirm, setDiscardConfirm] = useState(null); // null or item to discard
 
   const [sleepDisabled, setSleepDisabled] = useState(() => {
     try { return localStorage.getItem("kw-sleep") !== "0"; } catch { return true; }
@@ -2424,7 +2429,7 @@ export default function KiriwatariNoMori() {
 
   function enterNode(st) {
     const kind = st.nodes[st.node];
-    let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false };
+    let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false, dewAdOffer: false };
     if (kind === "battle" || kind === "boss") {
       // 武器スロットが全空なら袋から最強武器を自動装備。袋にもなければ応急の短剣を生成。
       if (!s.weapons.some(Boolean)) {
@@ -2441,7 +2446,7 @@ export default function KiriwatariNoMori() {
       }
       s.phase = "battle";
       const lastRare = s.lastRareSeen || 0;
-      const rareChance = meta ? rareChanceOf(meta) : 0.08;
+      const rareChance = meta ? rareChanceOf(meta, s.floor) : 0.04 + stageOf(s.floor) * 0.02;
       s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor, lastRare, rareChance);
       if (kind !== "boss" && s.enemies.some((e) => e.rare)) s = { ...s, lastRareSeen: s.floor };
       // 遭遇した敵を図鑑に記録
@@ -2708,7 +2713,8 @@ export default function KiriwatariNoMori() {
     const st = gRef.current;
     const isBoss = enemies.some((e) => e.boss);
     const drops = rollDrops(enemies.filter((e) => e.hp <= 0 && !e.fled), st.floor, st.inv);
-    let s = { ...st, busy: false, phase: "reward", drops };
+    const dewAdOffer = drops.some((d) => d.itemId === "dew") && rewardAdUsesLeft(meta) > 0 && !st.dewAdClaimed;
+    let s = { ...st, busy: false, phase: "reward", drops, dewAdOffer };
     s.player = { ...s.player, guard: false };
     if (isBoss) {
       const stage = stageOf(st.floor) + 1; // 1..10
@@ -3679,11 +3685,12 @@ export default function KiriwatariNoMori() {
                   </div>
                 )}
                 {g.full && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
-                {g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && (
-                  <div style={{ marginTop: 4, marginBottom: 10 }}>
-                    <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("dew")}>
-                      <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />
-                      {g.rewardAdPending === "dew" ? "広告を読み込み中…" : `広告を見て宝樹の雫を2倍にする(本日あと${rewardAdUsesLeft(meta)}回)`}
+                {g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && g.rewardAdFailedAt && (
+                  <div style={{ marginTop: 4, marginBottom: 6 }}>
+                    <button className="kw-btn ghost" style={{ fontSize: 11 }} disabled={!!g.rewardAdPending}
+                      onClick={() => { setG((s) => ({ ...s, rewardAdFailedAt: null })); requestRewardAd("dew"); }}>
+                      <Sparkles size={10} style={{ display: "inline", marginRight: 4 }} />
+                      {g.rewardAdPending === "dew" ? "読み込み中…" : "広告を再試行して雫を2倍にする"}
                     </button>
                   </div>
                 )}
@@ -3842,27 +3849,38 @@ export default function KiriwatariNoMori() {
               const catLabel = (label) => (
                 <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
               );
+              const isRareItem = (it) => it.rarity && it.rarity !== "common";
+              const handleDiscard = (e, it) => {
+                e.stopPropagation();
+                if (isRareItem(it)) { setDiscardConfirm(it); } else { discardItem(it); }
+              };
               const renderEquip = (it) => {
                 if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <ItemCell item={it} actionLabel="装備する" onClick={() => equipItem(it)} hint={hintFor(it)} />
                     <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
-                      onClick={(e) => { e.stopPropagation(); discardItem(it); }}>捨てる</button>
+                      onClick={(e) => handleDiscard(e, it)}>捨てる</button>
                   </div>
                 );
               };
               const renderConsumable = (it) => {
                 const c = CONSUMABLES[it.itemId];
-                const canUseNow = inBattle ? c?.kind !== "orb" && c?.kind !== "metaHp" : c?.kind !== "bomb";
+                const mx = maxHpOf(g);
+                const hpFull = g.player.hp >= mx;
+                const poisoned = g.player.poison > 0;
+                let canUseNow = inBattle ? c?.kind !== "orb" && c?.kind !== "metaHp" : c?.kind !== "bomb";
+                let disabledLabel = inBattle ? "戦闘後のみ" : "戦闘中のみ";
+                if (c?.kind === "heal" && hpFull) { canUseNow = false; disabledLabel = "HP満タン"; }
+                else if (c?.kind === "cure" && hpFull && !poisoned) { canUseNow = false; disabledLabel = "HP満タン・毒なし"; }
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {canUseNow
                       ? <ItemCell item={it} actionLabel="使う" onClick={() => useItem(it)} />
-                      : <ItemCell item={it} actionLabel={inBattle ? "戦闘後のみ" : "戦闘中のみ"} onClick={() => {}} />
+                      : <ItemCell item={it} actionLabel={disabledLabel} onClick={() => {}} />
                     }
                     <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
-                      onClick={(e) => { e.stopPropagation(); discardItem(it); }}>捨てる</button>
+                      onClick={(e) => handleDiscard(e, it)}>捨てる</button>
                   </div>
                 );
               };
@@ -4127,6 +4145,55 @@ export default function KiriwatariNoMori() {
           </div>
         </div>
       )}
+      {/* ---------- 雫広告オファー ---------- */}
+      {g.phase === "reward" && g.dewAdOffer && rewardAdUsesLeft(meta) > 0 && (
+        <div className="kw-overlay top">
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 300, textAlign: "center" }}>
+            <div style={{ fontSize: 26 }}>✨</div>
+            <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 16 }}>宝 樹 の 雫</h3>
+            <div style={{ fontSize: 12.5, color: "var(--mist)", lineHeight: 1.9, marginBottom: 16 }}>
+              広告を視聴すると、雫をもう1個もらえます。<br />
+              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button className="kw-btn primary" style={{ padding: "10px 20px", fontSize: 12.5 }}
+                disabled={!!g.rewardAdPending}
+                onClick={() => { setG((s) => ({ ...s, dewAdOffer: false })); requestRewardAd("dew"); }}>
+                {g.rewardAdPending === "dew" ? "読み込み中…" : "広 告 を 見 る"}
+              </button>
+              <button className="kw-btn ghost" style={{ fontSize: 12 }}
+                onClick={() => setG((s) => ({ ...s, dewAdOffer: false }))}>
+                いいえ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- レアアイテム捨て確認 ---------- */}
+      {discardConfirm && (
+        <div className="kw-overlay top">
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 340, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ color: "var(--danger)", fontSize: 17 }}>本当に捨てますか？</h2>
+            <div style={{ margin: "10px 0 4px" }}>
+              <RarityName item={discardConfirm} />
+              <div style={{ fontSize: 14, color: "var(--paper)", marginTop: 4, letterSpacing: ".05em" }}>{discardConfirm.name}</div>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--mist)", margin: "10px 0 18px", lineHeight: 1.7 }}>
+              捨てたアイテムは取り戻せません。
+            </div>
+            <div className="kw-actions" style={{ justifyContent: "center" }}>
+              <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                onClick={() => setDiscardConfirm(null)}>← キャンセル</button>
+              <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+                onClick={() => { discardItem(discardConfirm); setDiscardConfirm(null); }}>
+                捨てる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {g.settingsOpen && (
         <SettingsOverlay
           onClose={() => setG((s) => ({ ...s, settingsOpen: false }))}
