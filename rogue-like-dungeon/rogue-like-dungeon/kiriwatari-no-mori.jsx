@@ -2900,7 +2900,8 @@ export default function KiriwatariNoMori() {
         ns.inv = ns.inv.filter((x) => x.id !== item.id);
         if (old) ns.inv = [...ns.inv, old];
         const mx = maxHpOf(ns);
-        ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + (item.hp || 0)) };
+        const hpDiff = (item.hp || 0) - (old ? (old.hp || 0) : 0);
+        ns.player = { ...ns.player, hp: Math.min(mx, hpDiff > 0 ? ns.player.hp + hpDiff : ns.player.hp) };
         ns = pushLog(ns, `${item.name}を身につけた。`);
       }
       return ns;
