@@ -52,12 +52,21 @@ struct rogue_like_dungeonApp: App {
         }
     }
 
-    /// GDPR/CCPA同意(InMobi Choice)→ ATT許諾 → 広告SDK初期化、の順で行う。
+    /// GDPR/CCPA同意(InMobi Choice)・ATT許諾・広告SDK初期化を行う。
+    /// 広告SDKの初期化は同意フローの完了を待たず、独立して即座に開始する(下記参照)。
     /// GDPR同意は LevelPlay SDK が自動的に読み取り、CCPA(米国州法)は
     /// ConsentManager 側のコールバックで setCCPA へ反映済みなので、ここでの追加対応は不要。
     private func requestTrackingThenStartAds() {
         guard !didRequestTracking else { return }
         didRequestTracking = true
+
+        // 広告SDKの初期化は同意コールバックの中にネストしない。
+        // initialize() が呼ばれる経路はプロセスあたり初回アクティブ化の1回だけなので、
+        // ここで CMP(InMobi Choice)がハングすると──特に同意UI表示後は8秒タイムアウトが
+        // 意図的にスキップされるため──そのセッションで広告が一切出なくなる。
+        // LevelPlay SDK は UserDefaults の IAB TCF 文字列を自動読取りして GDPR 制限を
+        // 適用するため、同意解決を待たずに初期化してもコンプライアンス上問題ない。
+        LevelPlayAdsController.shared.initialize()
 
         ConsentManager.shared.requestConsentIfNeeded { resolved in
             Task {
@@ -67,9 +76,7 @@ struct rogue_like_dungeonApp: App {
                 await ATTrackingManager.requestTrackingAuthorization()
 
                 // resolved=false はオフライン等で CMP が応答できずタイムアウト/エラーになった場合。
-                // 計測はスキップするが、広告 SDK の初期化は必ず行う。
-                // LevelPlay SDK は UserDefaults の IAB TCF 文字列を自動読取りして GDPR 制限を
-                // 適用するため、CMP が失敗しても SDK 側で安全に処理される。
+                // 計測はスキップする(広告 SDK は上で初期化済み)。
                 if resolved && ConsentManager.shared.canEnableAnalytics {
                     Analytics.setAnalyticsCollectionEnabled(true)
                 } else if !resolved {
@@ -81,7 +88,8 @@ struct rogue_like_dungeonApp: App {
                 // 本アプリは子ども向けではない(13歳未満を対象としない)。
                 LPMPrivacySettings.setCOPPA(false)
 
-                LevelPlayAdsController.shared.initialize()
+                // 上の initialize() が(ごく稀に)失敗していた場合の再試行。通常は何もしない。
+                LevelPlayAdsController.shared.initializeIfNeeded()
             }
         }
     }
