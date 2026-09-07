@@ -40,7 +40,9 @@ struct ContentView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .task {
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            // JSX の初回トランスパイルが遅い端末/コールドスタートでスプラッシュが
+            // 早すぎて剥がれないよう、フォールバックは長めに取る(通常は onReady で即解除)。
+            try? await Task.sleep(nanoseconds: 18_000_000_000)
             gameReady = true
         }
     }

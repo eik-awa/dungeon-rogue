@@ -36,9 +36,18 @@ struct rogue_like_dungeonApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             // ATT ダイアログはアプリがアクティブになってからでないと表示されない。
-            // アクティブ化の最初の一度だけ、トラッキング許可を要求する。
             if phase == .active {
-                requestTrackingThenStartAds()
+                if didRequestTracking {
+                    // 2回目以降のフォアグラウンド復帰: 広告系の再試行トリガー(S1-2)。
+                    // 「バックグラウンドで広告ブロックを OFF にして戻る」操作で復旧できるようにする。
+                    // 未初期化なら即リトライ、初期化済みならリワード広告を再プリロードする
+                    // (= initializeIfNeeded 内で preloadIfNeeded まで面倒を見る)。SDK 初期化前に
+                    // preload を走らせないよう、ここでは preloadIfNeeded を直接呼ばない。
+                    LevelPlayAdsController.shared.initializeIfNeeded()
+                } else {
+                    // アクティブ化の最初の一度だけ、同意 → トラッキング許可 → 広告 SDK 初期化を行う。
+                    requestTrackingThenStartAds()
+                }
             }
         }
     }

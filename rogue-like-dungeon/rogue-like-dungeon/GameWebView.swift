@@ -49,6 +49,7 @@ struct GameWebView: UIViewRepresentable {
         config.userContentController.add(proxy, name: "privacy")
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
         webView.backgroundColor = UIColor(red: 0x0a / 255, green: 0x12 / 255, blue: 0x0e / 255, alpha: 1)
         webView.scrollView.backgroundColor = webView.backgroundColor
@@ -62,12 +63,26 @@ struct GameWebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     /// JS メッセージを処理する Coordinator。BGM は AVAudioPlayer でネイティブ再生。
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let bgm = BGMController()
         var onReady: (() -> Void)?
 
         init(onReady: (() -> Void)? = nil) {
             self.onReady = onReady
+        }
+
+        // MARK: - WKNavigationDelegate
+
+        /// iOS がメモリ逼迫で WebContent プロセスを破棄すると画面が真っ白のまま戻らない。
+        /// 破棄を検知したら再読み込みして復帰させる(JS 側は loadRun()/loadMeta() で
+        /// localStorage から状態を復元するため、リロードで続きから再開できる)。
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            print("[GameWebView] WebContent process terminated — reloading")
+            if webView.url != nil {
+                webView.reload()
+            } else {
+                webView.load(URLRequest(url: GameWebView.startURL))
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController,
@@ -117,8 +132,10 @@ struct GameWebView: UIViewRepresentable {
                       ["dew", "revive", "eventDew"].contains(context) else { return }
                 let webView = message.webView
                 DispatchQueue.main.async {
-                    RewardedAdController.shared.show { success in
-                        let js = "window.__onRewardAdResult__ && window.__onRewardAdResult__('\(context)', \(success))"
+                    RewardedAdController.shared.show { result in
+                        // 結果は "rewarded" | "dismissed" | "unavailable" | "timeout"。
+                        // JS 側は文字列・旧 boolean の双方を解釈できる(S1-5)。
+                        let js = "window.__onRewardAdResult__ && window.__onRewardAdResult__('\(context)', '\(result.rawValue)')"
                         webView?.evaluateJavaScript(js, completionHandler: nil)
                     }
                 }
@@ -165,6 +182,27 @@ struct GameWebView: UIViewRepresentable {
                 Analytics.logEvent("weapon_boss_kill", parameters: [
                     "weapon_type": (body["weapon_type"] as? String) ?? "",
                     "stage": (body["stage"] as? Int) ?? 0,
+                ])
+            case "reward_ad_result":
+                // リワード広告の視聴結果(不具合①の計測・S2-6)。
+                Analytics.logEvent("reward_ad_result", parameters: [
+                    "context": (body["context"] as? String) ?? "",
+                    "result": (body["result"] as? String) ?? "",
+                ])
+            case "item_use":
+                // 回復アイテムの効果不発(不具合②)の原因確定用計測・S2-6。
+                Analytics.logEvent("item_use", parameters: [
+                    "item_id": (body["itemId"] as? String) ?? "",
+                    "phase": (body["phase"] as? String) ?? "",
+                    "busy": (body["busy"] as? Bool) ?? false ? 1 : 0,
+                    "hp_before": (body["hpBefore"] as? Int) ?? -1,
+                    "hp_after": (body["hpAfter"] as? Int) ?? -1,
+                    "poison_before": (body["poisonBefore"] as? Int) ?? -1,
+                    "poison_after": (body["poisonAfter"] as? Int) ?? -1,
+                    "inv_before": (body["invBefore"] as? Int) ?? -1,
+                    "inv_after": (body["invAfter"] as? Int) ?? -1,
+                    "applied": (body["applied"] as? Bool) ?? false ? 1 : 0,
+                    "resumed": (body["resumed"] as? Bool) ?? false ? 1 : 0,
                 ])
             default:
                 break

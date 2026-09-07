@@ -17,7 +17,7 @@ import {
   ChevronRight, X, Plus, Wind, CircleDot,
   Cloud, Mountain, Eye, Bone, Snowflake, Sprout, Waves, Shell, Sun,
   Volume1, Volume2, VolumeX,
-  Settings, ExternalLink,
+  Settings, ExternalLink, Lock, LockOpen,
   Cat, Fish, Rabbit, Dog, Squirrel,
   Bot, Scale, EyeClosed, PiggyBank, Atom, Baby, Flower, Dna, Fan, Pyramid, Cherry, Origami, Egg, Snail, Disc2, Turtle, Shrimp,
 } from "lucide-react";
@@ -577,7 +577,9 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null };
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null,
+  // アイテム保護設定(捨てる操作をブロックする)。レアは既定でロック、回復は任意。
+  protectHeals: false, protectRareItems: true };
 
 /* ------------------------------------------------------------
    リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
@@ -1502,10 +1504,15 @@ const BALANCE = {
 ------------------------------------------------------------ */
 const BASE_HP = BALANCE.playerHp;
 const AFF_WEAK = BALANCE.affWeak, AFF_RES = BALANCE.affResist;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// バックグラウンド中は setTimeout が停止し、復帰時にまとめて発火する。
+// resolve 値の { stalled } で「長時間中断からの復帰」を呼び出し側が検知できるようにする(S2-5)。
+const sleep = (ms) => new Promise((r) => {
+  const start = Date.now();
+  setTimeout(() => r({ stalled: Date.now() - start > ms + 2000 }), ms);
+});
 
 function starterState(meta, initialWeaponType = "dagger") {
-  const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid() }));
+  const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid(), locked: false }));
   const weaponCount = weaponSlotsOf(meta);
   const weapons = Array(weaponCount).fill(null);
   const armor = { helm: null, armor: null, charm: null };
@@ -1543,7 +1550,8 @@ function floorNodes(floor) {
 
 /* ---- 設定オーバーレイ (タイトル・ラン両画面で共用) ---- */
 function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, changeSeVolume,
-                           sleepDisabled, toggleSleep, openURL, manageConsent, consentApplicable, cssClass }) {
+                           sleepDisabled, toggleSleep, openURL, manageConsent, consentApplicable, cssClass,
+                           meta, toggleMetaFlag }) {
   const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center",
                      padding: "8px 0", fontSize: 12, color: "var(--mist)", borderBottom: "1px solid rgba(157,180,166,.08)" };
   const sectionLabel = { fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 10, marginTop: 4 };
@@ -1592,6 +1600,34 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
             </button>
           </div>
         </div>
+
+        {/* アイテム保護 */}
+        {toggleMetaFlag && (
+          <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
+            <div style={sectionLabel}>アイテムの保護</div>
+            <div style={{ fontSize: 10, color: "rgba(157,180,166,.7)", lineHeight: 1.7, marginBottom: 8 }}>
+              保護中のアイテムは「捨てる」で手放せなくなります。個別のロックは袋の中の鍵アイコンから設定できます。
+            </div>
+            <div style={rowStyle}>
+              <span style={{ letterSpacing: ".05em" }}>回復アイテムを保護</span>
+              <button className={`kw-btn ${meta?.protectHeals ? "primary" : "ghost"}`}
+                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44 }}
+                onClick={() => toggleMetaFlag("protectHeals")}>
+                {meta?.protectHeals ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ ...rowStyle, borderBottom: "none" }}>
+              <span style={{ letterSpacing: ".05em" }}>希少アイテムを保護
+                <br /><span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(エピック・伝説の武具、宝樹の雫、苔の心臓)</span>
+              </span>
+              <button className={`kw-btn ${meta?.protectRareItems ? "primary" : "ghost"}`}
+                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44, flexShrink: 0 }}
+                onClick={() => toggleMetaFlag("protectRareItems")}>
+                {meta?.protectRareItems ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* プライバシー */}
         <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
@@ -2058,6 +2094,33 @@ export default function KiriwatariNoMori() {
   const metaRef = useRef(meta); metaRef.current = meta;
   const logRef = useRef(null);
 
+  // 非同期シーケンス(攻撃 → 敵ターン等)の世代トークン(S2-2)。
+  // アクション開始時に採番し、await をまたぐたびに一致確認する。
+  // ラン開始・タイトルへ戻る・死亡確定・バックグラウンド遷移で ++ して進行中の継続を無効化する。
+  const seqRef = useRef(0);
+  const bumpSeq = () => { seqRef.current++; };
+
+  // アイテム使用・装備変更のあとにランを保存する(S2-3)。連続タップでの書き込み集中を避けるため
+  // 300ms デバウンスする。saveRun の引数が多いのでスナップショットを丸ごと受け取る。
+  const saveRunTimerRef = useRef(null);
+  const scheduleSaveRun = (s) => {
+    if (!s || !s.floor || s.phase === "dead") return;
+    if (saveRunTimerRef.current) clearTimeout(saveRunTimerRef.current);
+    const snap = s;
+    saveRunTimerRef.current = setTimeout(() => {
+      saveRunTimerRef.current = null;
+      saveRun(snap.floor, snap.node, snap.player, snap.weapons, snap.armor, snap.inv,
+        snap.cds, snap.lastRareSeen, snap.orbBagBonus,
+        snap.phase === "battle" ? snap.enemies : null);
+    }, 300);
+  };
+  const flushSaveRun = (s) => {
+    if (saveRunTimerRef.current) { clearTimeout(saveRunTimerRef.current); saveRunTimerRef.current = null; }
+    if (!s || !s.floor || s.phase === "dead") return;
+    saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv,
+      s.cds, s.lastRareSeen, s.orbBagBonus, s.phase === "battle" ? s.enemies : null);
+  };
+
   // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
   // JS Audio は一切使わない。WebKit が AVAudioSession を .playback に上書きするのを防ぎ
   // Apple Music との共存 (.ambient + .mixWithOthers) を維持するため。
@@ -2125,21 +2188,46 @@ export default function KiriwatariNoMori() {
   // リワード広告(ネイティブ側の LevelPlay)を要求する。結果は __onRewardAdResult__ に届く。
   const requestRewardAd = (contextId) => {
     // リトライ時に前回の失敗エラーを消す
-    setG((s) => ({ ...s, rewardAdPending: contextId, rewardAdFailedAt: null }));
+    setG((s) => ({ ...s, rewardAdPending: contextId, rewardAdFailedAt: null, rewardAdFailReason: null }));
     try { window.webkit?.messageHandlers?.rewardAd?.postMessage({ action: "show", context: contextId }); } catch (_) {
       setG((s) => (s.rewardAdPending === contextId ? { ...s, rewardAdPending: null } : s));
     }
   };
 
+  // リワード広告が出せなかったときの案内文(S1-5)。読込中は表示しない。
+  const rewardAdFailNote = (style) => {
+    if (!g.rewardAdFailedAt || g.rewardAdPending != null) return null;
+    const loadfail = g.rewardAdFailReason !== "dismissed";
+    return (
+      <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--danger)", marginTop: 8, lineHeight: 1.75, ...(style || {}) }}>
+        {loadfail
+          ? "広告を読み込めませんでした。通信環境をご確認ください。広告ブロック機能・コンテンツブロッカー・プライベートDNS・VPN が有効な場合は解除のうえ、アプリを一度終了して再起動してからお試しください。"
+          : "報酬を受け取るには、広告を最後まで視聴してください。"}
+      </div>
+    );
+  };
+
   // リワード広告の結果コールバック。gRef/metaRef 経由で常に最新の状態を扱う。
+  // result は "rewarded" | "dismissed" | "unavailable" | "timeout"(旧 boolean も許容・S1-5)。
   useEffect(() => {
-    window.__onRewardAdResult__ = (contextId, success) => {
+    window.__onRewardAdResult__ = (contextId, result) => {
       const s0 = gRef.current;
       if (s0.rewardAdPending !== contextId) return; // 別画面に移動済みなら無視
-      if (!success) {
-        setG((s) => ({ ...s, rewardAdPending: null, rewardAdFailedAt: Date.now() }));
+      const r = result === true ? "rewarded"
+              : result === false ? "unavailable"
+              : String(result || "unavailable");
+      try {
+        window.webkit?.messageHandlers?.progress?.postMessage({ event: "reward_ad_result", context: contextId, result: r });
+      } catch (_) {}
+      if (r !== "rewarded") {
+        // unavailable / timeout はロード不能、dismissed は視聴中断。UI の文言を出し分ける。
+        const reason = (r === "unavailable" || r === "timeout") ? "loadfail" : "dismissed";
+        setG((s) => (s.rewardAdPending === contextId
+          ? { ...s, rewardAdPending: null, rewardAdFailedAt: Date.now(), rewardAdFailReason: reason }
+          : s));
         return;
       }
+      bumpSeq(); // 復活等で状態が切り替わるため進行中シーケンスを無効化(S2-2)
       const nm = contextId === "revive"
         ? { ...consumeRewardAdUse(metaRef.current), reviveUsedThisRun: true }
         : consumeRewardAdUse(metaRef.current);
@@ -2181,6 +2269,14 @@ export default function KiriwatariNoMori() {
     setSleepDisabled(next);
     try { localStorage.setItem("kw-sleep", next ? "1" : "0"); } catch {}
     try { window.webkit?.messageHandlers?.settings?.postMessage({ sleep: next }); } catch {}
+  }
+
+  // meta の真偽フラグ(アイテム保護設定など)を切り替えて永続化する
+  async function toggleMetaFlag(key) {
+    const m0 = metaRef.current;
+    if (!m0) return;
+    const m2 = { ...m0, [key]: !m0[key] };
+    setMeta(m2); await saveMeta(m2);
   }
 
   // ネイティブハンドラへ BGM メッセージを送信
@@ -2240,20 +2336,51 @@ export default function KiriwatariNoMori() {
     }
   }, []);
 
-  // スリープ/バックグラウンド時に BGM を停止・復帰
+  // スリープ/バックグラウンド時に BGM を停止・復帰 + ゲーム状態の整合(S2-4)
   useEffect(() => {
     const handleVisibility = () => {
       if (document.hidden) {
         sendBGM("pause");
         const fb = bgmFallbackRef.current; if (fb && !fb.paused) fb.pause();
-      } else if (bgmStartedRef.current && bgmVolRef.current > 0) {
-        sendBGM("play");
-        const fb = bgmFallbackRef.current; if (fb && fb.paused) fb.play().catch(() => {});
+        // 進行中の非同期シーケンス(演出待ちの継続)を無効化する。
+        // setTimeout はバックグラウンドで止まり、復帰時にまとめて発火して
+        // 古いスナップショットで setG しうるため、世代トークンで断ち切る。
+        bumpSeq();
+        try {
+          window.webkit?.messageHandlers?.progress?.postMessage({ event: "app_hidden" });
+        } catch (_) {}
+        let committed = null;
+        setG((s) => {
+          if (!s || !s.floor) return s;
+          // 操作不能(busy 固着)のまま固まらないようにし、古いフロートを消す。
+          committed = { ...s, busy: false, floats: [] };
+          return committed;
+        });
+        if (committed) flushSaveRun(committed); // 現在状態を即時保存
+      } else {
+        if (bgmStartedRef.current && bgmVolRef.current > 0) {
+          sendBGM("play");
+          const fb = bgmFallbackRef.current; if (fb && fb.paused) fb.play().catch(() => {});
+        }
+        // 復帰時: 古いフロートの一斉表示を防ぎ、戦闘の敵全滅を整合させる(保険)。
+        bumpSeq();
+        setG((s) => {
+          if (!s || !s.floor) return s;
+          let ns = { ...s, floats: [] };
+          if (ns.phase === "battle" && Array.isArray(ns.enemies)
+              && ns.enemies.length > 0 && ns.enemies.every((e) => e.hp <= 0)) {
+            ns.busy = false;
+          }
+          return ns;
+        });
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
+
+  // タイトルへ戻ったら進行中の非同期シーケンスを無効化する(S2-2)
+  useEffect(() => { if (g.screen === "title") bumpSeq(); }, [g.screen]);
 
   // 新しいログが追加されたら自動で末尾へスクロール
   useEffect(() => {
@@ -2347,6 +2474,7 @@ export default function KiriwatariNoMori() {
   /* ---------- ラン開始 ---------- */
   // chapterIdx: 0-based (0=第1章, 1=第2章, ...)
   function startFromChapter(chapterIdx) {
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     let m = meta;
     if (chapterIdx === 0) {
       const hints = {};
@@ -2388,6 +2516,7 @@ export default function KiriwatariNoMori() {
 
   // タスクキル後の再開: 保存済みフロア状態を復元する
   function resumeRun(run) {
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     if (run.phase === "dead") {
       // タスキル後の死亡画面復元: 継承選択画面を直接表示
       const stDead = {
@@ -2512,6 +2641,7 @@ export default function KiriwatariNoMori() {
   async function attackWith(weapon, targetId) {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
+    const mySeq = ++seqRef.current; // このアクションの世代(S2-2)
     playAttackSound();
     const t = WEAPON_TYPES[weapon.type];
     let s = { ...st0, pending: null, busy: true };
@@ -2601,84 +2731,140 @@ export default function KiriwatariNoMori() {
     // 発見情報を保存
     const m2 = { ...meta, discovered };
     setMeta(m2); saveMeta(m2);
-    await sleep(650);
-    await afterPlayerAction();
+    const { stalled } = await sleep(650);
+    if (stalled || seqRef.current !== mySeq) return; // 中断からの復帰 — 古い継続は破棄(S2-2/S2-5)
+    await afterPlayerAction(mySeq);
   }
 
-  /* ---------- 道具を使う(戦闘中はターン消費) ---------- */
+  /* ---------- 道具を使う(戦闘中はターン消費) ----------
+     読み取り→適用→書き戻しを 1 つの関数型更新に閉じ込め、判定と適用を原子化する(S2-1)。 */
   async function useItem(item) {
-    const st0 = gRef.current;
-    const inBattle = st0.phase === "battle";
-    if (inBattle && st0.busy) return;
-    const c = CONSUMABLES[item.itemId];
-    if (c.kind === "bomb" && !inBattle) return; // 森火の実は戦闘中のみ
-    let s = { ...st0, bag: st0.bag, busy: inBattle };
-    s.inv = s.inv.filter((x) => x.id !== item.id);
-    const mx = maxHpOf(s);
-    if (c.kind === "heal") {
-      const heal = Math.round(mx * c.power);
-      s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-      s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
-      s = pushLog(s, `${c.label}を口にした。`);
-    } else if (c.kind === "cure") {
-      s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + Math.round(mx * c.power)) };
-      s = pushLog(s, `${c.label}で毒が消えた。`);
-    } else if (c.kind === "buff") {
-      s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
-      s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
-    } else if (c.kind === "bomb" && inBattle) {
-      const power = 20 + s.floor * 2; // 深い階ほど強力
-      const enemies = s.enemies.map((e) => ({ ...e }));
-      for (const e of enemies) if (e.hp > 0) {
-        e.hp = Math.max(0, e.hp - power);
-        s = addFloat(s, e.id, `${power}`, "#f0946a", 22);
+    const mySeq = ++seqRef.current;
+    let committed = null;
+    let metaBonusHp = null; // 苔の心臓: 確定後に meta へ適用
+    let before = null;
+    setG((st0) => {
+      const inBattle = st0.phase === "battle";
+      if (inBattle && st0.busy) return st0;
+      // 二重適用・多重タップ防止: すでに袋から消えているアイテムは無視する
+      if (!st0.inv.some((x) => x.id === item.id)) return st0;
+      const c = CONSUMABLES[item.itemId];
+      if (!c) return st0;
+      if (c.kind === "bomb" && !inBattle) return st0; // 森火の実は戦闘中のみ
+
+      before = { hp: st0.player.hp, poison: st0.player.poison || 0, inv: st0.inv.length, atkUp: st0.player.atkUp || 0 };
+      let s = { ...st0, busy: inBattle };
+      s.inv = s.inv.filter((x) => x.id !== item.id);
+      const mx = maxHpOf(s);
+      if (c.kind === "heal") {
+        const heal = Math.round(mx * c.power);
+        s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+        s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
+        s = pushLog(s, `${c.label}を口にした。`);
+      } else if (c.kind === "cure") {
+        s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + Math.round(mx * c.power)) };
+        s = pushLog(s, `${c.label}で毒が消えた。`);
+      } else if (c.kind === "buff") {
+        s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
+        s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
+      } else if (c.kind === "bomb" && inBattle) {
+        const power = 20 + s.floor * 2; // 深い階ほど強力
+        const enemies = s.enemies.map((e) => ({ ...e }));
+        for (const e of enemies) if (e.hp > 0) {
+          e.hp = Math.max(0, e.hp - power);
+          s = addFloat(s, e.id, `${power}`, "#f0946a", 22);
+        }
+        s.enemies = enemies;
+        s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
+      } else if (c.kind === "metaHp") {
+        metaBonusHp = (metaRef.current?.bonusHp || 0) + 6;
+        s.player = { ...s.player, hp: s.player.hp + 6 };
+        s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
+      } else if (c.kind === "orb") {
+        s = { ...s, orbChoice: true, busy: false };
+      } else {
+        s.busy = false;
       }
-      s.enemies = enemies;
-      s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
-    } else if (c.kind === "metaHp") {
-      const m2 = { ...meta, bonusHp: (meta.bonusHp || 0) + 6 };
+      committed = s;
+      return s;
+    });
+
+    if (!committed) return; // 前提条件を満たさず何もしなかった
+
+    // --- 副作用は更新関数の外で ---
+    if (metaBonusHp != null) {
+      const m2 = { ...metaRef.current, bonusHp: metaBonusHp };
       setMeta(m2); saveMeta(m2);
-      s.player = { ...s.player, hp: s.player.hp + 6 };
-      s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
-    } else if (c.kind === "orb") {
-      s = { ...s, orbChoice: true, busy: false };
-    } else {
-      s.busy = false;
     }
-    setG(s);
-    if (inBattle && s.busy) { await sleep(600); await afterPlayerAction(); }
+    flushSaveRun(committed); // アイテム使用結果を永続化(S2-3)
+
+    try {
+      const after = { hp: committed.player.hp, poison: committed.player.poison || 0, inv: committed.inv.length };
+      window.webkit?.messageHandlers?.progress?.postMessage({
+        event: "item_use", itemId: item.itemId, phase: committed.phase, busy: !!committed.busy,
+        hpBefore: before.hp, hpAfter: after.hp,
+        poisonBefore: before.poison, poisonAfter: after.poison,
+        invBefore: before.inv, invAfter: after.inv,
+        applied: (after.hp !== before.hp) || (after.poison !== before.poison)
+          || ((committed.player.atkUp || 0) !== before.atkUp)
+          || committed.orbChoice === true || metaBonusHp != null,
+        resumed: false,
+      });
+    } catch (_) {}
+
+    if (committed.busy && committed.phase === "battle") {
+      const { stalled } = await sleep(600);
+      if (stalled || seqRef.current !== mySeq) return;
+      await afterPlayerAction(mySeq);
+    }
   }
 
   async function guard() {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
-    let s = { ...st0, busy: true, pending: null };
-    s.player = { ...s.player, guard: true, hp: Math.min(maxHpOf(s), s.player.hp + Math.round(maxHpOf(s) * 0.05)) };
-    s = pushLog(s, "身を低くして構えた(被ダメージ半減)。");
-    setG(s);
-    await sleep(450);
-    await afterPlayerAction();
+    const mySeq = ++seqRef.current;
+    let committed = null;
+    setG((s) => {
+      if (s.busy || s.phase !== "battle") return s;
+      let ns = { ...s, busy: true, pending: null };
+      ns.player = { ...ns.player, guard: true, hp: Math.min(maxHpOf(ns), ns.player.hp + Math.round(maxHpOf(ns) * 0.05)) };
+      ns = pushLog(ns, "身を低くして構えた(被ダメージ半減)。");
+      committed = ns;
+      return ns;
+    });
+    if (!committed) return;
+    const { stalled } = await sleep(450);
+    if (stalled || seqRef.current !== mySeq) return;
+    await afterPlayerAction(mySeq);
   }
 
   /* ---------- 行動後処理 → 敵ターン ---------- */
-  async function afterPlayerAction() {
+  async function afterPlayerAction(seq) {
+    if (seq != null && seqRef.current !== seq) return;
     let st = gRef.current;
     // 撃破判定
     const killed = st.enemies.filter((e) => e.hp <= 0 && !e.counted);
     if (killed.length) {
-      let s = { ...st, enemies: st.enemies.map((e) => e.hp <= 0 ? { ...e, counted: true } : e) };
-      for (const k of killed) {
-        if (k.rare) s = pushLog(s, `${k.name}を捕まえた! まばゆい光が零れ落ちる。`, true);
-        else if (k.boss) s = pushLog(s, `${k.name}は静かに膝を折り、森に還っていく……`, true);
-        else s = pushLog(s, `${k.name}を倒した。`);
-      }
-      setG(s); st = s;
-      await sleep(420);
+      let committed = null;
+      setG((s) => {
+        let ns = { ...s, enemies: s.enemies.map((e) => e.hp <= 0 ? { ...e, counted: true } : e) };
+        for (const k of killed) {
+          if (k.rare) ns = pushLog(ns, `${k.name}を捕まえた! まばゆい光が零れ落ちる。`, true);
+          else if (k.boss) ns = pushLog(ns, `${k.name}は静かに膝を折り、森に還っていく……`, true);
+          else ns = pushLog(ns, `${k.name}を倒した。`);
+        }
+        committed = ns;
+        return ns;
+      });
+      st = committed || st;
+      const { stalled } = await sleep(420);
+      if (stalled || (seq != null && seqRef.current !== seq)) return;
+      st = gRef.current;
     }
     const alive = st.enemies.filter((e) => e.hp > 0);
-    if (alive.length === 0) return battleWon(killedAll(st));
+    if (alive.length === 0) return battleWon(killedAll(st), seq);
     // 敵ターン
-    await enemyPhase();
+    await enemyPhase(seq);
   }
   const killedAll = (st) => st.enemies;
 
@@ -2709,7 +2895,8 @@ export default function KiriwatariNoMori() {
     return drops;
   }
 
-  async function battleWon(enemies) {
+  async function battleWon(enemies, seq) {
+    // 勝利は必ず完遂させる(途中の await は localStorage 保存のみ)。seq は経緯確認用。
     const st = gRef.current;
     const isBoss = enemies.some((e) => e.boss);
     const drops = rollDrops(enemies.filter((e) => e.hp <= 0 && !e.fled), st.floor, st.inv);
@@ -2772,6 +2959,7 @@ export default function KiriwatariNoMori() {
 
   // 死亡確定処理(復活オファーを断った/広告に失敗した場合もここを通る)
   function finalizeDeath(stFainted) {
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, stFainted.floor) };
     setMeta(m2); saveMeta(m2);
     // 進行度をFirebaseに記録(死亡=到達フロア)
@@ -2784,7 +2972,8 @@ export default function KiriwatariNoMori() {
   }
 
   /* ---------- 敵の行動 ---------- */
-  async function enemyPhase() {
+  async function enemyPhase(seq) {
+    if (seq != null && seqRef.current !== seq) return;
     let s = { ...gRef.current };
     let enemies = s.enemies.map((e) => ({ ...e }));
     let player = { ...s.player };
@@ -2847,7 +3036,8 @@ export default function KiriwatariNoMori() {
       }
       if (e.atkDown > 0) e.atkDown -= 1;
       setG({ ...s, enemies, player });
-      await sleep(380);
+      const r = await sleep(380);
+      if (r.stalled || (seq != null && seqRef.current !== seq)) return; // 中断からの復帰 — 破棄(S2-2/S2-5)
       s = gRef.current; enemies = s.enemies.map((x) => ({ ...x })); player = { ...s.player };
     }
 
@@ -2879,15 +3069,53 @@ export default function KiriwatariNoMori() {
     saveRun(finalState.floor, finalState.node, finalState.player, finalState.weapons, finalState.armor, finalState.inv, finalState.cds, finalState.lastRareSeen, finalState.orbBagBonus, finalState.enemies);
   }
 
+  /* ---------- アイテムのロック / 保護 ---------- */
+  const isRareItem = (it) => !!it && it.rarity && it.rarity !== "common"; // 捨てる確認ダイアログ用(従来通り)
+  const isHealItem = (it) => !!it && it.kind === "item" && ["heal", "cure"].includes(CONSUMABLES[it.itemId]?.kind);
+  // 「レアアイテムを保護」の対象: エピック/伝説の武具 + 雫・苔の心臓
+  const isHighValueItem = (it) => !!it && (
+    ["epic", "legend"].includes(it.rarity) ||
+    (it.kind === "item" && ["dew", "mossHeart"].includes(it.itemId))
+  );
+  // 個別ロック or 設定による保護に該当するか(= 捨てる操作をブロックする)
+  const isItemProtected = (it) => !!it && (
+    !!it.locked ||
+    (metaRef.current?.protectHeals && isHealItem(it)) ||
+    (metaRef.current?.protectRareItems && isHighValueItem(it))
+  );
+
+  // 個別アイテムのロックを切り替える(袋・装備中の武器/防具すべてを対象に)。
+  function toggleLock(item) {
+    let committed = null;
+    setG((s) => {
+      const flip = (x) => (x && x.id === item.id ? { ...x, locked: !x.locked } : x);
+      const ns = {
+        ...s,
+        inv: s.inv.map(flip),
+        weapons: s.weapons.map(flip),
+        armor: Object.fromEntries(Object.entries(s.armor).map(([k, v]) => [k, flip(v)])),
+      };
+      committed = ns;
+      return ns;
+    });
+    if (committed) scheduleSaveRun(committed);
+  }
+
   /* ---------- 装備・袋 ---------- */
   function equipItem(item) {
+    let committed = null;
     setG((s) => {
       let ns = { ...s };
       if (item.kind === "weapon") {
         let idx = ns.weapons.findIndex((w) => !w);
         if (idx < 0) {
-          // 空きがなければ最も攻撃力の低い武器と入れ替える
-          idx = ns.weapons.reduce((mi, w, i) => (w.atk < ns.weapons[mi].atk ? i : mi), 0);
+          // 空きがなければ、ロックされていない中で最も攻撃力の低い武器と入れ替える
+          const swappable = ns.weapons.map((w, i) => i).filter((i) => !ns.weapons[i].locked);
+          if (swappable.length === 0) {
+            // すべてロック済み — 入れ替えできない
+            return pushLog(ns, "装備中の武器はすべてロックされています。");
+          }
+          idx = swappable.reduce((mi, i) => (ns.weapons[i].atk < ns.weapons[mi].atk ? i : mi), swappable[0]);
         }
         const old = ns.weapons[idx];
         ns.weapons = ns.weapons.map((w, i) => (i === idx ? item : w));
@@ -2904,18 +3132,32 @@ export default function KiriwatariNoMori() {
         ns.player = { ...ns.player, hp: Math.min(mx, hpDiff > 0 ? ns.player.hp + hpDiff : ns.player.hp) };
         ns = pushLog(ns, `${item.name}を身につけた。`);
       }
+      committed = ns;
       return ns;
     });
+    if (committed) scheduleSaveRun(committed);
   }
   function unequipWeapon(idx) {
+    let committed = null;
     setG((s) => {
       const w = s.weapons[idx];
       if (!w || s.inv.length >= invCap) return s;
-      return { ...s, weapons: s.weapons.map((x, i) => (i === idx ? null : x)), inv: [...s.inv, w] };
+      const ns = { ...s, weapons: s.weapons.map((x, i) => (i === idx ? null : x)), inv: [...s.inv, w] };
+      committed = ns;
+      return ns;
     });
+    if (committed) scheduleSaveRun(committed);
   }
   function discardItem(item) {
-    setG((s) => ({ ...s, inv: s.inv.filter((x) => x.id !== item.id) }));
+    // 保護中(個別ロック or 設定)のアイテムは捨てられない
+    if (isItemProtected(item)) return;
+    let committed = null;
+    setG((s) => {
+      const ns = { ...s, inv: s.inv.filter((x) => x.id !== item.id) };
+      committed = ns;
+      return ns;
+    });
+    if (committed) scheduleSaveRun(committed);
   }
 
   // ドロップ1点を回収する純関数(拾えなければ full: true を添える)
@@ -2934,7 +3176,11 @@ export default function KiriwatariNoMori() {
     ns.inv = [...ns.inv, item];
     return { ...ns, full: false };
   }
-  const takeDrop = (item) => setG((s) => takeDropPure(s, item));
+  const takeDrop = (item) => {
+    let committed = null;
+    setG((s) => { const ns = takeDropPure(s, item); committed = ns; return ns; });
+    if (committed) scheduleSaveRun(committed);
+  };
   // ドロップ全回収の純関数
   function takeAllPure(s) {
     let ns = { ...s, full: false };
@@ -2943,13 +3189,22 @@ export default function KiriwatariNoMori() {
     for (const d of ordered) ns = takeDropPure(ns, d);
     return ns;
   }
-  const takeAllDrops = () => setG((s) => takeAllPure(s));
+  const takeAllDrops = () => {
+    let committed = null;
+    setG((s) => { const ns = takeAllPure(s); committed = ns; return ns; });
+    if (committed) scheduleSaveRun(committed);
+  };
   // 確認画面用: 全部拾えたらそのまま進む
-  const takeAllAndGo = () => setG((s) => {
-    const ns = takeAllPure(s);
-    if (ns.drops.length === 0) return nextNode({ ...ns, confirm: null });
-    return ns;
-  });
+  const takeAllAndGo = () => {
+    let committed = null;
+    setG((s) => {
+      const ns = takeAllPure(s);
+      if (ns.drops.length === 0) { const nx = nextNode({ ...ns, confirm: null }); committed = nx; return nx; }
+      committed = ns;
+      return ns;
+    });
+    if (committed) scheduleSaveRun(committed);
+  };
 
   // 先へ進む: 未回収の戦利品 / 未開封のイベントがあれば確認を挟む
   function tryProceed() {
@@ -3005,6 +3260,7 @@ export default function KiriwatariNoMori() {
   /* ---------- 死と継承 ---------- */
   // 価値の高い順に自動選択(永続アイテム > 高レア装備 > 消耗品)
   function itemScore(it) {
+    if (it.locked) return 100000; // ロック済みは継承候補として最優先
     const ri = RARITIES.findIndex((r) => r.id === it.rarity);
     if (it.kind === "item") {
       const c = CONSUMABLES[it.itemId];
@@ -3031,6 +3287,7 @@ export default function KiriwatariNoMori() {
     });
   }
   async function rebirth() {
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     const s = gRef.current;
     const all = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv];
     let inherited = all.filter((x) => s.pick.includes(x.id));
@@ -3381,6 +3638,7 @@ export default function KiriwatariNoMori() {
             sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
             openURL={openURL}
             manageConsent={manageConsent} consentApplicable={consentApplicable}
+            meta={meta} toggleMetaFlag={toggleMetaFlag}
             cssClass=""
           />
         )}
@@ -3561,14 +3819,10 @@ export default function KiriwatariNoMori() {
                   color: "var(--hotaru)", borderColor: "rgba(232,180,74,.35)", opacity: adPending ? .6 : 1 }}
                   disabled={adPending}
                   onClick={() => requestRewardAd("eventDew")}>
-                  {adPending ? "広告を読み込み中…" : `広告を見て報酬を2倍にする（本日あと${rewardAdUsesLeft(meta)}回）`}
+                  {adPending ? "広告を読み込み中…（15秒ほどかかります）" : `広告を見て報酬を2倍にする（本日あと${rewardAdUsesLeft(meta)}回）`}
                 </button>
               )}
-              {g.rewardAdFailedAt && g.rewardAdPending == null && !ev.adClaimed && (
-                <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--danger)", marginTop: 6 }}>
-                  広告を読み込めませんでした。少し待って再度お試しください。
-                </div>
-              )}
+              {!ev.adClaimed && rewardAdFailNote()}
             </div>
           )}
         </div>
@@ -3691,8 +3945,9 @@ export default function KiriwatariNoMori() {
                     <button className="kw-btn ghost" style={{ fontSize: 11 }} disabled={!!g.rewardAdPending}
                       onClick={() => { setG((s) => ({ ...s, rewardAdFailedAt: null })); requestRewardAd("dew"); }}>
                       <Sparkles size={10} style={{ display: "inline", marginRight: 4 }} />
-                      {g.rewardAdPending === "dew" ? "読み込み中…" : "広告を再試行して雫を2倍にする"}
+                      {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほどかかります）" : "広告を再試行して雫を2倍にする"}
                     </button>
+                    {rewardAdFailNote({ marginTop: 4 })}
                   </div>
                 )}
                 <div className="kw-actions" style={{ justifyContent: "center" }}>
@@ -3819,10 +4074,17 @@ export default function KiriwatariNoMori() {
 
             {g.phase !== "battle" && (
               <>
-                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "4px 0 8px" }}>── 装備中の武器(タップで外す)</div>
+                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "4px 0 8px" }}>── 装備中の武器(タップで外す・鍵で入れ替え防止)</div>
                 <div className="kw-grid">
                   {g.weapons.map((w, i) => w
-                    ? <ItemCell key={w.id} item={w} equipped onClick={() => unequipWeapon(i)} />
+                    ? <div key={w.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <ItemCell item={w} equipped onClick={() => unequipWeapon(i)} />
+                        <button className={`kw-btn ${w.locked ? "primary" : "ghost"}`}
+                          style={{ padding: "4px 0", fontSize: 10, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+                          onClick={(e) => { e.stopPropagation(); toggleLock(w); }}>
+                          {w.locked ? <><Lock size={11} />ロック中</> : <><LockOpen size={11} />ロック</>}
+                        </button>
+                      </div>
                     : <div key={i} className="kw-panel kw-cell" style={{ opacity: .3, cursor: "default" }}><div className="kw-cmeta">空きスロット</div></div>)}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "12px 0 8px" }}>── 防具</div>
@@ -3850,18 +4112,38 @@ export default function KiriwatariNoMori() {
               const catLabel = (label) => (
                 <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
               );
-              const isRareItem = (it) => it.rarity && it.rarity !== "common";
               const handleDiscard = (e, it) => {
                 e.stopPropagation();
+                if (isItemProtected(it)) return; // ロック/保護中は捨てられない
                 if (isRareItem(it)) { setDiscardConfirm(it); } else { discardItem(it); }
+              };
+              // ロック切替 + 捨てるボタン(保護中は無効表示)
+              const itemActions = (it) => {
+                const locked = !!it.locked;
+                const protectedBySetting = !locked &&
+                  ((meta?.protectHeals && isHealItem(it)) || (meta?.protectRareItems && isHighValueItem(it)));
+                return (
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button className={`kw-btn ${locked ? "primary" : "ghost"}`}
+                      style={{ padding: "5px 8px", fontSize: 11, flexShrink: 0, display: "inline-flex", alignItems: "center" }}
+                      onClick={(e) => { e.stopPropagation(); toggleLock(it); }}>
+                      {locked ? <Lock size={12} /> : <LockOpen size={12} />}
+                    </button>
+                    <button className="kw-btn ghost" disabled={locked || protectedBySetting}
+                      style={{ padding: "5px 0", fontSize: 11, flex: 1, letterSpacing: ".12em",
+                               opacity: (locked || protectedBySetting) ? 0.45 : 1 }}
+                      onClick={(e) => handleDiscard(e, it)}>
+                      {locked ? "ロック中" : protectedBySetting ? "保護中" : "捨てる"}
+                    </button>
+                  </div>
+                );
               };
               const renderEquip = (it) => {
                 if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <ItemCell item={it} actionLabel="装備する" onClick={() => equipItem(it)} hint={hintFor(it)} />
-                    <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
-                      onClick={(e) => handleDiscard(e, it)}>捨てる</button>
+                    {itemActions(it)}
                   </div>
                 );
               };
@@ -3880,8 +4162,7 @@ export default function KiriwatariNoMori() {
                       ? <ItemCell item={it} actionLabel="使う" onClick={() => useItem(it)} />
                       : <ItemCell item={it} actionLabel={disabledLabel} onClick={() => {}} />
                     }
-                    <button className="kw-btn ghost" style={{ padding: "5px 0", fontSize: 11, width: "100%", letterSpacing: ".12em" }}
-                      onClick={(e) => handleDiscard(e, it)}>捨てる</button>
+                    {itemActions(it)}
                   </div>
                 );
               };
@@ -3919,16 +4200,12 @@ export default function KiriwatariNoMori() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
               <button className="kw-btn primary" style={{ fontSize: 12 }}
                 disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("revive")}>
-                {g.rewardAdPending === "revive" ? "広告を読み込み中…" : "広告を見て復活する"}
+                {g.rewardAdPending === "revive" ? "広告を読み込み中…（15秒ほどかかります）" : "広告を見て復活する"}
               </button>
               <button className="kw-btn ghost" style={{ fontSize: 12 }}
                 onClick={() => finalizeDeath(g)}>あきらめる</button>
             </div>
-            {g.rewardAdFailedAt && (
-              <div className="kw-notice" style={{ marginTop: 10 }}>
-                広告を表示できませんでした。もう一度お試しいただくか、あきらめて進んでください。
-              </div>
-            )}
+            {rewardAdFailNote({ marginTop: 10 })}
           </div>
         </div>
       )}
@@ -4160,7 +4437,7 @@ export default function KiriwatariNoMori() {
               <button className="kw-btn primary" style={{ padding: "10px 20px", fontSize: 12.5 }}
                 disabled={!!g.rewardAdPending}
                 onClick={() => { setG((s) => ({ ...s, dewAdOffer: false })); requestRewardAd("dew"); }}>
-                {g.rewardAdPending === "dew" ? "読み込み中…" : "広 告 を 見 る"}
+                {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほど）" : "広 告 を 見 る"}
               </button>
               <button className="kw-btn ghost" style={{ fontSize: 12 }}
                 onClick={() => setG((s) => ({ ...s, dewAdOffer: false }))}>
@@ -4203,6 +4480,7 @@ export default function KiriwatariNoMori() {
           sleepDisabled={sleepDisabled} toggleSleep={toggleSleep}
           openURL={openURL}
           manageConsent={manageConsent} consentApplicable={consentApplicable}
+          meta={meta} toggleMetaFlag={toggleMetaFlag}
           cssClass="top"
         />
       )}
