@@ -2233,20 +2233,32 @@ export default function KiriwatariNoMori() {
         : consumeRewardAdUse(metaRef.current);
       setMeta(nm); saveMeta(nm);
       if (contextId === "dew") {
+        // 広告の報酬は袋に直接入れて即保存する。ドロップに置くと、回収前に
+        // アプリを終了された場合に消えてしまう(視聴回数だけ消費される)。
+        let committed = null;
         setG((s) => {
           if (s.rewardAdPending !== "dew") return s;
-          let ns = pushLog({ ...s, drops: [...s.drops, makeConsumable("dew")], rewardAdPending: null, dewAdClaimed: true },
-            "広告視聴の報酬。宝樹の雫がもう一つ生まれた!", true);
+          const dew = makeConsumable("dew");
+          const cap = invCapOf(metaRef.current, s.orbBagBonus || 0);
+          const base = { ...s, rewardAdPending: null, dewAdClaimed: true };
+          const ns = s.inv.length < cap
+            ? pushLog({ ...base, inv: [...s.inv, dew] }, "広告視聴の報酬。宝樹の雫が袋に加わった!", true)
+            : pushLog({ ...base, drops: [...s.drops, dew] }, "広告視聴の報酬。宝樹の雫がもう一つ生まれた!(袋が満杯のため戦利品へ)", true);
+          committed = ns;
           return ns;
         });
+        if (committed) flushSaveRun(committed);
       } else if (contextId === "revive") {
+        let committed = null;
         setG((s) => {
           if (s.rewardAdPending !== "revive") return s;
           const mx = maxHpOf(s, metaRef.current);
           const revived = { ...s.player, hp: mx, poison: 0, atkDown: 0 };
-          return pushLog({ ...s, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
+          committed = pushLog({ ...s, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
             "広告の加護で、満身の力で息を吹き返した!", true);
+          return committed;
         });
+        if (committed) flushSaveRun(committed); // 復活後の状態を即保存(再起動しても復活が反映される)
       } else if (contextId === "eventDew") {
         setG((s) => {
           if (s.rewardAdPending !== "eventDew") return s;
@@ -2382,6 +2394,17 @@ export default function KiriwatariNoMori() {
   // タイトルへ戻ったら進行中の非同期シーケンスを無効化する(S2-2)
   useEffect(() => { if (g.screen === "title") bumpSeq(); }, [g.screen]);
 
+  // busy 固着の保険: 戦闘中に状態変化が 3 秒途切れたら操作不能を解除する。
+  // 攻撃・敵ターンの setG は最長でも 0.65 秒以内ごとに走るので、3 秒無変化 = 異常。
+  // g を丸ごと依存に入れているので、何らかの setG が走るたびにタイマーがリセットされる。
+  useEffect(() => {
+    if (!g.busy || g.phase !== "battle" || g.screen !== "run") return;
+    const id = setTimeout(() => {
+      setG((s) => (s.busy && s.phase === "battle" ? { ...s, busy: false } : s));
+    }, 3000);
+    return () => clearTimeout(id);
+  }, [g]);
+
   // 新しいログが追加されたら自動で末尾へスクロール
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -2434,6 +2457,22 @@ export default function KiriwatariNoMori() {
     };
     setMeta(m2);
     await saveMeta(m2);
+
+    // 武器スロット拡張は g.weapons の長さが固定のため、進行中のランには
+    // starterState を通らないと反映されない。ここで即座にスロットを増やす。
+    if (skillId === "weaponSlot4" || skillId === "weaponSlot5" || skillId === "weaponSlot6") {
+      let committed = null;
+      setG((s) => {
+        if (s.screen !== "run" || !Array.isArray(s.weapons)) return s;
+        const want = weaponSlotsOf(m2);
+        if (s.weapons.length >= want) return s;
+        const weapons = [...s.weapons];
+        while (weapons.length < want) weapons.push(null);
+        committed = { ...s, weapons };
+        return committed;
+      });
+      if (committed) scheduleSaveRun(committed);
+    }
   }
 
   async function dismissRefundNotice() {
@@ -2502,7 +2541,9 @@ export default function KiriwatariNoMori() {
       stageIntro: chapterIdx,
     };
     base.player.hp = maxHpOf(base, m);
-    m = { ...m, reviveUsedThisRun: false };
+    // 継承品(meta.inherited)はここで消費済みにする。残しておくと、中断してタイトルへ戻り
+    // 「始める」を選び直すたびに同じ継承品が何度でも手に入ってしまう(無限増殖・レアアイテムの永久複製)。
+    m = { ...m, reviveUsedThisRun: false, inherited: [] };
     setMeta(m); saveMeta(m);
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
@@ -2641,7 +2682,6 @@ export default function KiriwatariNoMori() {
   async function attackWith(weapon, targetId) {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
-    const mySeq = ++seqRef.current; // このアクションの世代(S2-2)
     playAttackSound();
     const t = WEAPON_TYPES[weapon.type];
     let s = { ...st0, pending: null, busy: true };
@@ -2727,6 +2767,8 @@ export default function KiriwatariNoMori() {
     s.enemies = enemies;
     s.floats = [...s.floats, ...floats];
     s.hitId = target.id;
+    // 攻撃が成立したここで世代を進める(!target 等の早期 return では進めない・S2-2 回帰対策)
+    const mySeq = ++seqRef.current;
     setG(s);
     // 発見情報を保存
     const m2 = { ...meta, discovered };
@@ -2737,83 +2779,84 @@ export default function KiriwatariNoMori() {
   }
 
   /* ---------- 道具を使う(戦闘中はターン消費) ----------
-     読み取り→適用→書き戻しを 1 つの関数型更新に閉じ込め、判定と適用を原子化する(S2-1)。 */
+     前提判定・状態組み立て・ターン進行はすべて gRef.current から同期的に行う。
+     関数型更新(setG(updater))は React 18 で updater が後回しになりうるため、
+     「適用できたか」を updater の副作用で判定すると敵ターン処理が飛ぶことがある。 */
   async function useItem(item) {
+    const st0 = gRef.current;
+    const inBattle = st0.phase === "battle";
+    if (inBattle && st0.busy) return;
+    const c = CONSUMABLES[item.itemId];
+    if (!c) return;
+    if (c.kind === "bomb" && !inBattle) return; // 森火の実は戦闘中のみ
+    // 二重適用・多重タップ防止: すでに袋から消えているアイテムは無視する
+    if (!st0.inv.some((x) => x.id === item.id)) return;
+
     const mySeq = ++seqRef.current;
-    let committed = null;
+
+    const before = { hp: st0.player.hp, poison: st0.player.poison || 0, inv: st0.inv.length, atkUp: st0.player.atkUp || 0 };
+    // 戦闘中はアイテム使用で袋を即閉じる(敵ターンの演出を隠さない)。
+    // 戦闘後(報酬画面等)は従来どおり明示的に閉じるまで開いたまま。
+    let s = { ...st0, busy: inBattle, bag: inBattle ? false : st0.bag };
+    s.inv = s.inv.filter((x) => x.id !== item.id);
+    const mx = maxHpOf(s);
     let metaBonusHp = null; // 苔の心臓: 確定後に meta へ適用
-    let before = null;
-    setG((st0) => {
-      const inBattle = st0.phase === "battle";
-      if (inBattle && st0.busy) return st0;
-      // 二重適用・多重タップ防止: すでに袋から消えているアイテムは無視する
-      if (!st0.inv.some((x) => x.id === item.id)) return st0;
-      const c = CONSUMABLES[item.itemId];
-      if (!c) return st0;
-      if (c.kind === "bomb" && !inBattle) return st0; // 森火の実は戦闘中のみ
-
-      before = { hp: st0.player.hp, poison: st0.player.poison || 0, inv: st0.inv.length, atkUp: st0.player.atkUp || 0 };
-      let s = { ...st0, busy: inBattle };
-      s.inv = s.inv.filter((x) => x.id !== item.id);
-      const mx = maxHpOf(s);
-      if (c.kind === "heal") {
-        const heal = Math.round(mx * c.power);
-        s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-        s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
-        s = pushLog(s, `${c.label}を口にした。`);
-      } else if (c.kind === "cure") {
-        s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + Math.round(mx * c.power)) };
-        s = pushLog(s, `${c.label}で毒が消えた。`);
-      } else if (c.kind === "buff") {
-        s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
-        s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
-      } else if (c.kind === "bomb" && inBattle) {
-        const power = 20 + s.floor * 2; // 深い階ほど強力
-        const enemies = s.enemies.map((e) => ({ ...e }));
-        for (const e of enemies) if (e.hp > 0) {
-          e.hp = Math.max(0, e.hp - power);
-          s = addFloat(s, e.id, `${power}`, "#f0946a", 22);
-        }
-        s.enemies = enemies;
-        s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
-      } else if (c.kind === "metaHp") {
-        metaBonusHp = (metaRef.current?.bonusHp || 0) + 6;
-        s.player = { ...s.player, hp: s.player.hp + 6 };
-        s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
-      } else if (c.kind === "orb") {
-        s = { ...s, orbChoice: true, busy: false };
-      } else {
-        s.busy = false;
+    if (c.kind === "heal") {
+      const heal = Math.round(mx * c.power);
+      s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+      s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
+      s = pushLog(s, `${c.label}を口にした。`);
+    } else if (c.kind === "cure") {
+      s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + Math.round(mx * c.power)) };
+      s = pushLog(s, `${c.label}で毒が消えた。`);
+    } else if (c.kind === "buff") {
+      s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
+      s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
+    } else if (c.kind === "bomb" && inBattle) {
+      const power = 20 + s.floor * 2; // 深い階ほど強力
+      const enemies = s.enemies.map((e) => ({ ...e }));
+      for (const e of enemies) if (e.hp > 0) {
+        e.hp = Math.max(0, e.hp - power);
+        s = addFloat(s, e.id, `${power}`, "#f0946a", 22);
       }
-      committed = s;
-      return s;
-    });
+      s.enemies = enemies;
+      s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
+    } else if (c.kind === "metaHp") {
+      metaBonusHp = (metaRef.current?.bonusHp || 0) + 6;
+      s.player = { ...s.player, hp: s.player.hp + 6 };
+      s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
+    } else if (c.kind === "orb") {
+      s = { ...s, orbChoice: true, busy: false };
+    } else {
+      s.busy = false;
+    }
 
-    if (!committed) return; // 前提条件を満たさず何もしなかった
+    setG(s);
 
-    // --- 副作用は更新関数の外で ---
+    // --- 副作用 ---
     if (metaBonusHp != null) {
       const m2 = { ...metaRef.current, bonusHp: metaBonusHp };
       setMeta(m2); saveMeta(m2);
     }
-    flushSaveRun(committed); // アイテム使用結果を永続化(S2-3)
+    flushSaveRun(s); // アイテム使用結果を永続化(S2-3)
 
     try {
-      const after = { hp: committed.player.hp, poison: committed.player.poison || 0, inv: committed.inv.length };
+      const after = { hp: s.player.hp, poison: s.player.poison || 0, inv: s.inv.length };
       window.webkit?.messageHandlers?.progress?.postMessage({
-        event: "item_use", itemId: item.itemId, phase: committed.phase, busy: !!committed.busy,
+        event: "item_use", itemId: item.itemId, phase: s.phase, busy: !!s.busy,
         hpBefore: before.hp, hpAfter: after.hp,
         poisonBefore: before.poison, poisonAfter: after.poison,
         invBefore: before.inv, invAfter: after.inv,
         applied: (after.hp !== before.hp) || (after.poison !== before.poison)
-          || ((committed.player.atkUp || 0) !== before.atkUp)
-          || committed.orbChoice === true || metaBonusHp != null,
+          || ((s.player.atkUp || 0) !== before.atkUp)
+          || s.orbChoice === true || metaBonusHp != null,
         resumed: false,
       });
     } catch (_) {}
 
-    if (committed.busy && committed.phase === "battle") {
-      const { stalled } = await sleep(600);
+    // 戦闘中でターンを消費するアイテム(busy=true)なら、敵ターン → 自分のターンへ進める。
+    if (s.busy && s.phase === "battle") {
+      const { stalled } = await sleep(450);
       if (stalled || seqRef.current !== mySeq) return;
       await afterPlayerAction(mySeq);
     }
@@ -2823,16 +2866,10 @@ export default function KiriwatariNoMori() {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
     const mySeq = ++seqRef.current;
-    let committed = null;
-    setG((s) => {
-      if (s.busy || s.phase !== "battle") return s;
-      let ns = { ...s, busy: true, pending: null };
-      ns.player = { ...ns.player, guard: true, hp: Math.min(maxHpOf(ns), ns.player.hp + Math.round(maxHpOf(ns) * 0.05)) };
-      ns = pushLog(ns, "身を低くして構えた(被ダメージ半減)。");
-      committed = ns;
-      return ns;
-    });
-    if (!committed) return;
+    let s = { ...st0, busy: true, pending: null };
+    s.player = { ...s.player, guard: true, hp: Math.min(maxHpOf(s), s.player.hp + Math.round(maxHpOf(s) * 0.05)) };
+    s = pushLog(s, "身を低くして構えた(被ダメージ半減)。");
+    setG(s);
     const { stalled } = await sleep(450);
     if (stalled || seqRef.current !== mySeq) return;
     await afterPlayerAction(mySeq);
@@ -3128,8 +3165,11 @@ export default function KiriwatariNoMori() {
         ns.inv = ns.inv.filter((x) => x.id !== item.id);
         if (old) ns.inv = [...ns.inv, old];
         const mx = maxHpOf(ns);
+        // 防具の HP ボーナス差分を「両方向」に反映する。
+        // 上げ幅だけ加算して下げ幅を無視すると、2 つの防具を交互に付け替えて
+        // 無限に回復できてしまう(付け替え1往復の収支が 0 になるようにする)。
         const hpDiff = (item.hp || 0) - (old ? (old.hp || 0) : 0);
-        ns.player = { ...ns.player, hp: Math.min(mx, hpDiff > 0 ? ns.player.hp + hpDiff : ns.player.hp) };
+        ns.player = { ...ns.player, hp: Math.max(1, Math.min(mx, ns.player.hp + hpDiff)) };
         ns = pushLog(ns, `${item.name}を身につけた。`);
       }
       committed = ns;
@@ -3313,6 +3353,10 @@ export default function KiriwatariNoMori() {
     const first = enterNode(base);
     saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
     setG(first);
+    // 継承品はこの旅へ渡した時点で meta 上は消費済みにする。残しておくと、中断して
+    // タイトルへ戻り再度始めるたびに同じ継承品が何度でも手に入ってしまう(無限増殖)。
+    const m3 = { ...m2, inherited: [] };
+    setMeta(m3); saveMeta(m3);
   }
 
   /* ---------- 宝樹の祠(デイリーイベント) ---------- */
