@@ -2354,37 +2354,25 @@ export default function KiriwatariNoMori() {
       if (document.hidden) {
         sendBGM("pause");
         const fb = bgmFallbackRef.current; if (fb && !fb.paused) fb.pause();
-        // 進行中の非同期シーケンス(演出待ちの継続)を無効化する。
-        // setTimeout はバックグラウンドで止まり、復帰時にまとめて発火して
-        // 古いスナップショットで setG しうるため、世代トークンで断ち切る。
-        bumpSeq();
         try {
           window.webkit?.messageHandlers?.progress?.postMessage({ event: "app_hidden" });
         } catch (_) {}
-        let committed = null;
-        setG((s) => {
-          if (!s || !s.floor) return s;
-          // 操作不能(busy 固着)のまま固まらないようにし、古いフロートを消す。
-          committed = { ...s, busy: false, floats: [] };
-          return committed;
-        });
-        if (committed) flushSaveRun(committed); // 現在状態を即時保存
+        // 現在の状態をバックグラウンド入り時点で保存する(OSに強制終了されても続きから再開できるように)。
+        // ここで busy を強制解除したり世代(seqRef)を進めたりはしない。
+        // 進行中のアクション(攻撃/道具/防御→敵ターン)は afterPlayerAction/enemyPhase が
+        // 常に gRef.current を再読込してから続けるため、バックグラウンドを挟んでも安全に再開できる。
+        // 以前はここで busy:false + bumpSeq() していたが、「道具を使った直後に一瞬だけ
+        // バックグラウンドへ切り替えて戻す」操作で敵の反撃を丸ごとスキップしたまま回復だけ得られる
+        // 無敵回復の抜け道になっていたため廃止した(busy 固着そのものは3秒の watchdog が担当)。
+        const cur = gRef.current;
+        if (cur && cur.floor) flushSaveRun(cur);
       } else {
         if (bgmStartedRef.current && bgmVolRef.current > 0) {
           sendBGM("play");
           const fb = bgmFallbackRef.current; if (fb && fb.paused) fb.play().catch(() => {});
         }
-        // 復帰時: 古いフロートの一斉表示を防ぎ、戦闘の敵全滅を整合させる(保険)。
-        bumpSeq();
-        setG((s) => {
-          if (!s || !s.floor) return s;
-          let ns = { ...s, floats: [] };
-          if (ns.phase === "battle" && Array.isArray(ns.enemies)
-              && ns.enemies.length > 0 && ns.enemies.every((e) => e.hp <= 0)) {
-            ns.busy = false;
-          }
-          return ns;
-        });
+        // 復帰時: 古いフロートの一斉表示だけ防ぐ(busy/世代には触れない)。
+        setG((s) => (s && s.floor ? { ...s, floats: [] } : s));
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -2773,8 +2761,13 @@ export default function KiriwatariNoMori() {
     // 発見情報を保存
     const m2 = { ...meta, discovered };
     setMeta(m2); saveMeta(m2);
-    const { stalled } = await sleep(650);
-    if (stalled || seqRef.current !== mySeq) return; // 中断からの復帰 — 古い継続は破棄(S2-2/S2-5)
+    await sleep(650);
+    // stalled(長時間中断)では打ち切らない: afterPlayerAction は常に gRef.current を
+    // 再読込してから進むので、バックグラウンドを挟んでも安全に敵ターンへ進める。
+    // ここで打ち切ると「攻撃/道具/防御の直後に一瞬バックグラウンドへ切り替えて戻す」だけで
+    // 敵の反撃を丸ごとスキップできてしまう(無敵回復の抜け道)。新しい行動で世代が進んだ
+    // 場合(seqRef.current !== mySeq)だけを古い継続として破棄する。
+    if (seqRef.current !== mySeq) return;
     await afterPlayerAction(mySeq);
   }
 
@@ -2798,7 +2791,12 @@ export default function KiriwatariNoMori() {
     // 戦闘中はアイテム使用で袋を即閉じる(敵ターンの演出を隠さない)。
     // 戦闘後(報酬画面等)は従来どおり明示的に閉じるまで開いたまま。
     let s = { ...st0, busy: inBattle, bag: inBattle ? false : st0.bag };
-    s.inv = s.inv.filter((x) => x.id !== item.id);
+    // 宝樹の雫(orb)は「継承枠/精の結晶のどちらかを選ぶまで」袋から消さない。
+    // ここで先に消してしまうと、選択画面が出た直後にアプリを終了して再開した場合、
+    // 雫だけ消えて報酬(枠も結晶も)が一切もらえない事態になる(resolveOrbChoice で確定消費する)。
+    if (c.kind !== "orb") {
+      s.inv = s.inv.filter((x) => x.id !== item.id);
+    }
     const mx = maxHpOf(s);
     let metaBonusHp = null; // 苔の心臓: 確定後に meta へ適用
     if (c.kind === "heal") {
@@ -2855,9 +2853,10 @@ export default function KiriwatariNoMori() {
     } catch (_) {}
 
     // 戦闘中でターンを消費するアイテム(busy=true)なら、敵ターン → 自分のターンへ進める。
+    // stalled(長時間中断)では打ち切らない(理由は attackWith と同じ。無敵回復の抜け道対策)。
     if (s.busy && s.phase === "battle") {
-      const { stalled } = await sleep(450);
-      if (stalled || seqRef.current !== mySeq) return;
+      await sleep(450);
+      if (seqRef.current !== mySeq) return;
       await afterPlayerAction(mySeq);
     }
   }
@@ -2870,8 +2869,8 @@ export default function KiriwatariNoMori() {
     s.player = { ...s.player, guard: true, hp: Math.min(maxHpOf(s), s.player.hp + Math.round(maxHpOf(s) * 0.05)) };
     s = pushLog(s, "身を低くして構えた(被ダメージ半減)。");
     setG(s);
-    const { stalled } = await sleep(450);
-    if (stalled || seqRef.current !== mySeq) return;
+    await sleep(450);
+    if (seqRef.current !== mySeq) return; // stalled では打ち切らない(無敵回復の抜け道対策)
     await afterPlayerAction(mySeq);
   }
 
@@ -2894,8 +2893,9 @@ export default function KiriwatariNoMori() {
         return ns;
       });
       st = committed || st;
-      const { stalled } = await sleep(420);
-      if (stalled || (seq != null && seqRef.current !== seq)) return;
+      await sleep(420);
+      // stalled では打ち切らない(無敵回復の抜け道対策。理由は attackWith と同じ)
+      if (seq != null && seqRef.current !== seq) return;
       st = gRef.current;
     }
     const alive = st.enemies.filter((e) => e.hp > 0);
@@ -3073,8 +3073,10 @@ export default function KiriwatariNoMori() {
       }
       if (e.atkDown > 0) e.atkDown -= 1;
       setG({ ...s, enemies, player });
-      const r = await sleep(380);
-      if (r.stalled || (seq != null && seqRef.current !== seq)) return; // 中断からの復帰 — 破棄(S2-2/S2-5)
+      await sleep(380);
+      // stalled では打ち切らない: このループは常に gRef.current を再読込してから続けるので、
+      // バックグラウンドを挟んでも安全に再開できる(無敵回復の抜け道対策。他の関数と同じ理由)。
+      if (seq != null && seqRef.current !== seq) return;
       s = gRef.current; enemies = s.enemies.map((x) => ({ ...x })); player = { ...s.player };
     }
 
@@ -3142,6 +3144,10 @@ export default function KiriwatariNoMori() {
   function equipItem(item) {
     let committed = null;
     setG((s) => {
+      // 多重タップでの二重装備を防ぐ: 既に袋から消えている(=別の呼び出しで装備済み)なら何もしない。
+      // これが無いと、連打で同じアイテムが「装備中」と「袋の中」の両方に同時に存在してしまう
+      // (見た目上の複製。防具なら HP ボーナスも二重に乗る)。
+      if (!s.inv.some((x) => x.id === item.id)) return s;
       let ns = { ...s };
       if (item.kind === "weapon") {
         let idx = ns.weapons.findIndex((w) => !w);
@@ -3202,6 +3208,9 @@ export default function KiriwatariNoMori() {
 
   // ドロップ1点を回収する純関数(拾えなければ full: true を添える)
   function takeDropPure(s, item) {
+    // 既に回収済み(別の呼び出しで先に拾われた)なら何もしない。多重タップでの二重取得を防ぐ。
+    // これが無いと、連打した分だけ同じアイテムが袋・装備へ複製されてしまう。
+    if (!s.drops.some((d) => d.id === item.id)) return s;
     let ns = { ...s, drops: s.drops.filter((d) => d.id !== item.id) };
     if (item.kind === "weapon") {
       const free = ns.weapons.findIndex((w) => !w);
@@ -3330,13 +3339,18 @@ export default function KiriwatariNoMori() {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     const s = gRef.current;
     const all = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv];
-    let inherited = all.filter((x) => s.pick.includes(x.id));
+    const picked = all.filter((x) => s.pick.includes(x.id));
+    // 宝樹の雫はアイテムとしてそのまま持ち越さず、選んだ時点で精の結晶へ自動変換する。
+    // 生の雫を毎回継承できると、次の生でまた温存して継承…を繰り返せてしまうため。
+    const isDew = (x) => x.kind === "item" && x.itemId === "dew";
+    const dewCount = picked.filter(isDew).length;
+    let inherited = picked.filter((x) => !isDew(x));
     // 剣(武器)は必ず1本引き継ぐ: 選んでいなければ最も強い武器を継承枠とは別に持たせる
     if (!inherited.some((x) => x.kind === "weapon")) {
       const weapons = all.filter((x) => x.kind === "weapon");
       if (weapons.length) inherited = [...inherited, weapons.reduce((a, b) => (b.atk > a.atk ? b : a))];
     }
-    const m2 = { ...meta, inherited, reviveUsedThisRun: false };
+    const m2 = { ...meta, inherited, reviveUsedThisRun: false, dewBank: (meta.dewBank || 0) + dewCount };
     setMeta(m2); await saveMeta(m2);
     clearRun(); // 死亡セーブを消去して新しい旅を始める
     // 新しい旅へ(到達済みの章の頭から)
@@ -3345,7 +3359,12 @@ export default function KiriwatariNoMori() {
     const base = {
       screen: "run", floor: startFloor, node: 0, nodes: floorNodes(startFloor), phase: "battle",
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
-      ...eq, cds: {}, enemies: [], drops: [], logs: [{ text: "……灯りに導かれ、魂は再び旅の途中へ還る。", strong: true, k: uid() }], floats: [],
+      ...eq, cds: {}, enemies: [], drops: [],
+      logs: [
+        { text: "……灯りに導かれ、魂は再び旅の途中へ還る。", strong: true, k: uid() },
+        ...(dewCount > 0 ? [{ text: `宝樹の雫 ${dewCount}個が精の結晶に変わった。(${m2.dewBank}個)`, strong: true, k: uid() }] : []),
+      ],
+      floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
       confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: false, stageIntro: stageOf(startFloor),
     };
@@ -3392,10 +3411,21 @@ export default function KiriwatariNoMori() {
 
   // 宝樹の雫を1つ変換する(継承枠 or 精の結晶)。run 用の saveRun は呼ばない。
   function eventConvert(kind) {
-    const ev = gRef.current.event || {};
-    const total = 1 + (ev.reward2x ? 1 : 0);
-    if ((ev.converted || []).length >= total) return;   // 連打ガード: これ以上は変換できない
-    const newConverted = [...(ev.converted || []), kind];
+    // 「継承枠+1」「精の結晶+1」の2つのボタンを連打/同時タップされても二重に受け取れないよう、
+    // 「受け取り済みにする」処理そのものを functional setG の中で行う。
+    // setG の関数型更新はタップが重なっても正しく直列合成されるため、2回目の呼び出しは
+    // (レンダーを待たずとも)1回目が加えた converted を見て確実に弾かれる。
+    let newConverted = null;
+    let total = 1;
+    setG((s) => {
+      const ev = s.event || {};
+      total = 1 + (ev.reward2x ? 1 : 0);
+      if ((ev.converted || []).length >= total) return s; // 連打ガード: これ以上は変換できない
+      newConverted = [...(ev.converted || []), kind];
+      return { ...s, event: { ...ev, converted: newConverted } };
+    });
+    if (!newConverted) return; // このタップでは何も受け取れなかった(既に取得済み)
+
     const m = metaRef.current;
     const m2 = kind === "slot"
       ? { ...m, slots: (m.slots || 0) + 1 }
@@ -3405,7 +3435,35 @@ export default function KiriwatariNoMori() {
       ? { ...m2, eventReward: null }
       : { ...m2, eventReward: { ...(m.eventReward || {}), converted: newConverted } };
     setMeta(m3); saveMeta(m3);
-    setG((s) => ({ ...s, event: { ...s.event, converted: newConverted } }));
+  }
+
+  // 通常ドロップの宝樹の雫を1つ変換する(継承枠 or 精の結晶)。
+  // 「継承枠+1」「精の結晶+1」の2ボタンを連打/同時タップされても二重に受け取れないよう、
+  // 「受け取り済みにする(orbChoice を閉じる)」処理を functional setG の中で行う(eventConvert と同じ考え方)。
+  function resolveOrbChoice(kind) {
+    // committed に確定後の状態を直接キャプチャする(setG 直後の gRef.current は
+    // React がまだ再レンダーしておらず古いままなので、そこから読むと「雫がまだ袋にある」
+    // 状態のまま保存されてしまい、タスキルで雫が復活して報酬を何度も受け取れてしまう)。
+    let committed = null;
+    setG((s) => {
+      if (!s.orbChoice) return s; // 既に他方のボタン(または多重タップ)で処理済み
+      // ここで初めて雫を袋から消費する(useItem では選択が確定するまで消さずに残しておいた)。
+      const dewIdx = s.inv.findIndex((x) => x.kind === "item" && x.itemId === "dew");
+      const inv = dewIdx >= 0 ? s.inv.filter((_, i) => i !== dewIdx) : s.inv;
+      const text = kind === "slot" ? "宝樹の雫が輝く……継承枠が永続+1された。" : "宝樹の雫が砕け、精の結晶に変わった。";
+      committed = { ...s, inv, orbChoice: false, logs: [...(s.logs || []), { id: uid(), text, hi: true }] };
+      return committed;
+    });
+    if (!committed) return;
+
+    const m = metaRef.current;
+    const m2 = kind === "slot"
+      ? { ...m, slots: (m.slots || 0) + 1 }
+      : { ...m, dewBank: (m.dewBank || 0) + 1 };
+    setMeta(m2); saveMeta(m2);
+    // 雫消費後の状態を保存(タスキル後に雫が復活して二重適用されるのを防ぐ)。
+    // committed(確定済みの新状態)から保存する。gRef.current は使わない。
+    flushSaveRun(committed);
   }
 
   /* ============================================================
@@ -4263,13 +4321,20 @@ export default function KiriwatariNoMori() {
               しかし魂は森を巡り、また灯りの下へ還る。<br />
               再開地点: <b style={{ color: "var(--hotaru)" }}>第{Math.min(meta.checkpoint || 1, 10)}章のはじめ</b>(章の主を倒すたび先の章から再開できます)<br />
               <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 10 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
-              精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。
+              精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。<br />
+              <span style={{ fontSize: 10.5 }}>宝樹の雫は持ち越せません。選ぶとその場で精の結晶に変わります。</span>
             </div>
             <div className="kw-grid">
-              {allOwned(g).map((it) => (
-                <ItemCell key={it.id} item={it} picked={g.pick.includes(it.id)} onClick={() => togglePick(it)}
-                  actionLabel={g.pick.includes(it.id) ? "✓ 持っていく" : "タップで選ぶ"} />
-              ))}
+              {allOwned(g).map((it) => {
+                const isDewItem = it.kind === "item" && it.itemId === "dew";
+                const picked = g.pick.includes(it.id);
+                return (
+                  <ItemCell key={it.id} item={it} picked={picked} onClick={() => togglePick(it)}
+                    actionLabel={isDewItem
+                      ? (picked ? "✓ 結晶にする" : "タップで結晶化")
+                      : (picked ? "✓ 持っていく" : "タップで選ぶ")} />
+                );
+              })}
             </div>
             {/* 武器を選んでいない場合の自動継承注記 */}
             {allOwned(g).some((x) => x.kind === "weapon") &&
@@ -4549,28 +4614,12 @@ export default function KiriwatariNoMori() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
-                onClick={() => {
-                  const m2 = { ...meta, slots: (meta.slots || 0) + 1 };
-                  setMeta(m2); saveMeta(m2);
-                  // 雫消費後の状態を保存（タスキル後に雫が復活して二重適用されるのを防ぐ）
-                  const cur = gRef.current;
-                  saveRun(cur.floor, cur.node, cur.player, cur.weapons, cur.armor, cur.inv, cur.cds, cur.lastRareSeen, cur.orbBagBonus);
-                  setG((s) => ({ ...s, orbChoice: false,
-                    logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が輝く……継承枠が永続+1された。(${m2.slots}枠)`, hi: true }] }));
-                }}>
+                onClick={() => resolveOrbChoice("slot")}>
                 <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>継承枠 +1</div>
                 <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
               </button>
               <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
-                onClick={() => {
-                  const m2 = { ...meta, dewBank: (meta.dewBank || 0) + 1 };
-                  setMeta(m2); saveMeta(m2);
-                  // 雫消費後の状態を保存（タスキル後に雫が復活して二重適用されるのを防ぐ）
-                  const cur = gRef.current;
-                  saveRun(cur.floor, cur.node, cur.player, cur.weapons, cur.armor, cur.inv, cur.cds, cur.lastRareSeen, cur.orbBagBonus);
-                  setG((s) => ({ ...s, orbChoice: false,
-                    logs: [...(s.logs || []), { id: uid(), text: `宝樹の雫が砕け、精の結晶に変わった。(${m2.dewBank}個)`, hi: true }] }));
-                }}>
+                onClick={() => resolveOrbChoice("crystal")}>
                 <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>精の結晶 +1</div>
                 <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>スキルツリーの習得に使える結晶に変換する。現在 {meta.dewBank || 0} 個。</div>
               </button>
