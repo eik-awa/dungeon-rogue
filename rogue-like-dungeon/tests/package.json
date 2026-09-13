@@ -1,0 +1,18 @@
+{
+  "name": "kiriwatari-no-mori-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "kiriwatari-no-mori.jsx の状態不整合(アイテム全ロスト/複製)回帰テスト。実際の本番コードを jsdom + React 上でレンダリングし、実物のボタンをクリックして検証する。/exploit-audit の仕上げ確認として使う。",
+  "scripts": {
+    "pretest": "node transform.js",
+    "test": "node run-all.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/plugin-transform-modules-commonjs": "^7.24.0",
+    "@babel/preset-react": "^7.24.0",
+    "jsdom": "^24.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

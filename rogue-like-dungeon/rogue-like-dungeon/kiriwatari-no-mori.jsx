@@ -821,10 +821,17 @@ async function loadRun() {
   } catch {}
   return null;
 }
-async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null) {
+// rewardPhase/drops: ボス撃破直後など「未回収の確定ドロップ」がある場合に渡す。
+// これが無いと、ドロップ確定〜プレイヤーが実際に拾うまでの間にタスキルされると、
+// 一度きりの確定報酬(伝説武器・苔の心臓など)が二度と手に入らなくなる。
+async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null, rewardPhase = null, drops = null) {
   try {
     const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
     if (enemies && enemies.length > 0) data.enemies = enemies;
+    // 全部拾い終えていても(=drops が空でも)rewardPhase は保持する。ここを外すと、
+    // 「拾い終えたが『進む』はまだ押していない」タイミングでのタスキル再開時にボスが
+    // 再生成されてしまう(倒したはずのボスと再戦させられる)。
+    if (rewardPhase) { data.rewardPhase = rewardPhase; data.drops = drops || []; }
     await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
   } catch {}
 }
@@ -2111,14 +2118,16 @@ export default function KiriwatariNoMori() {
       saveRunTimerRef.current = null;
       saveRun(snap.floor, snap.node, snap.player, snap.weapons, snap.armor, snap.inv,
         snap.cds, snap.lastRareSeen, snap.orbBagBonus,
-        snap.phase === "battle" ? snap.enemies : null);
+        snap.phase === "battle" ? snap.enemies : null,
+        snap.phase === "clear" ? "clear" : null, snap.phase === "clear" ? snap.drops : null);
     }, 300);
   };
   const flushSaveRun = (s) => {
     if (saveRunTimerRef.current) { clearTimeout(saveRunTimerRef.current); saveRunTimerRef.current = null; }
     if (!s || !s.floor || s.phase === "dead") return;
     saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv,
-      s.cds, s.lastRareSeen, s.orbBagBonus, s.phase === "battle" ? s.enemies : null);
+      s.cds, s.lastRareSeen, s.orbBagBonus, s.phase === "battle" ? s.enemies : null,
+      s.phase === "clear" ? "clear" : null, s.phase === "clear" ? s.drops : null);
   };
 
   // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
@@ -2500,9 +2509,11 @@ export default function KiriwatariNoMori() {
 
   /* ---------- ラン開始 ---------- */
   // chapterIdx: 0-based (0=第1章, 1=第2章, ...)
-  function startFromChapter(chapterIdx) {
+  // metaOverride: 直前に確定させたばかりの meta を使いたい場合に渡す(setMeta は非同期のため、
+  // 同じクリック内で setMeta 直後に呼ぶとクロージャの meta はまだ古いまま — その回避策)。
+  function startFromChapter(chapterIdx, metaOverride) {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
-    let m = meta;
+    let m = metaOverride || meta;
     if (chapterIdx === 0) {
       const hints = {};
       for (const id of STAGES[0].enemies) {
@@ -2541,7 +2552,36 @@ export default function KiriwatariNoMori() {
     setG(first);
   }
   // チェックポイント(前回到達章)から続ける
-  function startRun() { startFromChapter((meta.checkpoint || 1) - 1); }
+  function startRun(metaOverride) { startFromChapter(((metaOverride || meta).checkpoint || 1) - 1, metaOverride); }
+
+  // 冒険中(生存中)の中断データから、既踏破済みの別の章へワープする。
+  // startFromChapter と違い、現在の所持品(武器・防具・袋)とHPをそのまま持ち越す
+  // ("章を選ぶ"で移動しただけで全ロストするのはおかしい、という不具合の修正)。
+  function warpToChapter(chapterIdx, fromRun) {
+    // 同じ章へのワープは無意味な連打(足止めなしでの敵リロール)を招くだけなので何もしない。
+    if (stageOf(fromRun.floor) === chapterIdx) return;
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
+    const startFloor = chapterIdx * 10 + 1;
+    const base = {
+      screen: "run", floor: startFloor, node: 0, nodes: floorNodes(startFloor), phase: "battle",
+      player: fromRun.player, weapons: fromRun.weapons, armor: fromRun.armor, inv: fromRun.inv,
+      cds: {}, enemies: [], drops: [], logs: [], floats: [],
+      pending: null, busy: false, bag: false, hitId: null, eventDone: false,
+      // ワープ直後は「直前にレア(金枝の精)が出た」扱いにする(=startFloor をそのまま lastRareSeen にする)。
+      // 何も変えないと、深い章を歩いて lastRareSeen が更新されないまま浅い章へ戻ったり、
+      // あるいは lastRareSeen=0 の新品同然の状態で一気に深い章へ飛んだりすると、
+      // floor - lastRareSeen(=フロア間隔)が異常に大きくなり、ワープ直後の1戦目からレアが
+      // 出やすくなってしまう(章の行き来を繰り返すレア連発の抜け道)。ワープ直後をクールダウン
+      // 起点にすることで、通常に歩いて到達した場合と同じ間隔を必ず踏ませる。
+      confirm: null, full: false, lastRareSeen: startFloor, skillTree: false, reviveUsed: false,
+      orbBagBonus: fromRun.orbBagBonus || 0, orbSlotBonus: fromRun.orbSlotBonus || 0, orbChoice: false,
+      coach: false, stageIntro: chapterIdx,
+    };
+    clearRun(); setSavedRun(null);
+    const first = enterNode(base);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    setG(first);
+  }
 
   // タスクキル後の再開: 保存済みフロア状態を復元する
   function resumeRun(run) {
@@ -2560,7 +2600,24 @@ export default function KiriwatariNoMori() {
       };
       const effSlots = meta.slots + (run.orbSlotBonus || 0);
       setSavedRun(null);
-      setG({ ...stDead, pick: recommendPick(stDead, effSlots), effSlots });
+      setG({ ...stDead, pick: recommendPick(stDead, effSlots), effSlots, rebirthStage: Math.min(meta.checkpoint || 1, 10) - 1 });
+      return;
+    }
+    if (run.rewardPhase === "clear") {
+      // タスキル後のボス撃破報酬復元: ボスを再度生成させず、章クリア画面をそのまま復元する
+      // (これが無いと、確定報酬を拾う前にタスキルすると二度と手に入らなくなる。全部拾い終えた
+      // 後でも、ここを経由しないと「進む」を押す前に倒したはずのボスと再戦させられてしまう)。
+      const restored = {
+        screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "clear",
+        player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
+        cds: run.cds || {}, drops: run.drops || [], logs: [], floats: [],
+        pending: null, busy: false, bag: false, hitId: null, eventDone: false,
+        confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false, reviveUsed: false,
+        orbBagBonus: run.orbBagBonus || 0, orbSlotBonus: run.orbSlotBonus || 0, orbChoice: false,
+        coach: false, stageIntro: null, enemies: [],
+      };
+      setSavedRun(null);
+      setG(restored);
       return;
     }
     const savedEnemies = (run.enemies || []).filter((e) => e.hp > 0);
@@ -2948,9 +3005,17 @@ export default function KiriwatariNoMori() {
         ? [...(meta.mossHeartStages || []), sIdx]
         : (meta.mossHeartStages || []);
       if (stage >= 10) {
-        // 百層踏破 — エンディング
-        const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops];
-        const m2 = { ...meta, mossHeartStages: mhStages, clears: meta.clears + 1, slots: meta.slots + 1, bestFloor: 100, inherited: keep };
+        // 百層踏破 — エンディング。所持品は全て次の生へ持ち越せるが、次の生が実際に
+        // 保持できる上限(武器スロット+防具3+袋の最大数)は超えられないため、価値の高い順に切り詰める。
+        const m2Slots = meta.slots + 1;
+        const nextMeta = { ...meta, slots: m2Slots };
+        const capacity = weaponSlotsOf(nextMeta) + 3 + invCapOf(nextMeta);
+        const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops]
+          .sort((a, b) => itemScore(b) - itemScore(a))
+          .slice(0, capacity);
+        // checkpoint もここでリセットしておく(エンディング画面でタスキルされても、
+        // 継承品と一緒に「次は1章から」が確定した状態になり、章が巻き戻らない)。
+        const m2 = { ...meta, mossHeartStages: mhStages, clears: meta.clears + 1, slots: m2Slots, bestFloor: 100, inherited: keep, checkpoint: 1 };
         setMeta(m2); await saveMeta(m2);
         s.phase = "ending";
         // 進行度をFirebaseに記録(全章踏破)
@@ -2983,11 +3048,9 @@ export default function KiriwatariNoMori() {
     if (s.phase === "ending") {
       clearRun(); // 100層踏破完了、ランデータをクリア
     } else if (s.phase === "clear") {
-      // ボスクリア: 次の章の頭から再開できるよう保存（ドロップは未回収でも進める）
-      const nextFloor = s.floor + 1;
-      if (nextFloor <= 100) {
-        saveRun(nextFloor, 0, s.player, s.weapons, s.armor, s.inv, {}, s.lastRareSeen, s.orbBagBonus);
-      }
+      // ボスクリア: 未回収の確定ドロップ(伝説武器・苔の心臓等)を保持したまま保存する。
+      // ここで次の階へ進めてしまうと、拾う前にタスキルされた場合に一度きりの報酬が消える。
+      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, {}, s.lastRareSeen, s.orbBagBonus, null, "clear", s.drops);
     } else {
       // 通常戦闘: 敵なし状態で保存（再開時は同ノードで新しい戦闘を生成）
       saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen, s.orbBagBonus);
@@ -3005,7 +3068,7 @@ export default function KiriwatariNoMori() {
     saveDeadRun(stFainted.floor, stFainted.weapons, stFainted.armor, stFainted.inv, stFainted.orbBagBonus || 0, stFainted.orbSlotBonus || 0);
     setSavedRun(null);
     const effSlots = meta.slots + (stFainted.orbSlotBonus || 0);
-    setG({ ...stFainted, phase: "dead", pick: recommendPick(stFainted, effSlots), effSlots });
+    setG({ ...stFainted, phase: "dead", pick: recommendPick(stFainted, effSlots), effSlots, rebirthStage: Math.min(m2.checkpoint || 1, 10) - 1 });
   }
 
   /* ---------- 敵の行動 ---------- */
@@ -3167,6 +3230,10 @@ export default function KiriwatariNoMori() {
         ns = pushLog(ns, old ? `${old.name}を仕舞い、${item.name}を構えた。` : `${item.name}を構えた。`);
       } else if (item.kind === "armor") {
         const old = ns.armor[item.slot];
+        if (old && old.locked) {
+          // ロック済みの防具は入れ替えできない(武器と同じ扱い)
+          return pushLog(ns, `${old.name}はロックされています。`);
+        }
         ns.armor = { ...ns.armor, [item.slot]: item };
         ns.inv = ns.inv.filter((x) => x.id !== item.id);
         if (old) ns.inv = [...ns.inv, old];
@@ -3322,6 +3389,8 @@ export default function KiriwatariNoMori() {
   function allOwned(s) {
     return [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv];
   }
+  // ロック中は継承候補として最優先(itemScore)だが、継承枠を超えた分は他アイテムと同様に対象外。
+  // ロックしたものが無条件で必ず継承されると継承枠そのものが意味を持たなくなるため。
   function recommendPick(s, slots) {
     return allOwned(s).map((it) => [it, itemScore(it)])
       .sort((a, b) => b[1] - a[1])
@@ -3334,6 +3403,11 @@ export default function KiriwatariNoMori() {
         : s.pick.length < (s.effSlots ?? meta.slots) ? [...s.pick, item.id] : s.pick;
       return { ...s, pick };
     });
+  }
+  // 死亡時点で選べる転生先ステージ(既踏破済みの章のみ)。既定は現在のチェックポイント。
+  function rebirthStageOptions(m) {
+    const max = Math.min(m.checkpoint || 1, 10);
+    return Array.from({ length: max }, (_, i) => i); // 0-based: 0=第1章 … max-1=最新到達章
   }
   async function rebirth() {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
@@ -3353,9 +3427,11 @@ export default function KiriwatariNoMori() {
     const m2 = { ...meta, inherited, reviveUsedThisRun: false, dewBank: (meta.dewBank || 0) + dewCount };
     setMeta(m2); await saveMeta(m2);
     clearRun(); // 死亡セーブを消去して新しい旅を始める
-    // 新しい旅へ(到達済みの章の頭から)
+    // 新しい旅へ(選択したステージの頭から。未選択なら現在のチェックポイント=従来通り)
     const eq = starterState(m2);
-    const startFloor = (Math.min(m2.checkpoint || 1, 10) - 1) * 10 + 1;
+    const stageOptions = rebirthStageOptions(m2);
+    const chosenStage = stageOptions.includes(s.rebirthStage) ? s.rebirthStage : stageOptions[stageOptions.length - 1];
+    const startFloor = chosenStage * 10 + 1;
     const base = {
       screen: "run", floor: startFloor, node: 0, nodes: floorNodes(startFloor), phase: "battle",
       player: { hp: 0, poison: 0, atkUp: 0, guard: false },
@@ -3376,6 +3452,28 @@ export default function KiriwatariNoMori() {
     // タイトルへ戻り再度始めるたびに同じ継承品が何度でも手に入ってしまう(無限増殖)。
     const m3 = { ...m2, inherited: [] };
     setMeta(m3); saveMeta(m3);
+  }
+
+  // 死亡直後の継承選択画面を経由せずにタイトルの「新しく始める/放棄する」で中断データを
+  // 破棄しようとした場合の安全策。何も選ばずに次の生へ進むと継承品が丸ごと失われてしまうため、
+  // rebirth() と同じ推薦ロジック(recommendPick)で自動選択した内容を meta.inherited へ先に確定させておく。
+  // (このあと呼ばれる startFromChapter が meta.inherited を消費するので、二重に手に入ることはない)
+  function autoCarryOverFromDeadRun(deadRun) {
+    const s = { weapons: deadRun.weapons, armor: deadRun.armor, inv: deadRun.inv };
+    const effSlots = meta.slots + (deadRun.orbSlotBonus || 0);
+    const pickIds = recommendPick(s, effSlots);
+    const all = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv];
+    const picked = all.filter((x) => pickIds.includes(x.id));
+    const isDew = (x) => x.kind === "item" && x.itemId === "dew";
+    const dewCount = picked.filter(isDew).length;
+    let inherited = picked.filter((x) => !isDew(x));
+    if (!inherited.some((x) => x.kind === "weapon")) {
+      const weapons = all.filter((x) => x.kind === "weapon");
+      if (weapons.length) inherited = [...inherited, weapons.reduce((a, b) => (b.atk > a.atk ? b : a))];
+    }
+    const m2 = { ...meta, inherited, dewBank: (meta.dewBank || 0) + dewCount };
+    setMeta(m2); saveMeta(m2);
+    return m2; // 呼び出し側が同じクリック内で続けて使えるよう、確定値をそのまま返す
   }
 
   /* ---------- 宝樹の祠(デイリーイベント) ---------- */
@@ -3552,7 +3650,7 @@ export default function KiriwatariNoMori() {
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "center" }}>
             <button className="kw-btn primary" style={{ padding: "13px 32px", fontSize: 14 }}
-              onClick={() => savedRun ? setConfirmNewRun(() => startRun) : startRun()}>
+              onClick={() => savedRun ? setConfirmNewRun(() => (metaOverride) => startRun(metaOverride)) : startRun()}>
               {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章から続ける` : "森 へ 入 る"}
             </button>
             {meta.checkpoint > 1 && (
@@ -3607,23 +3705,38 @@ export default function KiriwatariNoMori() {
             onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>
             <div className="kw-panel kw-sheet" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
               <h2 style={{ letterSpacing: ".2em" }}>章 を 選 ぶ</h2>
-              <div className="kw-sub">ボスを倒した章の頭から再挑戦できます。継承品はそのまま持ち込まれます。</div>
+              <div className="kw-sub">
+                ボスを倒した章の頭から再挑戦できます。継承品はそのまま持ち込まれます。
+                {savedRun && savedRun.phase !== "dead" && <>
+                  中断中の冒険がある場合は、所持品とHPを保ったまま章の頭へ移動します。<br />
+                  <span style={{ fontSize: 10.5 }}>移動すると「今の1回の冒険」の現在地が変わります。その後「中断してタイトルへ」で戻ると、次の「再開」は移動先の章から始まります(踏破記録・継承枠などの記録自体は減りません)。</span>
+                </>}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 12 }}>
                 {STAGES.map((st, i) => {
                   const ch = i + 1;
                   if (ch > meta.checkpoint) return null;
                   const cleared = ch < meta.checkpoint;
                   const current = ch === meta.checkpoint;
+                  // 「今まさにいる章」(生存中の中断データがある場合のみ意味を持つ)。
+                  // ここへワープしても何も変わらない(足止めなしの敵リロールだけになる)ため選べなくする。
+                  const isHereNow = savedRun && savedRun.phase !== "dead" && stageOf(savedRun.floor) === i;
                   return (
-                    <button key={i}
+                    <button key={i} disabled={isHereNow}
                       style={{
                         position: "relative", overflow: "hidden", height: 90,
                         borderRadius: 8, border: current ? "1.5px solid var(--hotaru)" : "1px solid rgba(157,180,166,.18)",
-                        textAlign: "left", cursor: "pointer", padding: 0,
+                        textAlign: "left", cursor: isHereNow ? "default" : "pointer", padding: 0,
+                        opacity: isHereNow ? 0.6 : 1,
                       }}
                       onClick={() => {
-                        if (savedRun) {
-                          setConfirmNewRun(() => () => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i); });
+                        if (isHereNow) return;
+                        if (savedRun && savedRun.phase !== "dead") {
+                          // 冒険中(生存中)のワープ: 何も失われないので確認なしで移動する
+                          warpToChapter(i, savedRun);
+                        } else if (savedRun) {
+                          // 死亡データが残っている場合は、確認のうえ新しい生を開始する
+                          setConfirmNewRun(() => (metaOverride) => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i, metaOverride); });
                         } else {
                           setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i);
                         }
@@ -3634,8 +3747,8 @@ export default function KiriwatariNoMori() {
                       <div style={{ position: "absolute", inset: 0, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
                         <div style={{ fontSize: 9, color: "var(--mist)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
                         <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)", lineHeight: 1.3 }}>{st.name}</div>
-                        <div style={{ fontSize: 9.5, marginTop: 3, color: cleared ? "#8fd39a" : "var(--hotaru)" }}>
-                          {cleared ? "✓ クリア済み" : "▶ 現在の到達地点"}
+                        <div style={{ fontSize: 9.5, marginTop: 3, color: isHereNow ? "var(--mist)" : cleared ? "#8fd39a" : "var(--hotaru)" }}>
+                          {isHereNow ? "◆ 今いる章" : cleared ? "✓ クリア済み" : "▶ 現在の到達地点"}
                         </div>
                       </div>
                     </button>
@@ -3659,14 +3772,19 @@ export default function KiriwatariNoMori() {
               <h2 style={{ color: "var(--danger)" }}>冒険を放棄しますか?</h2>
               <div className="kw-sub">
                 中断セーブを削除します。<br />
-                所持していたアイテムや進行状況はすべて失われます。<br />
-                転生回数・継承品・スキルなどのメタ記録は保たれます。
+                {savedRun?.phase === "dead"
+                  ? <>所持していた品の中から価値の高いものが自動で継承されます(章クリアなどのメタ記録も保たれます)。</>
+                  : <>所持していたアイテムや進行状況はすべて失われます。<br />転生回数・継承品・スキルなどのメタ記録は保たれます。</>}
               </div>
               <div className="kw-actions">
                 <button className="kw-btn ghost" style={{ marginRight: "auto" }}
                   onClick={() => setConfirmAbandon(false)}>← キャンセル</button>
                 <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
-                  onClick={() => { clearRun(); setSavedRun(null); setConfirmAbandon(false); }}>
+                  onClick={() => {
+                    // 死亡直後の継承選択を経ずに放棄する場合、アイテムが丸ごと消えないよう自動継承しておく。
+                    if (savedRun?.phase === "dead") autoCarryOverFromDeadRun(savedRun);
+                    clearRun(); setSavedRun(null); setConfirmAbandon(false);
+                  }}>
                   放棄する
                 </button>
               </div>
@@ -3678,14 +3796,22 @@ export default function KiriwatariNoMori() {
             <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
               <h2>中断データがあります</h2>
               <div className="kw-sub">
-                新しく始めると、中断中の冒険データは失われます。<br />
+                {savedRun?.phase === "dead"
+                  ? <>新しく始めると、所持していた品の中から価値の高いものが自動で継承されます。</>
+                  : <>新しく始めると、中断中の冒険データは失われます。</>}<br />
                 転生回数・継承品・スキルなどのメタ記録は保たれます。
               </div>
               <div className="kw-actions">
                 <button className="kw-btn ghost" style={{ marginRight: "auto" }}
                   onClick={() => setConfirmNewRun(null)}>← キャンセル</button>
                 <button className="kw-btn primary"
-                  onClick={() => { clearRun(); setSavedRun(null); confirmNewRun(); setConfirmNewRun(null); }}>
+                  onClick={() => {
+                    // 死亡直後の継承選択を経ずに新しく始める場合、アイテムが丸ごと消えないよう自動継承しておく。
+                    // setMeta は非同期なので、確定させた meta はここから直接 confirmNewRun(m2) へ渡す
+                    // (confirmNewRun 経由で呼ばれる startFromChapter 側のクロージャの meta はまだ古いまま)。
+                    const m2 = savedRun?.phase === "dead" ? autoCarryOverFromDeadRun(savedRun) : null;
+                    clearRun(); setSavedRun(null); confirmNewRun(m2); setConfirmNewRun(null);
+                  }}>
                   新しく始める
                 </button>
               </div>
@@ -4313,18 +4439,35 @@ export default function KiriwatariNoMori() {
       )}
 
       {/* ---------- 死 → 魂の継承 ---------- */}
-      {g.phase === "dead" && (
+      {g.phase === "dead" && (() => {
+        const stageOptions = rebirthStageOptions(meta);
+        const chosenStage = stageOptions.includes(g.rebirthStage) ? g.rebirthStage : stageOptions[stageOptions.length - 1];
+        return (
         <div className="kw-overlay">
           <div className="kw-panel kw-sheet">
             <h2 style={{ color: "var(--danger)" }}>旅人は倒れた</h2>
             <div className="kw-sub">
               しかし魂は森を巡り、また灯りの下へ還る。<br />
-              再開地点: <b style={{ color: "var(--hotaru)" }}>第{Math.min(meta.checkpoint || 1, 10)}章のはじめ</b>(章の主を倒すたび先の章から再開できます)<br />
-              <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 10 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
+              <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。ロック中のアイテムは優先的に選ばれますが、枠を超えた分は他と同様に持ち越せません。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 10 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
               精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。<br />
               <span style={{ fontSize: 10.5 }}>宝樹の雫は持ち越せません。選ぶとその場で精の結晶に変わります。</span>
             </div>
-            <div className="kw-grid">
+            {stageOptions.length > 1 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 10.5, color: "var(--mist)", letterSpacing: ".15em", marginBottom: 6 }}>── 再開する章を選ぶ ──</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                  {stageOptions.map((i) => (
+                    <button key={i}
+                      className={`kw-btn ${chosenStage === i ? "primary" : "ghost"}`}
+                      style={{ padding: "6px 12px", fontSize: 11.5 }}
+                      onClick={() => setG((s) => ({ ...s, rebirthStage: i }))}>
+                      第{i + 1}章 {STAGES[i].name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="kw-grid" style={{ marginTop: 12 }}>
               {allOwned(g).map((it) => {
                 const isDewItem = it.kind === "item" && it.itemId === "dew";
                 const picked = g.pick.includes(it.id);
@@ -4332,7 +4475,7 @@ export default function KiriwatariNoMori() {
                   <ItemCell key={it.id} item={it} picked={picked} onClick={() => togglePick(it)}
                     actionLabel={isDewItem
                       ? (picked ? "✓ 結晶にする" : "タップで結晶化")
-                      : (picked ? "✓ 持っていく" : "タップで選ぶ")} />
+                      : (picked ? (it.locked ? "🔒✓ 持っていく" : "✓ 持っていく") : (it.locked ? "🔒 タップで選ぶ" : "タップで選ぶ"))} />
                 );
               })}
             </div>
@@ -4359,7 +4502,8 @@ export default function KiriwatariNoMori() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ---------- 章クリア(旅は続く) ---------- */}
       {g.phase === "clear" && (
