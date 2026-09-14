@@ -579,7 +579,10 @@ const RUN_SAVE_KEY = "kiriwatari-run-save";
 let memorySave = null;
 const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null,
   // アイテム保護設定(捨てる操作をブロックする)。レアは既定でロック、回復は任意。
-  protectHeals: false, protectRareItems: true };
+  protectHeals: false, protectRareItems: true,
+  // 不具合(宝樹の雫を使っても報酬が付与されない)のお詫び配布(精の結晶 x5)。1アカウント1回のみ。
+  compensationDewClaimed: false };
+const COMPENSATION_DEW_AMOUNT = 5;
 
 /* ------------------------------------------------------------
    リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
@@ -663,7 +666,7 @@ const SKILL_TREE = [
   { id: "bladeMastery", name: "斬の極意", category: "戦闘拡張", cost: 9, requires: "bladeBasics",
     desc: "斬属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "斬", value: 0.15 } },
   { id: "bladeEdge", name: "斬の余韻", category: "戦闘拡張", cost: 6, requires: "bladeBasics",
-    desc: "斬属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+    desc: "斬属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "斬", value: 0.04 } },
   { id: "critUp", name: "会心の極意", category: "戦闘拡張", cost: 11, requires: "bladeMastery",
     desc: "短剣の会心率 25%→40%。斬の極みに至った証。", effect: { type: "critChancePct", value: 0.15 } },
 
@@ -672,7 +675,7 @@ const SKILL_TREE = [
   { id: "magicMastery", name: "魔の極意", category: "戦闘拡張", cost: 9, requires: "magicBasics",
     desc: "魔属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "魔", value: 0.15 } },
   { id: "magicEdge", name: "魔の余韻", category: "戦闘拡張", cost: 6, requires: "magicBasics",
-    desc: "魔属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+    desc: "魔属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "魔", value: 0.04 } },
   { id: "magicWard", name: "魔の守り", category: "戦闘拡張", cost: 11, requires: "magicMastery",
     desc: "体を魔力の膜が覆い、毒を受け付けなくなる。", effect: { type: "poisonImmune", value: 1 } },
 
@@ -681,7 +684,7 @@ const SKILL_TREE = [
   { id: "pierceMastery", name: "突の極意", category: "戦闘拡張", cost: 9, requires: "pierceBasics",
     desc: "突属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "突", value: 0.15 } },
   { id: "pierceEdge", name: "突の余韻", category: "戦闘拡張", cost: 6, requires: "pierceBasics",
-    desc: "突属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+    desc: "突属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "突", value: 0.04 } },
   { id: "pierceDepth", name: "貫きの真髄", category: "戦闘拡張", cost: 11, requires: "pierceMastery",
     desc: "突属性武器のダメージ、さらに+7%(合計+27%)。矢と穂先がさらに冴える。", effect: { type: "elementDmgPct", element: "突", value: 0.07 } },
 
@@ -690,7 +693,7 @@ const SKILL_TREE = [
   { id: "bluntMastery", name: "打の極意", category: "戦闘拡張", cost: 9, requires: "bluntBasics",
     desc: "打属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "打", value: 0.15 } },
   { id: "bluntEdge", name: "打の余韻", category: "戦闘拡張", cost: 6, requires: "bluntBasics",
-    desc: "打属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+    desc: "打属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "打", value: 0.04 } },
   { id: "bluntWeight", name: "破砕の真髄", category: "戦闘拡張", cost: 11, requires: "bluntMastery",
     desc: "打属性武器のダメージ、さらに+7%(合計+27%)。一撃がさらに深く食い込む。", effect: { type: "elementDmgPct", element: "打", value: 0.07 } },
 
@@ -699,7 +702,7 @@ const SKILL_TREE = [
   { id: "soundMastery", name: "音の極意", category: "戦闘拡張", cost: 9, requires: "soundBasics",
     desc: "音属性武器のダメージ、さらに+15%(心得と合計+20%)。", effect: { type: "elementDmgPct", element: "音", value: 0.15 } },
   { id: "soundEdge", name: "音の余韻", category: "戦闘拡張", cost: 6, requires: "soundBasics",
-    desc: "音属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", value: 0.04 } },
+    desc: "音属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "音", value: 0.04 } },
   { id: "soundEcho", name: "残響の真髄", category: "戦闘拡張", cost: 11, requires: "soundMastery",
     desc: "音属性武器のダメージ、さらに+7%(合計+27%)。旋律の残響がさらに響く。", effect: { type: "elementDmgPct", element: "音", value: 0.07 } },
 
@@ -804,10 +807,14 @@ function skillPrereqsMet(skill, skills) {
 }
 
 async function loadMeta() {
+  let raw = null;
   try {
     const r = await window.storage.get(SAVE_KEY);
-    if (r && r.value) return { ...DEFAULT_META, ...JSON.parse(r.value) };
-  } catch (e) { /* 初回は未保存 */ }
+    if (r && r.value) { raw = r.value; return { ...DEFAULT_META, ...JSON.parse(r.value) }; }
+  } catch (e) {
+    // 壊れたセーブを無言で初期化して終わらせない。復旧の手がかりとして退避してから既定値へ。
+    if (raw) { try { await window.storage.set(SAVE_KEY + ".corrupt_backup", raw); } catch {} }
+  }
   return memorySave ? { ...memorySave } : { ...DEFAULT_META };
 }
 async function saveMeta(meta) {
@@ -2101,6 +2108,21 @@ export default function KiriwatariNoMori() {
   const metaRef = useRef(meta); metaRef.current = meta;
   const logRef = useRef(null);
 
+  // meta の更新は必ずこれを経由する(S-1 対策)。コンポーネント本体の `meta` 変数(クロージャ)は
+  // 直近のレンダー時点のスナップショットで止まっており、同じ関数呼び出しの流れの中で複数箇所が
+  // それぞれ `{ ...meta, ... }` を作って setMeta すると、後から呼ばれた側が先に確定した差分を
+  // 古い meta で丸ごと上書きしてしまう(例: startFromChapter が inherited:[] を確定させた直後、
+  // 同じ流れで呼ばれる enterNode が古い meta を土台に上書きし、消費済みの継承品を復活させる)。
+  // `metaRef.current` は setMeta 呼び出しのたびにこの関数内で即座に更新するので、同一tick内の
+  // 連続呼び出しでも必ず直前の確定値の上に積み上がる。
+  const updateMeta = (patch) => {
+    const m = metaRef.current;
+    const next = typeof patch === "function" ? patch(m) : { ...m, ...patch };
+    metaRef.current = next;
+    setMeta(next); saveMeta(next);
+    return next;
+  };
+
   // 非同期シーケンス(攻撃 → 敵ターン等)の世代トークン(S2-2)。
   // アクション開始時に採番し、await をまたぐたびに一致確認する。
   // ラン開始・タイトルへ戻る・死亡確定・バックグラウンド遷移で ++ して進行中の継続を無効化する。
@@ -2146,9 +2168,9 @@ export default function KiriwatariNoMori() {
     try { const v = localStorage.getItem("kw-se-v");  return v !== null ? Math.max(0, Math.min(100, parseInt(v))) : 80; } catch { return 80; }
   });
   const [savedRun, setSavedRun] = useState(null);
-  const [confirmAbandon, setConfirmAbandon] = useState(false);
-  const [confirmNewRun, setConfirmNewRun] = useState(null); // null or callback fn
   const [discardConfirm, setDiscardConfirm] = useState(null); // null or item to discard
+  // 不具合お詫び配布(精の結晶 x5)。meta 読み込み後、未受け取りなら true にする。
+  const [showCompensation, setShowCompensation] = useState(false);
 
   const [sleepDisabled, setSleepDisabled] = useState(() => {
     try { return localStorage.getItem("kw-sleep") !== "0"; } catch { return true; }
@@ -2237,37 +2259,42 @@ export default function KiriwatariNoMori() {
         return;
       }
       bumpSeq(); // 復活等で状態が切り替わるため進行中シーケンスを無効化(S2-2)
-      const nm = contextId === "revive"
-        ? { ...consumeRewardAdUse(metaRef.current), reviveUsedThisRun: true }
-        : consumeRewardAdUse(metaRef.current);
-      setMeta(nm); saveMeta(nm);
+      updateMeta((m) => contextId === "revive"
+        ? { ...consumeRewardAdUse(m), reviveUsedThisRun: true }
+        : consumeRewardAdUse(m));
+      // AD-02: window.__onRewardAdResult__ はネイティブ側からの直接呼び出しであり、React の
+      // SyntheticEvent(discrete event)としては扱われない。そのため以前の実装(setG(updater)
+      // の中で `committed` へ結果を捕まえ、その後 `if (committed) flushSaveRun(committed)` する
+      // パターン)は、updater が同期的に呼ばれる保証がここには無く、実際に committed が
+      // null のまま flushSaveRun が一度も呼ばれない(広告の報酬がライブ表示のみに留まり
+      // 保存されない)ケースが確認された。gRef.current から同期的に読み、素の値で setG する
+      // 安全な形(useItem/equipItem と同じパターン)に統一する。
       if (contextId === "dew") {
         // 広告の報酬は袋に直接入れて即保存する。ドロップに置くと、回収前に
         // アプリを終了された場合に消えてしまう(視聴回数だけ消費される)。
-        let committed = null;
-        setG((s) => {
-          if (s.rewardAdPending !== "dew") return s;
+        const s0 = gRef.current;
+        if (s0.rewardAdPending === "dew") {
           const dew = makeConsumable("dew");
-          const cap = invCapOf(metaRef.current, s.orbBagBonus || 0);
-          const base = { ...s, rewardAdPending: null, dewAdClaimed: true };
-          const ns = s.inv.length < cap
-            ? pushLog({ ...base, inv: [...s.inv, dew] }, "広告視聴の報酬。宝樹の雫が袋に加わった!", true)
-            : pushLog({ ...base, drops: [...s.drops, dew] }, "広告視聴の報酬。宝樹の雫がもう一つ生まれた!(袋が満杯のため戦利品へ)", true);
-          committed = ns;
-          return ns;
-        });
-        if (committed) flushSaveRun(committed);
+          const cap = invCapOf(metaRef.current, s0.orbBagBonus || 0);
+          const base = { ...s0, rewardAdPending: null, dewAdClaimed: true };
+          const ns = s0.inv.length < cap
+            ? pushLog({ ...base, inv: [...s0.inv, dew] }, "広告視聴の報酬。宝樹の雫が袋に加わった!", true)
+            : pushLog({ ...base, drops: [...s0.drops, dew] }, "広告視聴の報酬。宝樹の雫がもう一つ生まれた!(袋が満杯のため戦利品へ)", true);
+          setG(ns);
+          gRef.current = ns;
+          flushSaveRun(ns);
+        }
       } else if (contextId === "revive") {
-        let committed = null;
-        setG((s) => {
-          if (s.rewardAdPending !== "revive") return s;
-          const mx = maxHpOf(s, metaRef.current);
-          const revived = { ...s.player, hp: mx, poison: 0, atkDown: 0 };
-          committed = pushLog({ ...s, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
+        const s0 = gRef.current;
+        if (s0.rewardAdPending === "revive") {
+          const mx = maxHpOf(s0, metaRef.current);
+          const revived = { ...s0.player, hp: mx, poison: 0, atkDown: 0 };
+          const ns = pushLog({ ...s0, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
             "広告の加護で、満身の力で息を吹き返した!", true);
-          return committed;
-        });
-        if (committed) flushSaveRun(committed); // 復活後の状態を即保存(再起動しても復活が反映される)
+          setG(ns);
+          gRef.current = ns;
+          flushSaveRun(ns); // 復活後の状態を即保存(再起動しても復活が反映される)
+        }
       } else if (contextId === "eventDew") {
         setG((s) => {
           if (s.rewardAdPending !== "eventDew") return s;
@@ -2275,10 +2302,8 @@ export default function KiriwatariNoMori() {
             event: { ...s.event, reward2x: true, adClaimed: true } };
         });
         // meta.eventReward にも reward2x を保存し、× で閉じても復元できるようにする
-        const mr = metaRef.current;
-        if (mr?.eventReward) {
-          const mr2 = { ...mr, eventReward: { ...mr.eventReward, reward2x: true } };
-          setMeta(mr2); saveMeta(mr2);
+        if (metaRef.current?.eventReward) {
+          updateMeta((mr) => ({ ...mr, eventReward: { ...mr.eventReward, reward2x: true } }));
         }
       }
     };
@@ -2294,10 +2319,8 @@ export default function KiriwatariNoMori() {
 
   // meta の真偽フラグ(アイテム保護設定など)を切り替えて永続化する
   async function toggleMetaFlag(key) {
-    const m0 = metaRef.current;
-    if (!m0) return;
-    const m2 = { ...m0, [key]: !m0[key] };
-    setMeta(m2); await saveMeta(m2);
+    if (!metaRef.current) return;
+    updateMeta((m) => ({ ...m, [key]: !m[key] }));
   }
 
   // ネイティブハンドラへ BGM メッセージを送信
@@ -2435,48 +2458,55 @@ export default function KiriwatariNoMori() {
       const migrated = migrateSkillTree(m);
       if (migrated !== m) saveMeta(migrated);
       setMeta(migrated);
+      // 不具合お詫び配布: 未受け取りなら起動時に1回だけポップアップで知らせる。
+      if (!migrated.compensationDewClaimed) setShowCompensation(true);
     });
     loadRun().then((run) => { if (run && (run.floor || run.phase === "dead")) setSavedRun(run); });
   }, []);
 
+  // 不具合お詫びの精の結晶を受け取る(1回きり)。
+  async function claimCompensationDew() {
+    if (!metaRef.current || metaRef.current.compensationDewClaimed) { setShowCompensation(false); return; }
+    updateMeta((m) => ({ ...m, dewBank: (m.dewBank || 0) + COMPENSATION_DEW_AMOUNT, compensationDewClaimed: true }));
+    setShowCompensation(false);
+  }
+
   const invCap = invCapOf(meta, g?.orbBagBonus || 0);
 
   async function buySkill(skillId) {
-    if (!meta) return;
+    const m0 = metaRef.current;
+    if (!m0) return;
     const skill = SKILL_TREE.find((s) => s.id === skillId);
-    if (!skill || (meta.dewBank || 0) < skill.cost) return;
-    if (!skillPrereqsMet(skill, meta.skills)) return;
-    if (meta.skills?.[skillId]) return;
-    const m2 = {
-      ...meta,
-      dewBank: meta.dewBank - skill.cost,
-      skills: { ...meta.skills, [skillId]: true },
-    };
-    setMeta(m2);
-    await saveMeta(m2);
+    if (!skill || (m0.dewBank || 0) < skill.cost) return;
+    if (!skillPrereqsMet(skill, m0.skills)) return;
+    if (m0.skills?.[skillId]) return;
+    const m2 = updateMeta({
+      ...m0,
+      dewBank: m0.dewBank - skill.cost,
+      skills: { ...m0.skills, [skillId]: true },
+    });
 
     // 武器スロット拡張は g.weapons の長さが固定のため、進行中のランには
     // starterState を通らないと反映されない。ここで即座にスロットを増やす。
     if (skillId === "weaponSlot4" || skillId === "weaponSlot5" || skillId === "weaponSlot6") {
-      let committed = null;
-      setG((s) => {
-        if (s.screen !== "run" || !Array.isArray(s.weapons)) return s;
+      const s0 = gRef.current;
+      if (s0.screen === "run" && Array.isArray(s0.weapons)) {
         const want = weaponSlotsOf(m2);
-        if (s.weapons.length >= want) return s;
-        const weapons = [...s.weapons];
-        while (weapons.length < want) weapons.push(null);
-        committed = { ...s, weapons };
-        return committed;
-      });
-      if (committed) scheduleSaveRun(committed);
+        if (s0.weapons.length < want) {
+          const weapons = [...s0.weapons];
+          while (weapons.length < want) weapons.push(null);
+          const ns = { ...s0, weapons };
+          setG(ns);
+          scheduleSaveRun(ns);
+        }
+      }
     }
   }
 
   async function dismissRefundNotice() {
-    if (!meta) return;
-    const m2 = { ...meta, skillRefundNotice: undefined };
-    setMeta(m2);
-    await saveMeta(m2);
+    const m0 = metaRef.current;
+    if (!m0) return;
+    updateMeta({ ...m0, skillRefundNotice: undefined });
   }
 
   const armorDef = (st, m = meta) => {
@@ -2524,7 +2554,7 @@ export default function KiriwatariNoMori() {
       }
       if (Object.keys(hints).length > 0) {
         m = { ...m, discovered: { ...hints, ...(m.discovered || {}) } };
-        setMeta(m); saveMeta(m);
+        m = updateMeta(m);
       }
     }
     const eq = starterState(m, startWeapon);
@@ -2542,8 +2572,10 @@ export default function KiriwatariNoMori() {
     base.player.hp = maxHpOf(base, m);
     // 継承品(meta.inherited)はここで消費済みにする。残しておくと、中断してタイトルへ戻り
     // 「始める」を選び直すたびに同じ継承品が何度でも手に入ってしまう(無限増殖・レアアイテムの永久複製)。
-    m = { ...m, reviveUsedThisRun: false, inherited: [] };
-    setMeta(m); saveMeta(m);
+    // updateMeta を通すことで metaRef.current を即座に更新する(S-1 対策)。これを怠ると、
+    // 直後に呼ぶ enterNode 内の meta 書き込みが古い meta を土台にして、今しがた消費した
+    // inherited をそのまま復活させてしまう。
+    m = updateMeta({ ...m, reviveUsedThisRun: false, inherited: [] });
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
     saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
@@ -2562,18 +2594,28 @@ export default function KiriwatariNoMori() {
     if (stageOf(fromRun.floor) === chapterIdx) return;
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     const startFloor = chapterIdx * 10 + 1;
+    // ワープ前に持っていた「レアまでの残り間隔」をそのまま持ち越す(ゼロにはリセットしない)。
+    // ただし移動先の章のクールダウン値を上限にキャップする: これが無いと、lastRareSeen が
+    // 低い/古いまま一気に深い章へ飛んだ場合に floor - lastRareSeen が異常に大きくなり、
+    // ワープを繰り返すだけでレアの抽選機会を無制限に稼げてしまう(章の行き来によるレア連発の抜け道)。
+    // 逆に毎回ゼロへ強制リセットすると、普段づかいでステージを行き来するだけのプレイヤーが
+    // レアにほとんど遭遇できなくなってしまうため、そちらもしない。
+    const destCooldown = rareCooldownOf(startFloor);
+    const priorGap = Math.max(0, (fromRun.floor || 0) - (fromRun.lastRareSeen || 0));
+    const cappedGap = Math.min(priorGap, destCooldown);
+    const lastRareSeen = startFloor - cappedGap;
+    // ITEM-04: 章クリア画面(未回収の確定ドロップがある)からワープすると、drops をそのまま
+    // 空にしていたため伝説武器・苔の心臓等が二度と手に入らなくなっていた。ワープ前に
+    // 通常の「全部拾う」と同じ経路(takeAllPure)で袋・装備へ退避してから移動する。
+    const collected = (fromRun.rewardPhase === "clear" && fromRun.drops?.length > 0)
+      ? takeAllPure({ drops: fromRun.drops, weapons: fromRun.weapons, armor: fromRun.armor, inv: fromRun.inv, player: fromRun.player, logs: [], full: false })
+      : fromRun;
     const base = {
       screen: "run", floor: startFloor, node: 0, nodes: floorNodes(startFloor), phase: "battle",
-      player: fromRun.player, weapons: fromRun.weapons, armor: fromRun.armor, inv: fromRun.inv,
+      player: collected.player, weapons: padWeaponSlots(collected.weapons, metaRef.current), armor: collected.armor, inv: collected.inv,
       cds: {}, enemies: [], drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
-      // ワープ直後は「直前にレア(金枝の精)が出た」扱いにする(=startFloor をそのまま lastRareSeen にする)。
-      // 何も変えないと、深い章を歩いて lastRareSeen が更新されないまま浅い章へ戻ったり、
-      // あるいは lastRareSeen=0 の新品同然の状態で一気に深い章へ飛んだりすると、
-      // floor - lastRareSeen(=フロア間隔)が異常に大きくなり、ワープ直後の1戦目からレアが
-      // 出やすくなってしまう(章の行き来を繰り返すレア連発の抜け道)。ワープ直後をクールダウン
-      // 起点にすることで、通常に歩いて到達した場合と同じ間隔を必ず踏ませる。
-      confirm: null, full: false, lastRareSeen: startFloor, skillTree: false, reviveUsed: false,
+      confirm: null, full: false, lastRareSeen, skillTree: false, reviveUsed: false,
       orbBagBonus: fromRun.orbBagBonus || 0, orbSlotBonus: fromRun.orbSlotBonus || 0, orbChoice: false,
       coach: false, stageIntro: chapterIdx,
     };
@@ -2583,9 +2625,31 @@ export default function KiriwatariNoMori() {
     setG(first);
   }
 
+  // A-3: タイトル画面(ラン未進行中)でスキルツリーから武器スロット拡張を買った場合、
+  // buySkill の即時反映は「今アクティブなラン」にしか効かないため、保存済みの中断ランを
+  // 後から再開すると武器配列が古いスロット数のまま復元されてしまう。再開時にも
+  // 最新の meta に合わせてスロット数を揃える。
+  function padWeaponSlots(weapons, m) {
+    const want = weaponSlotsOf(m);
+    if (weapons.length >= want) return weapons;
+    const padded = [...weapons];
+    while (padded.length < want) padded.push(null);
+    return padded;
+  }
+
   // タスクキル後の再開: 保存済みフロア状態を復元する
   function resumeRun(run) {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
+    // SAVE-06: 旧バージョンが書いた/欠損したセーブ(armor 等のフィールドが無い)を読んでも
+    // 落ちないよう、以降で参照するフィールドをここで一括して既定値補完する。特に `armor` は
+    // 未補完のまま渡すと maxHpOf()/armorDef() の Object.values(undefined) でクラッシュする。
+    run = {
+      ...run,
+      weapons: run.weapons || [],
+      armor: run.armor || { helm: null, armor: null, charm: null },
+      inv: run.inv || [],
+      player: run.player || { hp: 0, poison: 0, atkUp: 0, guard: false },
+    };
     if (run.phase === "dead") {
       // タスキル後の死亡画面復元: 継承選択画面を直接表示
       const stDead = {
@@ -2609,7 +2673,7 @@ export default function KiriwatariNoMori() {
       // 後でも、ここを経由しないと「進む」を押す前に倒したはずのボスと再戦させられてしまう)。
       const restored = {
         screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "clear",
-        player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
+        player: run.player, weapons: padWeaponSlots(run.weapons, metaRef.current), armor: run.armor, inv: run.inv,
         cds: run.cds || {}, drops: run.drops || [], logs: [], floats: [],
         pending: null, busy: false, bag: false, hitId: null, eventDone: false,
         confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false, reviveUsed: false,
@@ -2623,7 +2687,7 @@ export default function KiriwatariNoMori() {
     const savedEnemies = (run.enemies || []).filter((e) => e.hp > 0);
     const base = {
       screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "battle",
-      player: run.player, weapons: run.weapons, armor: run.armor, inv: run.inv,
+      player: run.player, weapons: padWeaponSlots(run.weapons, metaRef.current), armor: run.armor, inv: run.inv,
       cds: run.cds || {}, drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
       confirm: null, full: false, lastRareSeen: run.lastRareSeen || 0, skillTree: false, reviveUsed: false,
@@ -2664,10 +2728,12 @@ export default function KiriwatariNoMori() {
       const rareChance = meta ? rareChanceOf(meta, s.floor) : 0.04 + stageOf(s.floor) * 0.02;
       s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor, lastRare, rareChance);
       if (kind !== "boss" && s.enemies.some((e) => e.rare)) s = { ...s, lastRareSeen: s.floor };
-      // 遭遇した敵を図鑑に記録
-      { const ns = { ...(meta.seen || {}) }; let ch = false;
+      // 遭遇した敵を図鑑に記録(S-1: 必ず metaRef.current を土台にする。ここで stale な
+      // meta クロージャを土台にすると、直前に startFromChapter が確定させた inherited:[] 等の
+      // 更新をこの書き込みが丸ごと上書きし、消費済みの継承品を復活させてしまう)。
+      { const mNow = metaRef.current; const ns = { ...(mNow.seen || {}) }; let ch = false;
         for (const e of s.enemies) { if (e.bookId && !ns[e.bookId]) { ns[e.bookId] = true; ch = true; } }
-        if (ch) { const m2 = { ...meta, seen: ns }; setMeta(m2); saveMeta(m2); } }
+        if (ch) updateMeta({ seen: ns }); }
       s.cds = {};
       // 呼吸法・再生の心得: 戦闘開始時にHPを回復
       const battleStartHealPct = skillEffectTotal(meta?.skills, "battleStartHealPct");
@@ -2737,7 +2803,9 @@ export default function KiriwatariNoMori() {
     const masteryMult = 1 + skillEffectTotal(meta?.skills, "elementDmgPct", (e) => e.element === t.dmgType);
     const powerSealMult = 1 + skillEffectTotal(meta?.skills, "allDmgPct");
     const raw = weapon.atk * atkMul * masteryMult * powerSealMult;
-    const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct");
+    // A-1: elementDmgPct と同じく、この武器の属性の余韻だけを合計する(フィルタ漏れで
+    // 以前は全属性の余韻(5種合計20%)が常に乗ってしまっていた)。
+    const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct", (e) => e.element === t.dmgType);
     let dmgDealtThisAction = 0;
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
@@ -2815,9 +2883,9 @@ export default function KiriwatariNoMori() {
     // 攻撃が成立したここで世代を進める(!target 等の早期 return では進めない・S2-2 回帰対策)
     const mySeq = ++seqRef.current;
     setG(s);
-    // 発見情報を保存
-    const m2 = { ...meta, discovered };
-    setMeta(m2); saveMeta(m2);
+    // 発見情報を保存(S-1: metaRef.current を土台にする。この関数が始まった時点の meta
+    // クロージャは、戦闘中に別経路で更新された可能性のある最新の meta を反映していないため)。
+    updateMeta({ discovered });
     await sleep(650);
     // stalled(長時間中断)では打ち切らない: afterPlayerAction は常に gRef.current を
     // 再読込してから進むので、バックグラウンドを挟んでも安全に敵ターンへ進める。
@@ -2830,8 +2898,16 @@ export default function KiriwatariNoMori() {
 
   /* ---------- 道具を使う(戦闘中はターン消費) ----------
      前提判定・状態組み立て・ターン進行はすべて gRef.current から同期的に行う。
-     関数型更新(setG(updater))は React 18 で updater が後回しになりうるため、
-     「適用できたか」を updater の副作用で判定すると敵ターン処理が飛ぶことがある。 */
+     setG(updater) の updater は React 18 で後回しになりうるため、「適用できたか」を
+     updater の副作用で判定すると敵ターン処理が飛ぶことがある(そのため関数型更新は使わない)。
+     その代わり、setG(素の値) の直後に gRef.current 自身もその値へ同期的に合わせておく
+     (同じレンダー内で React が追従するのを待たない)。こうすることで、同一ティック内で
+     別のアイテムが連続してタップされても(例: 2つの苔の心臓をほぼ同時に使う)、後続の
+     呼び出しは必ず直前の呼び出しが確定させた最新状態を見てから判定できる。
+     以前は gRef.current の更新を次のレンダーまで待っていたため、異なる2つのアイテムを
+     ほぼ同時にタップすると両方が同じ古いスナップショットを見て計算し、setG(素の値) が
+     後勝ちで上書きして片方の消費(袋からの削除・苔の心臓の永続HP増加など)が黙って
+     消えることがあった。 */
   async function useItem(item) {
     const st0 = gRef.current;
     const inBattle = st0.phase === "battle";
@@ -2855,7 +2931,7 @@ export default function KiriwatariNoMori() {
       s.inv = s.inv.filter((x) => x.id !== item.id);
     }
     const mx = maxHpOf(s);
-    let metaBonusHp = null; // 苔の心臓: 確定後に meta へ適用
+    let gainedMetaHp = false; // 苔の心臓: 確定後に meta へ適用
     if (c.kind === "heal") {
       const heal = Math.round(mx * c.power);
       s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
@@ -2877,7 +2953,7 @@ export default function KiriwatariNoMori() {
       s.enemies = enemies;
       s = pushLog(s, `${c.label}が弾け、火の粉が敵を包む!`, true);
     } else if (c.kind === "metaHp") {
-      metaBonusHp = (metaRef.current?.bonusHp || 0) + 6;
+      gainedMetaHp = true;
       s.player = { ...s.player, hp: s.player.hp + 6 };
       s = pushLog(s, `苔の心臓が鼓動する……最大HPが永続+6。`, true);
     } else if (c.kind === "orb") {
@@ -2887,11 +2963,15 @@ export default function KiriwatariNoMori() {
     }
 
     setG(s);
+    gRef.current = s; // 同一ティック内の連続呼び出しに備え、ref も即座に最新化する
 
     // --- 副作用 ---
-    if (metaBonusHp != null) {
-      const m2 = { ...metaRef.current, bonusHp: metaBonusHp };
-      setMeta(m2); saveMeta(m2);
+    if (gainedMetaHp) {
+      // updateMeta は常に metaRef.current を土台にする(S-1 と同じ仕組み)ため、2つの
+      // 苔の心臓をほぼ同時に使った場合でも、両方の +6 が正しく積み上がる(以前は古い
+      // metaRef.current を両方が見て、後勝ちの setMeta が上書きし +12 のはずが +6 のまま
+      // 失われていた)。
+      updateMeta((m) => ({ ...m, bonusHp: (m?.bonusHp || 0) + 6 }));
     }
     flushSaveRun(s); // アイテム使用結果を永続化(S2-3)
 
@@ -2904,7 +2984,7 @@ export default function KiriwatariNoMori() {
         invBefore: before.inv, invAfter: after.inv,
         applied: (after.hp !== before.hp) || (after.poison !== before.poison)
           || ((s.player.atkUp || 0) !== before.atkUp)
-          || s.orbChoice === true || metaBonusHp != null,
+          || s.orbChoice === true || gainedMetaHp,
         resumed: false,
       });
     } catch (_) {}
@@ -3000,45 +3080,51 @@ export default function KiriwatariNoMori() {
     if (isBoss) {
       const stage = stageOf(st.floor) + 1; // 1..10
       const sIdx = stage - 1;
-      // 苔の心臓がドロップした章をフラグ登録(以降その章では出なくなる)
-      const mhStages = drops.some((d) => d.itemId === "mossHeart")
-        ? [...(meta.mossHeartStages || []), sIdx]
-        : (meta.mossHeartStages || []);
+      const clearsBefore = metaRef.current.clears; // レビュー促し判定用(更新前の値が必要)
+      const checkpointBefore = metaRef.current.checkpoint || 1;
       if (stage >= 10) {
         // 百層踏破 — エンディング。所持品は全て次の生へ持ち越せるが、次の生が実際に
         // 保持できる上限(武器スロット+防具3+袋の最大数)は超えられないため、価値の高い順に切り詰める。
-        const m2Slots = meta.slots + 1;
-        const nextMeta = { ...meta, slots: m2Slots };
-        const capacity = weaponSlotsOf(nextMeta) + 3 + invCapOf(nextMeta);
-        const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops]
-          .sort((a, b) => itemScore(b) - itemScore(a))
-          .slice(0, capacity);
-        // checkpoint もここでリセットしておく(エンディング画面でタスキルされても、
-        // 継承品と一緒に「次は1章から」が確定した状態になり、章が巻き戻らない)。
-        const m2 = { ...meta, mossHeartStages: mhStages, clears: meta.clears + 1, slots: m2Slots, bestFloor: 100, inherited: keep, checkpoint: 1 };
-        setMeta(m2); await saveMeta(m2);
+        const m2 = updateMeta((m) => {
+          const mhStages = drops.some((d) => d.itemId === "mossHeart")
+            ? [...(m.mossHeartStages || []), sIdx]
+            : (m.mossHeartStages || []);
+          const m2Slots = m.slots + 1;
+          const nextMeta = { ...m, slots: m2Slots };
+          const capacity = weaponSlotsOf(nextMeta) + 3 + invCapOf(nextMeta);
+          const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops]
+            .sort((a, b) => itemScore(b) - itemScore(a))
+            .slice(0, capacity);
+          // checkpoint もここでリセットしておく(エンディング画面でタスキルされても、
+          // 継承品と一緒に「次は1章から」が確定した状態になり、章が巻き戻らない)。
+          return { ...m, mossHeartStages: mhStages, clears: m.clears + 1, slots: m2Slots, bestFloor: 100, inherited: keep, checkpoint: 1 };
+        });
         s.phase = "ending";
         // 進行度をFirebaseに記録(全章踏破)
         try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "game_clear", clears: m2.clears }); } catch (_) {}
         // 初回全章踏破でレビューを促す
-        if (meta.clears === 0) {
+        if (clearsBefore === 0) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
         }
       } else {
         // 章クリア: 継承枠+1、次章から再出発できるようになる
-        const m2 = {
-          ...meta, mossHeartStages: mhStages, slots: meta.slots + 1,
-          bestFloor: Math.max(meta.bestFloor, st.floor),
-          checkpoint: Math.max(meta.checkpoint || 1, stage + 1),
-        };
-        setMeta(m2); await saveMeta(m2);
+        const m2 = updateMeta((m) => {
+          const mhStages = drops.some((d) => d.itemId === "mossHeart")
+            ? [...(m.mossHeartStages || []), sIdx]
+            : (m.mossHeartStages || []);
+          return {
+            ...m, mossHeartStages: mhStages, slots: m.slots + 1,
+            bestFloor: Math.max(m.bestFloor, st.floor),
+            checkpoint: Math.max(m.checkpoint || 1, stage + 1),
+          };
+        });
         s.phase = "clear";
         // 進行度をFirebaseに記録(章クリア=到達点更新)
         try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "stage_clear", stage, checkpoint: m2.checkpoint }); } catch (_) {}
         // ボス撃破時の装備武器を記録(武器バランス調整の参考用)
         try { s.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_boss_kill", weapon_type: w.type, stage })); } catch (_) {}
         // 第2・3章ボス初クリア時にレビューを促す
-        if ((stage === 2 || stage === 3) && (meta.checkpoint || 1) <= stage) {
+        if ((stage === 2 || stage === 3) && checkpointBefore <= stage) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
         }
       }
@@ -3060,14 +3146,13 @@ export default function KiriwatariNoMori() {
   // 死亡確定処理(復活オファーを断った/広告に失敗した場合もここを通る)
   function finalizeDeath(stFainted) {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
-    const m2 = { ...meta, deaths: meta.deaths + 1, bestFloor: Math.max(meta.bestFloor, stFainted.floor) };
-    setMeta(m2); saveMeta(m2);
+    const m2 = updateMeta((m) => ({ ...m, deaths: m.deaths + 1, bestFloor: Math.max(m.bestFloor, stFainted.floor) }));
     // 進行度をFirebaseに記録(死亡=到達フロア)
     try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "death", floor: stFainted.floor, bestFloor: m2.bestFloor }); } catch (_) {}
     // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
     saveDeadRun(stFainted.floor, stFainted.weapons, stFainted.armor, stFainted.inv, stFainted.orbBagBonus || 0, stFainted.orbSlotBonus || 0);
     setSavedRun(null);
-    const effSlots = meta.slots + (stFainted.orbSlotBonus || 0);
+    const effSlots = m2.slots + (stFainted.orbSlotBonus || 0);
     setG({ ...stFainted, phase: "dead", pick: recommendPick(stFainted, effSlots), effSlots, rebirthStage: Math.min(m2.checkpoint || 1, 10) - 1 });
   }
 
@@ -3167,6 +3252,18 @@ export default function KiriwatariNoMori() {
       return;
     }
     const finalState = { ...s, enemies, player, cds, busy: false };
+    // BTL-08: 金枝の精(レア)が「最後の1体」として時間切れで消えた(fled)場合、
+    // この敵ターン(enemyPhase)の中で hp=0 になるため、次の攻撃時にしか働かない
+    // afterPlayerAction の alive.length===0 判定を経由できず、以前は reward 画面へ
+    // 遷移せずそのまま battle 画面に取り残されていた(攻撃対象がいないソフトロック)。
+    // battleWon() は gRef.current を読むため、setG で確定させてから一呼吸置く
+    // (afterPlayerAction が撃破時に行っているのと同じ手当て)。
+    if (enemies.every((e) => e.hp <= 0)) {
+      setG(finalState);
+      await sleep(420);
+      if (seq != null && seqRef.current !== seq) return;
+      return battleWon(enemies, seq);
+    }
     setG(finalState);
     saveRun(finalState.floor, finalState.node, finalState.player, finalState.weapons, finalState.armor, finalState.inv, finalState.cds, finalState.lastRareSeen, finalState.orbBagBonus, finalState.enemies);
   }
@@ -3187,92 +3284,86 @@ export default function KiriwatariNoMori() {
   );
 
   // 個別アイテムのロックを切り替える(袋・装備中の武器/防具すべてを対象に)。
+  // 前提判定・状態組み立てはすべて gRef.current から同期的に行う(useItem/resolveOrbChoice と
+  // 同じ理由: setG(updater) の updater 内で確定させた値を直後の副作用側で読もうとすると、
+  // React 18 では updater が後回しになることがあり、この保存処理そのものが一度も呼ばれなくなる
+  // ―― 実際にこのプロジェクトで、装備・捨てる・ロック・拾うのいずれも「直後に何もしなければ
+  // 保存が一度も走らない」形で発生していた実例)。
   function toggleLock(item) {
-    let committed = null;
-    setG((s) => {
-      const flip = (x) => (x && x.id === item.id ? { ...x, locked: !x.locked } : x);
-      const ns = {
-        ...s,
-        inv: s.inv.map(flip),
-        weapons: s.weapons.map(flip),
-        armor: Object.fromEntries(Object.entries(s.armor).map(([k, v]) => [k, flip(v)])),
-      };
-      committed = ns;
-      return ns;
-    });
-    if (committed) scheduleSaveRun(committed);
+    const s0 = gRef.current;
+    const flip = (x) => (x && x.id === item.id ? { ...x, locked: !x.locked } : x);
+    const ns = {
+      ...s0,
+      inv: s0.inv.map(flip),
+      weapons: s0.weapons.map(flip),
+      armor: Object.fromEntries(Object.entries(s0.armor).map(([k, v]) => [k, flip(v)])),
+    };
+    setG(ns);
+    scheduleSaveRun(ns);
   }
 
   /* ---------- 装備・袋 ---------- */
   function equipItem(item) {
-    let committed = null;
-    setG((s) => {
-      // 多重タップでの二重装備を防ぐ: 既に袋から消えている(=別の呼び出しで装備済み)なら何もしない。
-      // これが無いと、連打で同じアイテムが「装備中」と「袋の中」の両方に同時に存在してしまう
-      // (見た目上の複製。防具なら HP ボーナスも二重に乗る)。
-      if (!s.inv.some((x) => x.id === item.id)) return s;
-      let ns = { ...s };
-      if (item.kind === "weapon") {
-        let idx = ns.weapons.findIndex((w) => !w);
-        if (idx < 0) {
-          // 空きがなければ、ロックされていない中で最も攻撃力の低い武器と入れ替える
-          const swappable = ns.weapons.map((w, i) => i).filter((i) => !ns.weapons[i].locked);
-          if (swappable.length === 0) {
-            // すべてロック済み — 入れ替えできない
-            return pushLog(ns, "装備中の武器はすべてロックされています。");
-          }
-          idx = swappable.reduce((mi, i) => (ns.weapons[i].atk < ns.weapons[mi].atk ? i : mi), swappable[0]);
+    const s0 = gRef.current;
+    // 多重タップでの二重装備を防ぐ: 既に袋から消えている(=別の呼び出しで装備済み)なら何もしない。
+    // これが無いと、連打で同じアイテムが「装備中」と「袋の中」の両方に同時に存在してしまう
+    // (見た目上の複製。防具なら HP ボーナスも二重に乗る)。
+    if (!s0.inv.some((x) => x.id === item.id)) return;
+    let ns = { ...s0 };
+    if (item.kind === "weapon") {
+      let idx = ns.weapons.findIndex((w) => !w);
+      if (idx < 0) {
+        // 空きがなければ、ロックされていない中で最も攻撃力の低い武器と入れ替える
+        const swappable = ns.weapons.map((w, i) => i).filter((i) => !ns.weapons[i].locked);
+        if (swappable.length === 0) {
+          // すべてロック済み — 入れ替えできない
+          setG(pushLog(ns, "装備中の武器はすべてロックされています。"));
+          return;
         }
-        const old = ns.weapons[idx];
-        ns.weapons = ns.weapons.map((w, i) => (i === idx ? item : w));
-        ns.inv = ns.inv.filter((x) => x.id !== item.id);
-        if (old) ns.inv = [...ns.inv, old];
-        ns = pushLog(ns, old ? `${old.name}を仕舞い、${item.name}を構えた。` : `${item.name}を構えた。`);
-      } else if (item.kind === "armor") {
-        const old = ns.armor[item.slot];
-        if (old && old.locked) {
-          // ロック済みの防具は入れ替えできない(武器と同じ扱い)
-          return pushLog(ns, `${old.name}はロックされています。`);
-        }
-        ns.armor = { ...ns.armor, [item.slot]: item };
-        ns.inv = ns.inv.filter((x) => x.id !== item.id);
-        if (old) ns.inv = [...ns.inv, old];
-        const mx = maxHpOf(ns);
-        // 防具の HP ボーナス差分を「両方向」に反映する。
-        // 上げ幅だけ加算して下げ幅を無視すると、2 つの防具を交互に付け替えて
-        // 無限に回復できてしまう(付け替え1往復の収支が 0 になるようにする)。
-        const hpDiff = (item.hp || 0) - (old ? (old.hp || 0) : 0);
-        ns.player = { ...ns.player, hp: Math.max(1, Math.min(mx, ns.player.hp + hpDiff)) };
-        ns = pushLog(ns, `${item.name}を身につけた。`);
+        idx = swappable.reduce((mi, i) => (ns.weapons[i].atk < ns.weapons[mi].atk ? i : mi), swappable[0]);
       }
-      committed = ns;
-      return ns;
-    });
-    if (committed) scheduleSaveRun(committed);
+      const old = ns.weapons[idx];
+      ns.weapons = ns.weapons.map((w, i) => (i === idx ? item : w));
+      ns.inv = ns.inv.filter((x) => x.id !== item.id);
+      if (old) ns.inv = [...ns.inv, old];
+      ns = pushLog(ns, old ? `${old.name}を仕舞い、${item.name}を構えた。` : `${item.name}を構えた。`);
+    } else if (item.kind === "armor") {
+      const old = ns.armor[item.slot];
+      if (old && old.locked) {
+        // ロック済みの防具は入れ替えできない(武器と同じ扱い)
+        setG(pushLog(ns, `${old.name}はロックされています。`));
+        return;
+      }
+      ns.armor = { ...ns.armor, [item.slot]: item };
+      ns.inv = ns.inv.filter((x) => x.id !== item.id);
+      if (old) ns.inv = [...ns.inv, old];
+      const mx = maxHpOf(ns);
+      // 防具の HP ボーナス差分を「両方向」に反映する。
+      // 上げ幅だけ加算して下げ幅を無視すると、2 つの防具を交互に付け替えて
+      // 無限に回復できてしまう(付け替え1往復の収支が 0 になるようにする)。
+      const hpDiff = (item.hp || 0) - (old ? (old.hp || 0) : 0);
+      ns.player = { ...ns.player, hp: Math.max(1, Math.min(mx, ns.player.hp + hpDiff)) };
+      ns = pushLog(ns, `${item.name}を身につけた。`);
+    }
+    setG(ns);
+    scheduleSaveRun(ns);
   }
   function unequipWeapon(idx) {
-    let committed = null;
-    setG((s) => {
-      const w = s.weapons[idx];
-      if (!w || s.inv.length >= invCap) return s;
-      const ns = { ...s, weapons: s.weapons.map((x, i) => (i === idx ? null : x)), inv: [...s.inv, w] };
-      committed = ns;
-      return ns;
-    });
-    if (committed) scheduleSaveRun(committed);
+    const s0 = gRef.current;
+    const w = s0.weapons[idx];
+    if (!w || s0.inv.length >= invCap) return;
+    const ns = { ...s0, weapons: s0.weapons.map((x, i) => (i === idx ? null : x)), inv: [...s0.inv, w] };
+    setG(ns);
+    scheduleSaveRun(ns);
   }
   function discardItem(item) {
     // 保護中(個別ロック or 設定)のアイテムは捨てられない
     if (isItemProtected(item)) return;
-    let committed = null;
-    setG((s) => {
-      const ns = { ...s, inv: s.inv.filter((x) => x.id !== item.id) };
-      committed = ns;
-      return ns;
-    });
-    if (committed) scheduleSaveRun(committed);
+    const s0 = gRef.current;
+    const ns = { ...s0, inv: s0.inv.filter((x) => x.id !== item.id) };
+    setG(ns);
+    scheduleSaveRun(ns);
   }
-
   // ドロップ1点を回収する純関数(拾えなければ full: true を添える)
   function takeDropPure(s, item) {
     // 既に回収済み(別の呼び出しで先に拾われた)なら何もしない。多重タップでの二重取得を防ぐ。
@@ -3293,9 +3384,9 @@ export default function KiriwatariNoMori() {
     return { ...ns, full: false };
   }
   const takeDrop = (item) => {
-    let committed = null;
-    setG((s) => { const ns = takeDropPure(s, item); committed = ns; return ns; });
-    if (committed) scheduleSaveRun(committed);
+    const ns = takeDropPure(gRef.current, item);
+    setG(ns);
+    scheduleSaveRun(ns);
   };
   // ドロップ全回収の純関数
   function takeAllPure(s) {
@@ -3306,31 +3397,33 @@ export default function KiriwatariNoMori() {
     return ns;
   }
   const takeAllDrops = () => {
-    let committed = null;
-    setG((s) => { const ns = takeAllPure(s); committed = ns; return ns; });
-    if (committed) scheduleSaveRun(committed);
+    const ns = takeAllPure(gRef.current);
+    setG(ns);
+    scheduleSaveRun(ns);
   };
   // 確認画面用: 全部拾えたらそのまま進む
   const takeAllAndGo = () => {
-    let committed = null;
-    setG((s) => {
-      const ns = takeAllPure(s);
-      if (ns.drops.length === 0) { const nx = nextNode({ ...ns, confirm: null }); committed = nx; return nx; }
-      committed = ns;
-      return ns;
-    });
-    if (committed) scheduleSaveRun(committed);
+    const ns = takeAllPure(gRef.current);
+    if (ns.drops.length === 0) {
+      setG(nextNode({ ...ns, confirm: null })); // nextNode 自体が保存まで行う
+      return;
+    }
+    setG(ns);
+    scheduleSaveRun(ns);
   };
 
   // 先へ進む: 未回収の戦利品 / 未開封のイベントがあれば確認を挟む
+  // B-1: nextNode()(→enterNode())は Math.random() での敵生成や saveRun()(I/O)という
+  // 副作用を伴うため、setG(updater) の中で呼んではいけない。updater は複数回呼ばれることが
+  // あり(同一tick内の連続呼び出し等)、その都度サイコロを振り直しては「画面に出ている敵」と
+  // 「保存された敵」がずれる恐れがある。gRef.current から同期的に一度だけ計算する。
   function tryProceed() {
-    setG((s) => {
-      if (s.drops.length > 0) return { ...s, confirm: "drops", full: false };
-      if ((s.phase === "chest" || s.phase === "spring") && !s.eventDone) return { ...s, confirm: "event", full: false };
-      return nextNode({ ...s, confirm: null, full: false });
-    });
+    const s = gRef.current;
+    if (s.drops.length > 0) { setG({ ...s, confirm: "drops", full: false }); return; }
+    if ((s.phase === "chest" || s.phase === "spring") && !s.eventDone) { setG({ ...s, confirm: "event", full: false }); return; }
+    setG(nextNode({ ...s, confirm: null, full: false }));
   }
-  const proceedLeaving = () => setG((s) => nextNode({ ...s, drops: [], confirm: null, full: false }));
+  const proceedLeaving = () => setG(nextNode({ ...gRef.current, drops: [], confirm: null, full: false }));
 
   // 装備との比較ヒント
   function hintFor(item, st = g) {
@@ -3380,7 +3473,9 @@ export default function KiriwatariNoMori() {
     const ri = RARITIES.findIndex((r) => r.id === it.rarity);
     if (it.kind === "item") {
       const c = CONSUMABLES[it.itemId];
-      if (c.kind === "meta" || c.kind === "metaHp") return 10000; // 雫・心臓は最優先
+      // 雫・心臓は最優先。雫(dew)の実際の kind は "orb"("meta" という kind はコード上存在しない
+      // ―― 実装ミスで長らく命中しておらず、雫はスコア14点(ほぼ最下位)扱いだった)。
+      if (c.kind === "orb" || c.kind === "metaHp") return 10000;
       return 10 + ri;
     }
     if (it.kind === "weapon") return ri * 100 + it.atk;
@@ -3424,8 +3519,7 @@ export default function KiriwatariNoMori() {
       const weapons = all.filter((x) => x.kind === "weapon");
       if (weapons.length) inherited = [...inherited, weapons.reduce((a, b) => (b.atk > a.atk ? b : a))];
     }
-    const m2 = { ...meta, inherited, reviveUsedThisRun: false, dewBank: (meta.dewBank || 0) + dewCount };
-    setMeta(m2); await saveMeta(m2);
+    const m2 = updateMeta((m) => ({ ...m, inherited, reviveUsedThisRun: false, dewBank: (m.dewBank || 0) + dewCount }));
     clearRun(); // 死亡セーブを消去して新しい旅を始める
     // 新しい旅へ(選択したステージの頭から。未選択なら現在のチェックポイント=従来通り)
     const eq = starterState(m2);
@@ -3450,30 +3544,8 @@ export default function KiriwatariNoMori() {
     setG(first);
     // 継承品はこの旅へ渡した時点で meta 上は消費済みにする。残しておくと、中断して
     // タイトルへ戻り再度始めるたびに同じ継承品が何度でも手に入ってしまう(無限増殖)。
-    const m3 = { ...m2, inherited: [] };
-    setMeta(m3); saveMeta(m3);
-  }
-
-  // 死亡直後の継承選択画面を経由せずにタイトルの「新しく始める/放棄する」で中断データを
-  // 破棄しようとした場合の安全策。何も選ばずに次の生へ進むと継承品が丸ごと失われてしまうため、
-  // rebirth() と同じ推薦ロジック(recommendPick)で自動選択した内容を meta.inherited へ先に確定させておく。
-  // (このあと呼ばれる startFromChapter が meta.inherited を消費するので、二重に手に入ることはない)
-  function autoCarryOverFromDeadRun(deadRun) {
-    const s = { weapons: deadRun.weapons, armor: deadRun.armor, inv: deadRun.inv };
-    const effSlots = meta.slots + (deadRun.orbSlotBonus || 0);
-    const pickIds = recommendPick(s, effSlots);
-    const all = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv];
-    const picked = all.filter((x) => pickIds.includes(x.id));
-    const isDew = (x) => x.kind === "item" && x.itemId === "dew";
-    const dewCount = picked.filter(isDew).length;
-    let inherited = picked.filter((x) => !isDew(x));
-    if (!inherited.some((x) => x.kind === "weapon")) {
-      const weapons = all.filter((x) => x.kind === "weapon");
-      if (weapons.length) inherited = [...inherited, weapons.reduce((a, b) => (b.atk > a.atk ? b : a))];
-    }
-    const m2 = { ...meta, inherited, dewBank: (meta.dewBank || 0) + dewCount };
-    setMeta(m2); saveMeta(m2);
-    return m2; // 呼び出し側が同じクリック内で続けて使えるよう、確定値をそのまま返す
+    // metaRef.current を土台にする(直前の enterNode が seen を更新している可能性があるため)。
+    updateMeta({ inherited: [] });
   }
 
   /* ---------- 宝樹の祠(デイリーイベント) ---------- */
@@ -3482,7 +3554,7 @@ export default function KiriwatariNoMori() {
     if (g.screen !== "event") return;
     const m = metaRef.current; if (!m) return;
     const m2 = touchEventSeen(m);
-    if (m2.eventSeenMax !== m.eventSeenMax) { setMeta(m2); saveMeta(m2); }
+    if (m2.eventSeenMax !== m.eventSeenMax) updateMeta(m2);
   }, [g.screen]);
 
   // 「挑戦する」— 遭遇フェーズへ移行するだけ。日付確定は捕獲完了時(reportApproach)に行う。
@@ -3497,9 +3569,7 @@ export default function KiriwatariNoMori() {
     const turn = (s.event?.turn || 1) + 1;
     if (turn > EVENT_TURNS) {
       // 捕獲完了 — ここで初めて当日分を確定し、報酬状態を保存する
-      const m2 = commitEventDay(metaRef.current);
-      const m3 = { ...m2, eventReward: { converted: [], reward2x: false } };
-      setMeta(m3); saveMeta(m3);
+      updateMeta((m) => ({ ...commitEventDay(m), eventReward: { converted: [], reward2x: false } }));
       try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "event_challenge", reward2x: false }); } catch (_) {}
       setG((prev) => ({ ...prev, event: { ...prev.event, phase: "reward" } }));
     } else {
@@ -3508,59 +3578,61 @@ export default function KiriwatariNoMori() {
   }
 
   // 宝樹の雫を1つ変換する(継承枠 or 精の結晶)。run 用の saveRun は呼ばない。
+  // 前提判定・状態組み立てはすべて gRef.current から同期的に行う(resolveOrbChoice と同じ理由:
+  // setG(updater) の updater 内で確定させた値を直後の副作用側で読もうとすると、React 18 では
+  // updater が後回しになることがあり、副作用〈=報酬付与〉ごとスキップされてしまう)。
   function eventConvert(kind) {
-    // 「継承枠+1」「精の結晶+1」の2つのボタンを連打/同時タップされても二重に受け取れないよう、
-    // 「受け取り済みにする」処理そのものを functional setG の中で行う。
-    // setG の関数型更新はタップが重なっても正しく直列合成されるため、2回目の呼び出しは
-    // (レンダーを待たずとも)1回目が加えた converted を見て確実に弾かれる。
-    let newConverted = null;
-    let total = 1;
-    setG((s) => {
-      const ev = s.event || {};
-      total = 1 + (ev.reward2x ? 1 : 0);
-      if ((ev.converted || []).length >= total) return s; // 連打ガード: これ以上は変換できない
-      newConverted = [...(ev.converted || []), kind];
-      return { ...s, event: { ...ev, converted: newConverted } };
-    });
-    if (!newConverted) return; // このタップでは何も受け取れなかった(既に取得済み)
+    const s0 = gRef.current;
+    const ev = s0.event || {};
+    const total = 1 + (ev.reward2x ? 1 : 0);
+    if ((ev.converted || []).length >= total) return; // 連打ガード: これ以上は変換できない
+    const newConverted = [...(ev.converted || []), kind];
+    const ns = { ...s0, event: { ...ev, converted: newConverted } };
+    setG(ns);
+    // AD-04: resolveOrbChoice と同じ理由で、同一ティック内でもう一方のボタンが押されても
+    // 直前の choice を確実に見えるようにする(次のレンダーを待つと gRef.current が古いままで、
+    // 「継承枠+1」「精の結晶+1」を連打すると両方通ってしまう実例を確認した)。
+    gRef.current = ns;
 
-    const m = metaRef.current;
-    const m2 = kind === "slot"
-      ? { ...m, slots: (m.slots || 0) + 1 }
-      : { ...m, dewBank: (m.dewBank || 0) + 1 };
     // 全報酬受け取り済みなら eventReward をクリア、途中ならカレント状態を保存
-    const m3 = newConverted.length >= total
-      ? { ...m2, eventReward: null }
-      : { ...m2, eventReward: { ...(m.eventReward || {}), converted: newConverted } };
-    setMeta(m3); saveMeta(m3);
+    updateMeta((m) => {
+      const m2 = kind === "slot"
+        ? { ...m, slots: (m.slots || 0) + 1 }
+        : { ...m, dewBank: (m.dewBank || 0) + 1 };
+      return newConverted.length >= total
+        ? { ...m2, eventReward: null }
+        : { ...m2, eventReward: { ...(m.eventReward || {}), converted: newConverted } };
+    });
   }
 
   // 通常ドロップの宝樹の雫を1つ変換する(継承枠 or 精の結晶)。
-  // 「継承枠+1」「精の結晶+1」の2ボタンを連打/同時タップされても二重に受け取れないよう、
-  // 「受け取り済みにする(orbChoice を閉じる)」処理を functional setG の中で行う(eventConvert と同じ考え方)。
+  // 前提判定・状態組み立てはすべて gRef.current から同期的に行う(useItem と同じ理由:
+  // setG(updater) の updater は React 18 で後回しになりうるため、updater の中で確定させた値を
+  // 直後の副作用(setMeta 等)側で読もうとすると、その副作用ごと丸々スキップされてしまう
+  // ―― 実際に「雫を使っても継承枠も結晶も増えない」という形でこのプロジェクトで発生した実例)。
+  // 「継承枠にする」/「結晶にする」の二択ボタンをほぼ同時にタップされても片方だけが適用
+  // されるよう、setG の直後に gRef.current もその場で最新化する(次のレンダーを待たない)。
+  // 以前はこれをしていなかったため、2つのボタンをほぼ同時に押すと両方とも
+  // gRef.current.orbChoice=true をまだ見てしまい、後勝ちの setMeta で片方の報酬
+  // (枠+1 or 結晶+1)が黙って消えることがあった。
   function resolveOrbChoice(kind) {
-    // committed に確定後の状態を直接キャプチャする(setG 直後の gRef.current は
-    // React がまだ再レンダーしておらず古いままなので、そこから読むと「雫がまだ袋にある」
-    // 状態のまま保存されてしまい、タスキルで雫が復活して報酬を何度も受け取れてしまう)。
-    let committed = null;
-    setG((s) => {
-      if (!s.orbChoice) return s; // 既に他方のボタン(または多重タップ)で処理済み
-      // ここで初めて雫を袋から消費する(useItem では選択が確定するまで消さずに残しておいた)。
-      const dewIdx = s.inv.findIndex((x) => x.kind === "item" && x.itemId === "dew");
-      const inv = dewIdx >= 0 ? s.inv.filter((_, i) => i !== dewIdx) : s.inv;
-      const text = kind === "slot" ? "宝樹の雫が輝く……継承枠が永続+1された。" : "宝樹の雫が砕け、精の結晶に変わった。";
-      committed = { ...s, inv, orbChoice: false, logs: [...(s.logs || []), { id: uid(), text, hi: true }] };
-      return committed;
-    });
-    if (!committed) return;
+    const st0 = gRef.current;
+    if (!st0.orbChoice) return; // 既に他方のボタン(または多重タップ)で処理済み
+    // ここで初めて雫を袋から消費する(useItem では選択が確定するまで消さずに残しておいた)。
+    const dewIdx = st0.inv.findIndex((x) => x.kind === "item" && x.itemId === "dew");
+    const inv = dewIdx >= 0 ? st0.inv.filter((_, i) => i !== dewIdx) : st0.inv;
+    const text = kind === "slot" ? "宝樹の雫が輝く……継承枠が永続+1された。" : "宝樹の雫が砕け、精の結晶に変わった。";
+    // B-3: ログの形は { text, strong, k } に統一する(pushLog と同じ形)。{ id, text, hi } という
+    // 別形式だと、描画側が見ている key={l.k} / l.strong が undefined になり、React の
+    // 重複キー警告や描画崩れの原因になる。
+    const committed = pushLog({ ...st0, inv, orbChoice: false }, text, true);
+    setG(committed);
+    gRef.current = committed; // 同一ティック内で他方のボタンが押されても orbChoice=false を見るようにする
 
-    const m = metaRef.current;
-    const m2 = kind === "slot"
+    updateMeta((m) => kind === "slot"
       ? { ...m, slots: (m.slots || 0) + 1 }
-      : { ...m, dewBank: (m.dewBank || 0) + 1 };
-    setMeta(m2); saveMeta(m2);
+      : { ...m, dewBank: (m.dewBank || 0) + 1 });
     // 雫消費後の状態を保存(タスキル後に雫が復活して二重適用されるのを防ぐ)。
-    // committed(確定済みの新状態)から保存する。gRef.current は使わない。
     flushSaveRun(committed);
   }
 
@@ -3630,34 +3702,43 @@ export default function KiriwatariNoMori() {
             </div>
           )}
           {savedRun && (
+            // 中断中の冒険がある間は、それを無言で捨てる経路(「続ける」で新しく始める/「放棄」)を
+            // 一切出さない。必ず「再開」または「転生を選ぶ」だけを通す。
             <div style={{ display: "flex", gap: 8, marginTop: 6, justifyContent: "center" }}>
               {savedRun.phase === "dead" ? (
-                <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--danger)", color: "var(--danger)" }}
+                <button className="kw-btn" style={{ padding: "13px 32px", fontSize: 14, borderColor: "var(--danger)", color: "var(--danger)" }}
                   onClick={() => resumeRun(savedRun)}>
                   転生を選ぶ（旅人は倒れた）
                 </button>
               ) : (
-                <button className="kw-btn" style={{ padding: "10px 20px", fontSize: 12, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+                <button className="kw-btn" style={{ padding: "13px 32px", fontSize: 14, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
                   onClick={() => resumeRun(savedRun)}>
                   再開（{floorLabel(savedRun.floor)}層）
                 </button>
               )}
-              <button className="kw-btn ghost" style={{ padding: "10px 14px", fontSize: 12, color: "var(--danger)", borderColor: "rgba(220,80,80,.35)" }}
-                onClick={() => setConfirmAbandon(true)}>
-                放棄
-              </button>
             </div>
           )}
-          <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "center" }}>
-            <button className="kw-btn primary" style={{ padding: "13px 32px", fontSize: 14 }}
-              onClick={() => savedRun ? setConfirmNewRun(() => (metaOverride) => startRun(metaOverride)) : startRun()}>
-              {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章から続ける` : "森 へ 入 る"}
-            </button>
-            {meta.checkpoint > 1 && (
+          {/* 「続ける/森へ入る」は中断中の冒険を無言で上書きしてしまうため、savedRun が無い
+              (=失うものが無い)ときだけ出す。「章を選ぶ」は生存中なら所持品を保ったままの
+              安全なワープなので、savedRun の有無にかかわらず常に出してよい。 */}
+          {!savedRun && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "center" }}>
+              <button className="kw-btn primary" style={{ padding: "13px 32px", fontSize: 14 }}
+                onClick={() => startRun()}>
+                {meta.checkpoint > 1 ? `第${Math.min(meta.checkpoint, 10)}章から続ける` : "森 へ 入 る"}
+              </button>
+              {meta.checkpoint > 1 && (
+                <button className="kw-btn ghost" style={{ padding: "13px 18px", fontSize: 13 }}
+                  onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
+              )}
+            </div>
+          )}
+          {savedRun && meta.checkpoint > 1 && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "center" }}>
               <button className="kw-btn ghost" style={{ padding: "13px 18px", fontSize: 13 }}
                 onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
-            )}
-          </div>
+            </div>
+          )}
           {eventStatus(meta).withinPeriod && (
             <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
               <button className="kw-btn ghost" style={{ padding: "10px 28px", position: "relative",
@@ -3735,8 +3816,11 @@ export default function KiriwatariNoMori() {
                           // 冒険中(生存中)のワープ: 何も失われないので確認なしで移動する
                           warpToChapter(i, savedRun);
                         } else if (savedRun) {
-                          // 死亡データが残っている場合は、確認のうえ新しい生を開始する
-                          setConfirmNewRun(() => (metaOverride) => { setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i, metaOverride); });
+                          // 死亡データが残っている場合は「転生を選ぶ」へ誘導する(そちら自体に
+                          // 章選択が付いているため、ここで別途新しい生を開始する必要はない。
+                          // 中断データを無言で破棄する経路は作らない)。
+                          setG((s) => ({ ...s, chapterSelect: false }));
+                          resumeRun(savedRun);
                         } else {
                           setG((s) => ({ ...s, chapterSelect: false })); startFromChapter(i);
                         }
@@ -3766,58 +3850,6 @@ export default function KiriwatariNoMori() {
             </div>
           </div>
         )}
-        {confirmAbandon && (
-          <div className="kw-overlay top" onClick={() => setConfirmAbandon(false)}>
-            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-              <h2 style={{ color: "var(--danger)" }}>冒険を放棄しますか?</h2>
-              <div className="kw-sub">
-                中断セーブを削除します。<br />
-                {savedRun?.phase === "dead"
-                  ? <>所持していた品の中から価値の高いものが自動で継承されます(章クリアなどのメタ記録も保たれます)。</>
-                  : <>所持していたアイテムや進行状況はすべて失われます。<br />転生回数・継承品・スキルなどのメタ記録は保たれます。</>}
-              </div>
-              <div className="kw-actions">
-                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
-                  onClick={() => setConfirmAbandon(false)}>← キャンセル</button>
-                <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
-                  onClick={() => {
-                    // 死亡直後の継承選択を経ずに放棄する場合、アイテムが丸ごと消えないよう自動継承しておく。
-                    if (savedRun?.phase === "dead") autoCarryOverFromDeadRun(savedRun);
-                    clearRun(); setSavedRun(null); setConfirmAbandon(false);
-                  }}>
-                  放棄する
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        {confirmNewRun && (
-          <div className="kw-overlay top" onClick={() => setConfirmNewRun(null)}>
-            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-              <h2>中断データがあります</h2>
-              <div className="kw-sub">
-                {savedRun?.phase === "dead"
-                  ? <>新しく始めると、所持していた品の中から価値の高いものが自動で継承されます。</>
-                  : <>新しく始めると、中断中の冒険データは失われます。</>}<br />
-                転生回数・継承品・スキルなどのメタ記録は保たれます。
-              </div>
-              <div className="kw-actions">
-                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
-                  onClick={() => setConfirmNewRun(null)}>← キャンセル</button>
-                <button className="kw-btn primary"
-                  onClick={() => {
-                    // 死亡直後の継承選択を経ずに新しく始める場合、アイテムが丸ごと消えないよう自動継承しておく。
-                    // setMeta は非同期なので、確定させた meta はここから直接 confirmNewRun(m2) へ渡す
-                    // (confirmNewRun 経由で呼ばれる startFromChapter 側のクロージャの meta はまだ古いまま)。
-                    const m2 = savedRun?.phase === "dead" ? autoCarryOverFromDeadRun(savedRun) : null;
-                    clearRun(); setSavedRun(null); confirmNewRun(m2); setConfirmNewRun(null);
-                  }}>
-                  新しく始める
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         {g.confirmReset && (
           <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, confirmReset: false }))}>
             <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
@@ -3831,9 +3863,11 @@ export default function KiriwatariNoMori() {
                 <button className="kw-btn ghost" style={{ marginRight: "auto" }}
                   onClick={() => setG((s) => ({ ...s, confirmReset: false }))}>← キャンセル</button>
                 <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
-                  onClick={async () => {
-                    const m2 = { ...meta, checkpoint: 1, inherited: [] };
-                    setMeta(m2); await saveMeta(m2);
+                  onClick={() => {
+                    updateMeta((m) => ({ ...m, checkpoint: 1, inherited: [] }));
+                    // S-4: 中断中のランが残っていると、checkpoint=1 にリセットしたのに
+                    // タイトルの「再開」が深い章のままのデータを指し続けてしまう。
+                    clearRun(); setSavedRun(null);
                     setG({ screen: "title" });
                   }}>やり直す</button>
               </div>
@@ -3898,6 +3932,24 @@ export default function KiriwatariNoMori() {
                   閉じる
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+        {showCompensation && meta && !meta.compensationDewClaimed && (
+          <div className="kw-overlay top">
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 340, textAlign: "center" }}>
+              <div style={{ fontSize: 28 }}>
+                <Sparkles size={28} color="var(--hotaru)" strokeWidth={1.5} />
+              </div>
+              <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 16 }}>お詫びと感謝の印</h3>
+              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", margin: "10px 0 18px" }}>
+                以前のバージョンで、宝樹の雫を使っても継承枠・精の結晶が増えない不具合がありました。<br />
+                お詫びとして、<b style={{ color: "var(--hotaru)" }}>精の結晶を{COMPENSATION_DEW_AMOUNT}個</b>を配布いたします。不具合が生じてしまい申し訳ございません。
+              </div>
+              <button className="kw-btn primary" style={{ padding: "10px 28px", fontSize: 13 }}
+                onClick={claimCompensationDew}>
+                受け取る
+              </button>
             </div>
           </div>
         )}
@@ -4091,6 +4143,7 @@ export default function KiriwatariNoMori() {
               <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 10, letterSpacing: ".1em" }}
                 onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図鑑</button>
               <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
+                disabled={g.busy}
                 onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
             </div>
             <div className="kw-progress" style={{ justifyContent: "flex-end" }}>
@@ -4619,9 +4672,8 @@ export default function KiriwatariNoMori() {
               </div>
             </div>
             <div className="kw-actions" style={{ justifyContent: "center" }}>
-              <button className="kw-btn primary" onClick={async () => {
-                const m2 = { ...meta, checkpoint: 1 };
-                setMeta(m2); await saveMeta(m2);
+              <button className="kw-btn primary" onClick={() => {
+                updateMeta((m) => ({ ...m, checkpoint: 1 }));
                 setG({ screen: "title" });
               }}>森の入り口へ帰る</button>
             </div>
@@ -4667,8 +4719,12 @@ export default function KiriwatariNoMori() {
               <button className="kw-btn ghost" style={{ marginRight: "auto" }} onClick={() => setG((s) => ({ ...s, confirm: null }))}>← 続ける</button>
               <button className="kw-btn primary" onClick={() => {
                 const aliveEnemies = (g.enemies || []).filter((e) => e.hp > 0);
-                const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies };
-                saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies);
+                // S-3: 章クリア画面(未回収の確定ドロップが残っている)で中断すると、
+                // rewardPhase/drops を渡し忘れて確定報酬(伝説装備・苔の心臓等)が消えていた。
+                const rewardPhase = g.phase === "clear" ? "clear" : null;
+                const drops = g.phase === "clear" ? g.drops : null;
+                const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies, rewardPhase, drops };
+                saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies, rewardPhase, drops);
                 setSavedRun(rd);
                 setG({ screen: "title" });
               }}>中断してタイトルへ</button>
