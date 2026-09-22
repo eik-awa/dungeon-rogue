@@ -6,7 +6,7 @@ const { makeDriver } = require('./drive');
 const SAVE_KEY = 'kiriwatari-forest-save';
 
 const EVENT_JST_OFFSET = 9 * 3600_000;
-const FIXED_NOW = new Date('2026-09-03T12:00:00Z').getTime();
+const FIXED_NOW = new Date('2026-09-20T12:00:00Z').getTime();
 const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
 
 async function main() {

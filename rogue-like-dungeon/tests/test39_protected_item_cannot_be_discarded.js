@@ -1,6 +1,9 @@
 // ITEM-14: a protected item (locked, or high-value under `protectRareItems`) cannot be
 // discarded — the "捨てる" button itself is disabled, AND discardItem() independently guards
 // on isItemProtected() so even a raw click bypassing the disabled attribute is a no-op.
+// (Protect settings and per-item lock are now unified: resumeRun() auto-locks any item that
+// matches an active protect setting, so a "protected" item just shows as a real locked item
+// — "ロック中" — and can be freed again from the bag's own lock icon, not just via Settings.)
 const { makeDriver } = require('./drive');
 const { act } = require('react-dom/test-utils');
 const SAVE_KEY = 'kiriwatari-forest-save';
@@ -38,12 +41,12 @@ async function main() {
 
   const discardBtn = d.findButtonContaining('捨てる');
   console.log('[2] "捨てる" button NOT offered (disabled) for the protected item:', !discardBtn);
-  const protectedLabelShown = d.text().includes('保護中');
-  console.log('[3] "保護中" label shown in place of an active button:', protectedLabelShown);
+  const protectedLabelShown = d.text().includes('ロック中');
+  console.log('[3] "ロック中" label shown in place of an active button (auto-locked by the protect setting):', protectedLabelShown);
 
   // Even a raw click bypassing the disabled attribute must not remove the item, since
   // discardItem() itself independently guards on isItemProtected().
-  const anyDiscardBtn = Array.from(d.container.querySelectorAll('button')).find((b) => b.textContent.includes('保護中'));
+  const anyDiscardBtn = Array.from(d.container.querySelectorAll('button')).find((b) => b.textContent.includes('ロック中'));
   if (anyDiscardBtn) {
     act(() => { anyDiscardBtn.dispatchEvent(new d.env.window.MouseEvent('click', { bubbles: true, cancelable: true })); });
   }

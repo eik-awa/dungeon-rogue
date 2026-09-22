@@ -50,6 +50,18 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     private var requestSeq: UInt64 = 0
     private var pendingRequestID: UInt64?
 
+    /// didRewardAd / didCloseAd は公式ドキュメントでも「順序は保証されない
+    /// (didRewardAd が didCloseAd より後に届くことがある)」と明記されている。
+    /// didCloseAd を先に受け取っても即座に .dismissed 扱いにはせず、このフラグで
+    /// 「今回の視聴で既に didRewardAd が届いたか」を追跡する(show() のたびにリセット)。
+    private var pendingRewardGranted = false
+
+    /// 連続ロード失敗回数。「失敗したら確実に広告が行き渡るように」という要望への対応。
+    /// didFailToLoadAd のたびに preloadIfNeeded で再ロードは試みているが、それでも
+    /// 3回連続で失敗する場合は個別のロード問題ではなく SDK セッション側の失効を疑い、
+    /// LevelPlayAdsController に丸ごと再初期化させる(バナー側と同じ考え方)。
+    private var consecutiveLoadFailures = 0
+
     private override init() {
         super.init()
     }
@@ -87,6 +99,7 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
         if let ad = ad, ad.isAdReady() {
             onResult = completion
             pendingRequestID = nil
+            pendingRewardGranted = false
             ad.showAd(viewController: vc, placementName: nil)
             return
         }
@@ -132,6 +145,7 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     func didLoadAd(with adInfo: LPMAdInfo) {
         print("[RewardedAd] loaded")
         loadStartedAt = nil
+        consecutiveLoadFailures = 0
         // show() がロード完了前に呼ばれ、まだ待機中ならここで表示する。
         guard let cb = pendingCompletion,
               let ad = ad, ad.isAdReady(),
@@ -139,8 +153,11 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
         pendingCompletion = nil
         pendingRequestID = nil
         onResult = cb
+        pendingRewardGranted = false
         ad.showAd(viewController: vc, placementName: nil)
     }
+
+    private static let loadRetryDelays: [TimeInterval] = [5, 15, 30]
 
     func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
         print("[RewardedAd] load failed: \(error)")
@@ -151,13 +168,21 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
             pendingRequestID = nil
             cb(.unavailable)
         }
+        consecutiveLoadFailures += 1
+        if consecutiveLoadFailures >= 3 {
+            // リワード広告単体のリロードを何度試みても駄目なら、個別のロード問題ではなく
+            // SDK セッション側を疑う。次に成功すれば didLoadAd でリセットされる。
+            LevelPlayAdsController.shared.forceReinitialize(reason: "rewarded_repeated_failure")
+        }
         // 次回のために少し置いて再プリロード(広告ブロック解除後に復旧できるよう)。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.preloadIfNeeded() }
+        let delay = Self.loadRetryDelays[min(consecutiveLoadFailures - 1, Self.loadRetryDelays.count - 1)]
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.preloadIfNeeded() }
     }
 
     func didDisplayAd(with adInfo: LPMAdInfo) {}
 
     func didRewardAd(with adInfo: LPMAdInfo, reward: LPMReward) {
+        pendingRewardGranted = true
         finish(.rewarded)
     }
 
@@ -174,7 +199,16 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     func didCloseAd(with adInfo: LPMAdInfo) {
         // didRewardAd を経ずに閉じられた場合(視聴を最後まで完了しなかった)は dismissed 扱い。
         // 回数を消費するのは didRewardAd 経由の成功時のみ(S1-6)。
-        finish(.dismissed)
+        // ただし公式ドキュメント通り didRewardAd が didCloseAd より後に届くことがあるため、
+        // ここで即座に .dismissed 確定させると、視聴自体は成功していたのに報酬を取り逃す
+        // (finish は最初の呼び出しだけが有効なので、後から来た didRewardAd が無視される)。
+        // pendingRewardGranted がまだ立っていなければ、少し待ってから確定する。
+        if !pendingRewardGranted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, !self.pendingRewardGranted else { return }
+                self.finish(.dismissed)
+            }
+        }
         preload()
     }
 }

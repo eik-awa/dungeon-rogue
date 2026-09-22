@@ -4,7 +4,7 @@
 // does `gRef.current = ns` after setG(), so a same-tick second call still sees the PRE-update
 // gRef.current and can pass the `converted.length >= total` guard a second time.
 //
-// The shrine event is time-gated to EVENT_START..EVENT_END (a past window relative to
+// The shrine event is time-gated to EVENT_START..EVENT_END (a fixed window unrelated to
 // whatever "today" the test machine's clock reports), so Date.now() is stubbed to a fixed
 // instant inside that window just for this test (only the numeric `now`, not the Date
 // constructor itself — eventJstDay() always receives an explicit epoch argument).
@@ -12,7 +12,7 @@ const { makeDriver } = require('./drive');
 const SAVE_KEY = 'kiriwatari-forest-save';
 
 const EVENT_JST_OFFSET = 9 * 3600_000;
-const FIXED_NOW = new Date('2026-09-03T12:00:00Z').getTime();
+const FIXED_NOW = new Date('2026-09-20T12:00:00Z').getTime();
 const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
 
 async function main() {
