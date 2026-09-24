@@ -33,8 +33,13 @@ async function testCloseButtonsAreGhostNotPrimary() {
   await d.mount();
   await d.click(d.findButtonContaining('遊び方'));
   await d.flush();
-  const guideClose = d.findButtonContaining('閉じる');
-  const guideCloseGhost = guideClose.className.includes('ghost') && !guideClose.className.includes('primary');
+  // The 遊び方 close button is icon-only (an X glyph, no text label), so it can't be found by
+  // text. (A plain findButtonContaining('閉じる') used to accidentally match the unrelated
+  // period-limited event banner's own "閉じる" button whenever that banner happened to be
+  // showing — this scopes to the guide overlay's own icon-only ghost button instead.)
+  const guideClose = Array.from(d.container.querySelectorAll('.kw-overlay button.kw-btn.ghost'))
+    .find((b) => b.querySelector('svg') && b.textContent.trim() === '');
+  const guideCloseGhost = !!guideClose && guideClose.className.includes('ghost') && !guideClose.className.includes('primary');
   console.log('[3] 遊び方 close button uses ghost style (not the loud yellow primary):', guideCloseGhost);
   await d.click(guideClose);
   await d.flush();

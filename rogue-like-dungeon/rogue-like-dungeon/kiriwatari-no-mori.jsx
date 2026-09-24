@@ -254,6 +254,27 @@ const CONSUMABLES = {
 // 約2倍に引き上げ、袋の中でも実際の威力(bombPowerAt(g.floor))を表示して選びやすくする。
 const bombPowerAt = (floor) => 30 + Math.round(floor * 4);
 
+// 袋の並び替え「種類別」の既定順。武器は種類→レア度(高い順)、防具はスロット→レア度、
+// 消耗品は定義順で揃える。同点は Array.prototype.sort の安定性により入手順のまま残る。
+const RARITY_RANK = Object.fromEntries(RARITIES.map((r, i) => [r.id, i]));
+const ARMOR_SLOT_ORDER = Object.keys(ARMOR_TYPES);
+const CONSUMABLE_ORDER = Object.keys(CONSUMABLES);
+function bagSortByType(a, b) {
+  if (a.kind === "weapon" && b.kind === "weapon") {
+    const ta = GUIDE_WEAPON_ORDER.indexOf(a.type), tb = GUIDE_WEAPON_ORDER.indexOf(b.type);
+    if (ta !== tb) return ta - tb;
+    const ra = RARITY_RANK[a.rarity] ?? 0, rb = RARITY_RANK[b.rarity] ?? 0;
+    return rb - ra;
+  }
+  if (a.kind === "armor" && b.kind === "armor") {
+    const sa = ARMOR_SLOT_ORDER.indexOf(a.slot), sb = ARMOR_SLOT_ORDER.indexOf(b.slot);
+    if (sa !== sb) return sa - sb;
+    const ra = RARITY_RANK[a.rarity] ?? 0, rb = RARITY_RANK[b.rarity] ?? 0;
+    return rb - ra;
+  }
+  return CONSUMABLE_ORDER.indexOf(a.itemId) - CONSUMABLE_ORDER.indexOf(b.itemId);
+}
+
 /* ------------------------------------------------------------
    敵図鑑(全10章)
    weak: 弱点(1.6倍) / resist: 耐性(0.5倍)
@@ -447,6 +468,9 @@ const ri = (a, b) => Math.floor(rnd(a, b + 1));
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 let UID = 1;
 const uid = () => `e${UID++}_${Date.now() % 100000}`;
+// 同じ対象に複数のフロート数字が同時発生すると(杖の回復と余韻のライフスティールが重なる場合など)
+// 全く同じ座標に重なって判読できなくなるため、横方向にずらして表示する。
+const floatOffsetX = (i, n) => (n <= 1 ? 0 : (i - (n - 1) / 2) * 26);
 
 // メタ依存の派生値
 function weaponSlotsOf(m) {
@@ -606,7 +630,9 @@ const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0,
   // ラン開始時に空になり、中断してタイトルへ戻っただけでも一時的に空になるため、
   // inherited の有無では「一度も武器を持ったことがないか」を正しく判定できない
   // (starterState は常に武器を1本持たせるので、ラン開始が一度でもあれば true になる)。
-  everHadWeapon: false };
+  everHadWeapon: false,
+  // 袋の中身の並び順。"type" = 種類別(かつ同種内はレア度順、既定) / "acquired" = 入手順。
+  bagSortMode: "type" };
 const COMPENSATION_DEW_AMOUNT = 5;
 
 /* ------------------------------------------------------------
@@ -640,6 +666,9 @@ const EVENT_TURNS = 3;                         // 金枝の古精が留まるタ
 // カテゴリ別ランキング70位突破記念 — 期間限定(JST。両端を含む)。次回開催時はこの2つを更新する。
 const EVENT_START = "2026-09-19";
 const EVENT_END   = "2026-09-24";
+// このイベントを一旦無効化する(バナー・古精の出現とも止まる)。再開する時は true に戻し、
+// 上の EVENT_START/EVENT_END を次回開催の期間に更新する。
+const EVENT_ENABLED = false;
 const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
 function eventStatus(meta) {
   const now = Date.now();
@@ -648,7 +677,7 @@ function eventStatus(meta) {
   const today = eventJstDay(now);
   const beforePeriod = today < EVENT_START;
   const afterPeriod = today > EVENT_END;
-  const withinPeriod = !beforePeriod && !afterPeriod;
+  const withinPeriod = EVENT_ENABLED && !beforePeriod && !afterPeriod;
   return {
     now, today, clockBack, withinPeriod, beforePeriod, afterPeriod,
     claimedToday: meta?.eventDay === today,
@@ -1429,8 +1458,8 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack }) {
       onClick={() => { if (pending && e.hp > 0) onAttack(pending, e.id); }}
       role="button" aria-label={`${e.name}を狙う`}
     >
-      {myFloats.map((f) => (
-        <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size }}>{f.text}</div>
+      {myFloats.map((f, i) => (
+        <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, left: `calc(50% + ${floatOffsetX(i, myFloats.length)}px)` }}>{f.text}</div>
       ))}
       <div className="kw-eicon">
         <AssetIcon assetId={e.asset} size={e.boss ? 54 : 36} color={e.rare ? "var(--hotaru)" : "var(--mist)"} />
@@ -1808,7 +1837,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 30,
+      position: "fixed", inset: 0, zIndex: 60,
       background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "var(--font-body)", overflow: "hidden",
     }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -2235,20 +2264,13 @@ export default function KiriwatariNoMori() {
   });
   const [savedRun, setSavedRun] = useState(null);
   const [discardConfirm, setDiscardConfirm] = useState(null); // null or item to discard
-  // 武器スロットの並び替え(ドラッグ&ドロップ)。ドラッグ開始位置は再レンダーの
-  // たびに保存し直す必要が無いので ref、ドラッグ中の視覚フィードバック(浮かせる・
-  // ドロップ先のハイライト)は再描画が要るので state にする。
-  const [weaponReorderOn, setWeaponReorderOn] = useState(false);
-  const [dragWeaponIdx, setDragWeaponIdx] = useState(null);
-  const [dragOverIdx, setDragOverIdx] = useState(null);
-  const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 });
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  // 各武器スロットの DOM 要素を集めておき、ドロップ先の判定は座標の幾何的な
-  // 包含チェックで行う(document.elementFromPoint は、ドラッグ中の要素自体を
-  // transform で指先の真下に動かしているため、常に「自分自身」を指してしまい
-  // 下にある本来のドロップ先を検出できなかった — 実機で入れ替えが決まらない
-  // 不具合の原因)。
-  const weaponSlotRefs = useRef({});
+  // 武器スロットの並び替え: スクロールと競合するドラッグをやめ、武器だけのポップアップで
+  // 「入れ替えたい2枠を順にタップ」する方式にする。
+  const [reorderPopup, setReorderPopup] = useState(false);
+  const [reorderSel, setReorderSel] = useState(null);
+  // ポップアップ内のドラッグ: タップ(ほぼ動かさない)なら選択、動かして別スロットの上で離せば入れ替え。
+  const [popDrag, setPopDrag] = useState(null); // { idx, x0, y0, dx, dy, over }
+  const popSlotRefs = useRef({});
   // 「遊び方」画面のタブ(章ごとにボタンで切り替え)。
   const [guideTab, setGuideTab] = useState("battle");
   // 不具合お詫び配布(精の結晶 x5)。meta 読み込み後、未受け取りなら true にする。
@@ -2263,6 +2285,7 @@ export default function KiriwatariNoMori() {
   const [consentApplicable, setConsentApplicable] = useState(false);
   // 起動後1回だけ表示するイベント告知バナー(イベント期間外は false で初期化)
   const [showEventBanner, setShowEventBanner] = useState(() => {
+    if (!EVENT_ENABLED) return false;
     const today = eventJstDay(Date.now());
     return today >= EVENT_START && today <= EVENT_END;
   });
@@ -2419,6 +2442,12 @@ export default function KiriwatariNoMori() {
         scheduleSaveRun(ns);
       }
     }
+  }
+
+  // 袋の並び順設定を切り替えて永続化する
+  function setBagSortMode(mode) {
+    if (!metaRef.current) return;
+    updateMeta((m) => ({ ...m, bagSortMode: mode }));
   }
 
   // ネイティブハンドラへ BGM メッセージを送信
@@ -2830,7 +2859,7 @@ export default function KiriwatariNoMori() {
     };
     setSavedRun(null);
     if (savedEnemies.length > 0) {
-      const restored = { ...base, enemies: savedEnemies };
+      const restored = ensureWeapon({ ...base, enemies: savedEnemies });
       saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, restored.enemies);
       setG(restored);
     } else {
@@ -2840,23 +2869,26 @@ export default function KiriwatariNoMori() {
     }
   }
 
+  // 武器スロットが全空なら袋から最強武器を自動装備。袋にもなければ応急の短剣を拾わせる。
+  function ensureWeapon(st) {
+    if (st.weapons.some(Boolean)) return st;
+    let s = st;
+    const inBag = s.inv.filter((x) => x.kind === "weapon");
+    if (inBag.length > 0) {
+      const best = inBag.reduce((a, b) => (b.atk > a.atk ? b : a));
+      s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? best : null)), inv: s.inv.filter((x) => x.id !== best.id) };
+      return pushLog(s, `手に武器がない……${best.name}を袋から取り出した。`);
+    }
+    const fallback = makeWeapon(Math.max(1, s.floor - 2), { type: "dagger", rarity: "common" });
+    s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? fallback : null)) };
+    return pushLog(s, "折れかけた短剣が転がっていた。拾い上げて握りしめる……", true);
+  }
+
   function enterNode(st) {
     const kind = st.nodes[st.node];
     let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false, dewAdOffer: false };
     if (kind === "battle" || kind === "boss") {
-      // 武器スロットが全空なら袋から最強武器を自動装備。袋にもなければ応急の短剣を生成。
-      if (!s.weapons.some(Boolean)) {
-        const inBag = s.inv.filter((x) => x.kind === "weapon");
-        if (inBag.length > 0) {
-          const best = inBag.reduce((a, b) => (b.atk > a.atk ? b : a));
-          s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? best : null)), inv: s.inv.filter((x) => x.id !== best.id) };
-          s = pushLog(s, `手に武器がない……${best.name}を袋から取り出した。`);
-        } else {
-          const fallback = makeWeapon(Math.max(1, s.floor - 2), { type: "dagger", rarity: "common" });
-          s = { ...s, weapons: s.weapons.map((_, i) => (i === 0 ? fallback : null)) };
-          s = pushLog(s, "折れかけた短剣が転がっていた。拾い上げて握りしめる……", true);
-        }
-      }
+      s = ensureWeapon(s);
       s.phase = "battle";
       const lastRare = s.lastRareSeen || 0;
       const rareChance = meta ? rareChanceOf(meta, s.floor) : 0.04 + stageOf(s.floor) * 0.02;
@@ -2869,12 +2901,18 @@ export default function KiriwatariNoMori() {
         for (const e of s.enemies) { if (e.bookId && !ns[e.bookId]) { ns[e.bookId] = true; ch = true; } }
         if (ch) updateMeta({ seen: ns }); }
       s.cds = {};
+      s.turn = 1;
+      s = pushLog(s, "【戦闘開始】", true);
+      s = pushLog(s, `── ターン${s.turn} ──`, true);
       // 呼吸法・再生の心得: 戦闘開始時にHPを回復
       const battleStartHealPct = skillEffectTotal(meta?.skills, "battleStartHealPct");
       if (battleStartHealPct > 0 && s.player.hp > 0) {
         const mx = maxHpOf(s);
         const heal = Math.round(mx * battleStartHealPct);
-        if (heal > 0 && s.player.hp < mx) s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+        if (heal > 0 && s.player.hp < mx) {
+          s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
+          s = pushLog(s, `呼吸を整え、HPを${heal}回復した`);
+        }
       }
       s = pushLog(s, kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss");
       if (s.enemies.some((e) => e.rare)) s = pushLog(s, "……金色の光。金枝の精が紛れている!", true);
@@ -2944,10 +2982,15 @@ export default function KiriwatariNoMori() {
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
     const floats = [];
+    // フロートの数字は1.1秒で消えてしまうため(kwRise)、戦闘ログにも残す。
+    const hitLogs = [];
+    const extraLogs = [];
+    const nameOf = (eid) => enemies.find((x) => x.id === eid)?.name || "敵";
     const F = (eid, r) => {
       const label = r.tag === "weak" ? `弱点 ${r.dmg}` : r.tag === "res" ? `耐性 ${r.dmg}` : `${r.dmg}`;
       const color = r.tag === "weak" ? "var(--hotaru)" : r.tag === "res" ? "var(--paper-dim)" : "var(--paper)";
       floats.push({ key: uid(), targetId: eid, text: label, color, size: r.tag === "weak" ? 24 : 19, t: Date.now() });
+      hitLogs.push(`${nameOf(eid)}に${r.dmg}ダメージを与えた${r.tag === "weak" ? "(弱点)" : r.tag === "res" ? "(耐性)" : ""}`);
     };
 
     if (weapon.type === "dagger") {
@@ -2958,7 +3001,9 @@ export default function KiriwatariNoMori() {
         const r = hitEnemy(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered);
         dmgDealtThisAction += r.dmg;
         if (crit) {
-          floats.push({ key: uid(), targetId: target.id, text: `会心 ${r.dmg}`, color: "var(--hotaru)", size: 24, t: Date.now() });
+          const label = `会心 ${r.dmg}`;
+          floats.push({ key: uid(), targetId: target.id, text: label, color: "var(--hotaru)", size: 24, t: Date.now() });
+          hitLogs.push(`${target.name}に${r.dmg}ダメージを与えた(会心)`);
         } else {
           F(target.id, r);
         }
@@ -2990,8 +3035,9 @@ export default function KiriwatariNoMori() {
       const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       const heal = Math.round(maxHpOf(s) * 0.1);
       s.player = { ...s.player, hp: Math.min(maxHpOf(s), s.player.hp + heal) };
-      floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
+      floats.push({ key: uid(), targetId: "player", text: `回復 ${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
       s = pushLog(s, `${weapon.name}の光が敵を打ち、身体を癒す。`);
+      extraLogs.push(`HPを${heal}回復した`);
     } else if (weapon.type === "instrument") {
       for (const e of enemies) if (e.hp > 0) {
         const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg;
@@ -3000,13 +3046,16 @@ export default function KiriwatariNoMori() {
       s = pushLog(s, `${weapon.name}の旋律が敵を怯ませる(攻撃弱体)。`);
     }
 
+    for (const t of [...hitLogs, ...extraLogs]) s = pushLog(s, t);
+
     // 余韻(ライフスティール): 与えたダメージの一部を吸収する。
     if (lifestealPct > 0 && dmgDealtThisAction > 0) {
       const mx = maxHpOf(s);
       const heal = Math.round(dmgDealtThisAction * lifestealPct);
       if (heal > 0 && s.player.hp < mx) {
         s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-        floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
+        floats.push({ key: uid(), targetId: "player", text: `回復 ${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
+        s = pushLog(s, `余韻でHPを${heal}回復した`);
       }
     }
 
@@ -3069,11 +3118,13 @@ export default function KiriwatariNoMori() {
     if (c.kind === "heal") {
       const heal = Math.round(mx * c.power);
       s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-      s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
-      s = pushLog(s, `${c.label}を口にした。`);
+      s = addFloat(s, "player", `回復 ${heal}`, "#8fd39a", 20);
+      s = pushLog(s, `${c.label}を口にした。HPを${heal}回復した`);
     } else if (c.kind === "cure") {
-      s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + Math.round(mx * c.power)) };
-      s = pushLog(s, `${c.label}で毒が消えた。`);
+      const heal = Math.round(mx * c.power);
+      s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + heal) };
+      s = addFloat(s, "player", `回復 ${heal}`, "#8fd39a", 20);
+      s = pushLog(s, `${c.label}で毒が消えた。HPを${heal}回復した`);
     } else if (c.kind === "buff") {
       s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
       s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
@@ -3219,19 +3270,19 @@ export default function KiriwatariNoMori() {
       if (stage >= 10) {
         // 百層踏破 — エンディング。所持品は全て次の生へ持ち越せるが、次の生が実際に
         // 保持できる上限(武器スロット+防具3+袋の最大数)は超えられないため、価値の高い順に切り詰める。
+        // ボス討伐自体では継承枠を増やさない(継承枠は宝樹の雫を変換した時だけ増える)ため、
+        // 容量計算は現在の m.slots をそのまま使う。
         const m2 = updateMeta((m) => {
           const mhStages = drops.some((d) => d.itemId === "mossHeart")
             ? [...(m.mossHeartStages || []), sIdx]
             : (m.mossHeartStages || []);
-          const m2Slots = m.slots + 1;
-          const nextMeta = { ...m, slots: m2Slots };
-          const capacity = weaponSlotsOf(nextMeta) + 3 + invCapOf(nextMeta);
+          const capacity = weaponSlotsOf(m) + 3 + invCapOf(m);
           const keep = [...s.weapons.filter(Boolean), ...Object.values(s.armor).filter(Boolean), ...s.inv, ...drops]
             .sort((a, b) => itemScore(b) - itemScore(a))
             .slice(0, capacity);
           // checkpoint もここでリセットしておく(エンディング画面でタスキルされても、
           // 継承品と一緒に「次は1章から」が確定した状態になり、章が巻き戻らない)。
-          return { ...m, mossHeartStages: mhStages, clears: m.clears + 1, slots: m2Slots, bestFloor: 100, inherited: keep, checkpoint: 1 };
+          return { ...m, mossHeartStages: mhStages, clears: m.clears + 1, bestFloor: 100, inherited: keep, checkpoint: 1 };
         });
         s.phase = "ending";
         // 進行度をFirebaseに記録(全章踏破)
@@ -3241,13 +3292,14 @@ export default function KiriwatariNoMori() {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
         }
       } else {
-        // 章クリア: 継承枠+1、次章から再出発できるようになる
+        // 章クリア: 次章から再出発できるようになる。継承枠は増やさない
+        // (継承枠は宝樹の雫を変換した時だけ増える別の進行経路にする)。
         const m2 = updateMeta((m) => {
           const mhStages = drops.some((d) => d.itemId === "mossHeart")
             ? [...(m.mossHeartStages || []), sIdx]
             : (m.mossHeartStages || []);
           return {
-            ...m, mossHeartStages: mhStages, slots: m.slots + 1,
+            ...m, mossHeartStages: mhStages,
             bestFloor: Math.max(m.bestFloor, st.floor),
             checkpoint: Math.max(m.checkpoint || 1, stage + 1),
           };
@@ -3338,18 +3390,22 @@ export default function KiriwatariNoMori() {
       if (dodged) {
         dmg = 0;
         s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: "回避!", color: "#8fd39a", size: 18, t: Date.now() }] };
+        s = pushLog(s, `${e.name}の攻撃。回避!`);
       } else {
         // 不屈の心得: 残りHPが最大値の25%以下のとき被ダメージ軽減
         const lowHpCut = skillEffectTotal(meta?.skills, "lowHpDmgReduction", (eff) => player.hp <= mx * (eff.threshold ?? 0.25));
         if (lowHpCut > 0) dmg = Math.max(1, Math.round(dmg * (1 - lowHpCut)));
         s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `${dmg}`, color: "var(--danger)", size: 20, t: Date.now() }] };
+        // 敵ごとのダメージをログに残す(フロートは1.1秒で消えるため)。
+        s = pushLog(s, `${e.name}から${dmg}ダメージを受けた`);
       }
       player.hp = Math.max(0, player.hp - dmg);
       // 吸収(与ダメの半分を回復)
       if (e.drain && dmg > 0) {
         const rec = Math.round(dmg / 2);
         e.hp = Math.min(e.maxHp, e.hp + rec);
-        s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `+${rec}`, color: "#8fd39a", size: 15, t: Date.now() }] };
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `回復 ${rec}`, color: "#8fd39a", size: 15, t: Date.now() }] };
+        s = pushLog(s, `${e.name}が傷を吸収し、HPを${rec}回復した`);
       }
       // 毒攻撃
       if (e.poison && !poisonImmune && Math.random() < 0.4 && player.poison <= 0) {
@@ -3371,6 +3427,7 @@ export default function KiriwatariNoMori() {
       player.hp = Math.max(0, player.hp - p);
       player.poison -= 1;
       s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `毒 ${p}`, color: "#a98ad9", size: 16, t: Date.now() }] };
+      s = pushLog(s, `毒で${p}ダメージを受けた`);
     }
     if (player.atkUp > 0) player.atkUp -= 1;
     player.guard = false;
@@ -3401,8 +3458,11 @@ export default function KiriwatariNoMori() {
       if (seq != null && seqRef.current !== seq) return;
       return battleWon(enemies, seq);
     }
-    setG(finalState);
-    saveRun(finalState.floor, finalState.node, finalState.player, finalState.weapons, finalState.armor, finalState.inv, finalState.cds, finalState.lastRareSeen, finalState.orbBagBonus, finalState.enemies);
+    // 戦闘が続く場合のみターンを進め、ログに区切りを残す(勝敗が決まる時は不要)。
+    const nextTurn = (finalState.turn || 1) + 1;
+    const turnState = pushLog({ ...finalState, turn: nextTurn }, `── ターン${nextTurn} ──`, true);
+    setG(turnState);
+    saveRun(turnState.floor, turnState.node, turnState.player, turnState.weapons, turnState.armor, turnState.inv, turnState.cds, turnState.lastRareSeen, turnState.orbBagBonus, turnState.enemies);
   }
 
   /* ---------- アイテムのロック / 保護 ---------- */
@@ -3523,61 +3583,57 @@ export default function KiriwatariNoMori() {
     setG(ns);
     scheduleSaveRun(ns);
   }
-  // 武器スロットの並び替え(ドラッグ&ドロップ)。ポインタイベントはタッチ/マウス双方で
-  // 一貫して動く(HTML5 の draggable 属性は WKWebView のタッチでは信頼できないため使わない)。
-  // 見た目の入れ替えだけの操作で、装備自体・HP・在庫には一切触れない(itemScore や
-  // 継承ロジックはスロット順を見ないため、並び替えは純粋に表示上の整理として安全)。
-  function weaponDragStart(e, idx) {
-    if (!weaponReorderOn) return;
-    e.preventDefault();
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
-    setDragWeaponIdx(idx);
-    setDragOverIdx(idx);
-    setDragDelta({ x: 0, y: 0 });
-  }
-  function weaponDragMove(e) {
-    if (dragWeaponIdx == null) return;
-    e.preventDefault();
-    setDragDelta({ x: e.clientX - dragStartRef.current.x, y: e.clientY - dragStartRef.current.y });
-    // 指(ポインタ)の座標が、どのスロットの矩形に入っているかを直接調べる。
-    // ドラッグ中の要素自身は除外する: transform で指先の真下へ動かしているため、
-    // 自分自身の getBoundingClientRect() も指先に追従してしまい、除外しないと
-    // 常に「自分自身」がヒットして他のスロットへ絶対に移せなくなる。
-    let found = null;
-    for (const key of Object.keys(weaponSlotRefs.current)) {
-      if (parseInt(key, 10) === dragWeaponIdx) continue;
-      const el = weaponSlotRefs.current[key];
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-        found = parseInt(key, 10);
-        break;
-      }
-    }
-    setDragOverIdx(found);
-  }
-  function weaponDragEnd() {
-    if (dragWeaponIdx == null) return;
-    const from = dragWeaponIdx;
-    const to = dragOverIdx;
-    setDragWeaponIdx(null);
-    setDragOverIdx(null);
-    setDragDelta({ x: 0, y: 0 });
-    if (to == null || to === from) return;
+  // 並び替えポップアップ内でのタップ: 1枠目を選び、2枠目で入れ替える(装備・HP・在庫には触れない)。
+  function tapReorderSlot(idx) {
+    if (reorderSel == null) { setReorderSel(idx); return; }
+    if (reorderSel === idx) { setReorderSel(null); return; }
     const s0 = gRef.current;
     const weapons = [...s0.weapons];
-    const tmp = weapons[from]; weapons[from] = weapons[to]; weapons[to] = tmp;
+    const tmp = weapons[reorderSel]; weapons[reorderSel] = weapons[idx]; weapons[idx] = tmp;
     const ns = { ...s0, weapons };
+    setReorderSel(null);
     setG(ns);
     scheduleSaveRun(ns);
   }
-  // 袋オーバーレイを閉じる時は、並び替えモードなど袋固有の一時 UI 状態もまとめて戻す。
+  function popDragStart(e, idx) {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    setPopDrag({ idx, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, over: null });
+  }
+  function popDragMove(e) {
+    if (!popDrag) return;
+    let over = null;
+    for (const k of Object.keys(popSlotRefs.current)) {
+      const i = parseInt(k, 10);
+      const el = popSlotRefs.current[k];
+      if (i === popDrag.idx || !el) continue;
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { over = i; break; }
+    }
+    setPopDrag({ ...popDrag, dx: e.clientX - popDrag.x0, dy: e.clientY - popDrag.y0, over });
+  }
+  function popDragEnd(e) {
+    if (!popDrag) return;
+    const d = popDrag;
+    setPopDrag(null);
+    const moved = Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 10;
+    if (!moved) { tapReorderSlot(d.idx); return; }
+    if (d.over == null) return;
+    const s0 = gRef.current;
+    const weapons = [...s0.weapons];
+    const tmp = weapons[d.idx]; weapons[d.idx] = weapons[d.over]; weapons[d.over] = tmp;
+    const ns = { ...s0, weapons };
+    setReorderSel(null);
+    setG(ns);
+    scheduleSaveRun(ns);
+  }
   function closeBag() {
-    setWeaponReorderOn(false);
-    setDragWeaponIdx(null);
-    setDragOverIdx(null);
-    setG((s) => ({ ...s, bag: false, bagActionError: null, gearPrep: false }));
+    setReorderPopup(false);
+    setReorderSel(null);
+    const s0 = gRef.current;
+    let ns = { ...s0, bag: false, bagActionError: null, gearPrep: false };
+    if (s0.phase === "battle") ns = ensureWeapon(ns);
+    setG(ns);
+    if (ns !== s0 && ns.weapons !== s0.weapons) scheduleSaveRun(ns);
   }
   function discardItem(item) {
     // ロック中のアイテムは捨てられない(保護設定は拾った瞬間の自動ロックとして反映済み)
@@ -3654,11 +3710,16 @@ export default function KiriwatariNoMori() {
     if (item.kind === "weapon") {
       const eq = st.weapons.filter(Boolean);
       if (eq.length === 0) return { text: "すぐ装備できます", up: true };
-      const worst = Math.min(...eq.map((w) => w.atk));
-      const best = Math.max(...eq.map((w) => w.atk));
-      if (item.atk > best) return { text: `↑ 手持ちで最強(攻 +${item.atk - best})`, up: true };
-      if (item.atk > worst) return { text: `↑ 最弱の武器より 攻 +${item.atk - worst}`, up: true };
-      return { text: `↓ 手持ちの方が強い(攻 ${item.atk - worst})`, down: true };
+      // 武器種ごとに性能設計(短剣は2連撃、大剣は単発高倍率、など)が異なり基礎atkのスケールも
+      // バラバラなため、異なる武器種同士でatkを比較しても優劣の目安にならない。
+      // 同じ種類の武器とだけ比較する。
+      const sameType = eq.filter((w) => w.type === item.type);
+      if (sameType.length === 0) return { text: "新しい武器種です", up: true };
+      const worst = Math.min(...sameType.map((w) => w.atk));
+      const best = Math.max(...sameType.map((w) => w.atk));
+      if (item.atk > best) return { text: `↑ 同種で最強(攻 +${item.atk - best})`, up: true };
+      if (item.atk > worst) return { text: `↑ 同種の最弱より 攻 +${item.atk - worst}`, up: true };
+      return { text: `↓ 同種の方が強い(攻 ${item.atk - worst})`, down: true };
     }
     if (item.kind === "armor") {
       const cur = st.armor[item.slot];
@@ -3684,9 +3745,9 @@ export default function KiriwatariNoMori() {
       const heal = Math.round(mx * 0.5);
       let ns = { ...s, eventDone: true };
       ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + heal), poison: 0 };
-      ns = addFloat(ns, "player", `+${heal}`, "#8fd39a", 22);
-      if (Math.random() < 0.35) { ns.drops = [makeConsumable(null, s.floor)]; return pushLog(ns, "泉の底に何かが沈んでいた。", true); }
-      return pushLog(ns, "泉の水が傷と毒を洗い流した。");
+      ns = addFloat(ns, "player", `回復 ${heal}`, "#8fd39a", 22);
+      if (Math.random() < 0.35) { ns.drops = [makeConsumable(null, s.floor)]; return pushLog(ns, `泉の底に何かが沈んでいた。HPを${heal}回復した`, true); }
+      return pushLog(ns, `泉の水が傷と毒を洗い流した。HPを${heal}回復した`);
     });
   }
 
@@ -4112,7 +4173,8 @@ export default function KiriwatariNoMori() {
           const ITEM_KIND_LABEL = { heal: "回復", cure: "解毒", buff: "バフ", bomb: "攻撃", orb: "特殊", metaHp: "特殊" };
           return (
           <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, howToPlay: false }))}>
-            <div className="kw-panel kw-sheet" style={{ maxWidth: 580, textAlign: "left", display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }} onClick={(e) => e.stopPropagation()}>
+            {/* スキルツリーと同様、タブを切り替えても枠の大きさが変わらないよう高さを固定する。 */}
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 580, height: "82vh", textAlign: "left", display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }} onClick={(e) => e.stopPropagation()}>
               <div style={{ padding: "16px 20px 10px", flexShrink: 0, borderBottom: "1px solid rgba(157,180,166,.12)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h2 style={{ letterSpacing: ".2em" }}>遊び方</h2>
                 <button className="kw-btn ghost" style={{ padding: "6px 12px" }}
@@ -4214,6 +4276,11 @@ export default function KiriwatariNoMori() {
                     </button>
                   ))}
                 </div>
+              </div>
+              {/* ── フッター(スキルツリーと同じ、画面下部の閉じるボタン) ── */}
+              <div style={{ flexShrink: 0, padding: "8px 18px 12px", display: "flex", justifyContent: "center", borderTop: "1px solid rgba(157,180,166,.08)" }}>
+                <button className="kw-btn ghost" style={{ padding: "9px 48px" }}
+                  onClick={() => setG((s) => ({ ...s, howToPlay: false }))}>閉じる</button>
               </div>
             </div>
           </div>
@@ -4514,8 +4581,8 @@ export default function KiriwatariNoMori() {
           {g.phase === "spring" && (
             <div className="kw-field-panel">
               <div className="kw-panel" style={{ padding: "22px 20px", textAlign: "center", maxWidth: 420, width: "100%", position: "relative" }}>
-                {floatsFor("player").map((f) => (
-                  <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size }}>{f.text}</div>
+                {floatsFor("player").map((f, i, arr) => (
+                  <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, left: `calc(50% + ${floatOffsetX(i, arr.length)}px)` }}>{f.text}</div>
                 ))}
                 <Moon size={44} color="#9fd4c9" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>月映しの泉</div>
@@ -4571,8 +4638,8 @@ export default function KiriwatariNoMori() {
 
         {/* プレイヤーHUD */}
         <div className="kw-panel kw-hud" style={{ position: "relative" }}>
-          {floatsFor("player").filter(() => g.phase === "battle").map((f) => (
-            <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, top: -28 }}>{f.text}</div>
+          {floatsFor("player").filter(() => g.phase === "battle").map((f, i, arr) => (
+            <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, top: -28, left: `calc(50% + ${floatOffsetX(i, arr.length)}px)` }}>{f.text}</div>
           ))}
           <div className="kw-me">旅人</div>
           <div className={`kw-mybar ${g.player.hp / mx < 0.25 ? "low" : ""}`}><i style={{ width: `${(g.player.hp / mx) * 100}%` }} /></div>
@@ -4630,8 +4697,9 @@ export default function KiriwatariNoMori() {
           )}
         </div>
 
-        {/* ログ */}
-        <div className="kw-panel kw-log" ref={logRef}>
+        {/* ログ(タップで全文をポップアップ表示) */}
+        <div className="kw-panel kw-log" ref={logRef} role="button" style={{ cursor: "pointer" }}
+          onClick={() => setG((s) => ({ ...s, logPopup: true }))}>
           {g.logs.map((l, i, arr) => (
             <div key={l.k} className={i === arr.length - 1 ? "new" : ""}>
               {l.strong ? <b>{l.text}</b> : l.text}
@@ -4639,6 +4707,32 @@ export default function KiriwatariNoMori() {
           ))}
         </div>
       </div>
+
+      {/* ---------- ログの拡大ポップアップ ---------- */}
+      {g.logPopup && (
+        <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, logPopup: false }))}>
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 480, height: "78vh", textAlign: "left", display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px 10px", flexShrink: 0, borderBottom: "1px solid rgba(157,180,166,.12)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ letterSpacing: ".2em" }}>ログ</h2>
+              <button className="kw-btn ghost" style={{ padding: "6px 12px" }}
+                onClick={() => setG((s) => ({ ...s, logPopup: false }))}><X size={14} /></button>
+            </div>
+            <div style={{ overflowY: "auto", flex: 1, padding: "14px 20px", fontSize: 15, lineHeight: 2, color: "var(--paper-dim)" }}>
+              {g.logs.length === 0
+                ? <div className="kw-sub">ログはまだありません。</div>
+                : g.logs.map((l, i, arr) => (
+                  <div key={l.k} className={i === arr.length - 1 ? "new" : ""}>
+                    {l.strong ? <b>{l.text}</b> : l.text}
+                  </div>
+                ))}
+            </div>
+            <div style={{ flexShrink: 0, padding: "8px 18px 12px", display: "flex", justifyContent: "center", borderTop: "1px solid rgba(157,180,166,.08)" }}>
+              <button className="kw-btn ghost" style={{ padding: "9px 48px" }}
+                onClick={() => setG((s) => ({ ...s, logPopup: false }))}>閉じる</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ---------- 袋オーバーレイ ---------- */}
       {g.bag && (
@@ -4691,51 +4785,29 @@ export default function KiriwatariNoMori() {
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 8px" }}>
                   <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em" }}>
-                    ── 装備中の武器({weaponReorderOn ? "ドラッグで並び替え" : "タップで外す・鍵で入れ替え防止"})
+                    ── 装備中の武器(タップで外す)
                   </div>
-                  <button className={`kw-btn ${weaponReorderOn ? "primary" : "ghost"}`}
+                  <button className="kw-btn ghost"
                     style={{ padding: "3px 10px", fontSize: 10, flexShrink: 0 }}
-                    onClick={() => setWeaponReorderOn((v) => !v)}>
-                    {weaponReorderOn ? "並び替え終了" : "並び替え"}
+                    onClick={() => { setReorderSel(null); setReorderPopup(true); }}>
+                    並び替え
                   </button>
                 </div>
                 <div className="kw-grid">
-                  {g.weapons.map((w, i) => {
-                    const dragging = dragWeaponIdx === i;
-                    const dropTarget = weaponReorderOn && dragWeaponIdx != null && dragOverIdx === i && dragOverIdx !== dragWeaponIdx;
-                    const cardStyle = {
-                      touchAction: weaponReorderOn ? "none" : undefined,
-                      transform: dragging ? `translate(${dragDelta.x}px, ${dragDelta.y}px) scale(1.05)` : undefined,
-                      transition: dragging ? "none" : "transform .15s ease, box-shadow .15s ease",
-                      boxShadow: dropTarget ? "0 0 0 2px var(--hotaru)" : undefined,
-                      position: dragging ? "relative" : undefined,
-                      zIndex: dragging ? 5 : undefined,
-                    };
-                    const setSlotRef = (el) => { weaponSlotRefs.current[i] = el; };
-                    return w
-                      ? <div key={w.id} ref={setSlotRef} style={{ display: "flex", flexDirection: "column", gap: 4, ...cardStyle }}
-                          onPointerDown={(e) => weaponDragStart(e, i)}
-                          onPointerMove={weaponDragMove}
-                          onPointerUp={weaponDragEnd}
-                          onPointerCancel={weaponDragEnd}>
-                          <ItemCell item={w} equipped onClick={() => { if (!weaponReorderOn) unequipWeapon(i); }} />
-                          {!weaponReorderOn && (
-                            <button className={`kw-btn ${w.locked ? "primary" : "ghost"}`}
-                              style={{ padding: "4px 0", fontSize: 10, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}
-                              onClick={(e) => { e.stopPropagation(); toggleLock(w); }}>
-                              {w.locked ? <><Lock size={11} />ロック中</> : <><LockOpen size={11} />ロック</>}
-                            </button>
-                          )}
-                        </div>
-                      : <div key={i} ref={setSlotRef} className="kw-panel kw-cell" style={{ opacity: .3, cursor: "default", ...cardStyle }}
-                          onPointerMove={weaponDragMove}
-                          onPointerUp={weaponDragEnd}
-                          onPointerCancel={weaponDragEnd}>
-                          <div className="kw-cmeta">空きスロット</div>
-                        </div>;
-                  })}
+                  {g.weapons.map((w, i) => w
+                    ? <div key={w.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <ItemCell item={w} equipped onClick={() => unequipWeapon(i)} />
+                        <button className={`kw-btn ${w.locked ? "primary" : "ghost"}`}
+                          style={{ padding: "4px 0", fontSize: 10, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+                          onClick={(e) => { e.stopPropagation(); toggleLock(w); }}>
+                          {w.locked ? <><Lock size={11} />ロック中</> : <><LockOpen size={11} />ロック</>}
+                        </button>
+                      </div>
+                    : <div key={i} className="kw-panel kw-cell" style={{ opacity: .3, cursor: "default" }}>
+                        <div className="kw-cmeta">空きスロット</div>
+                      </div>)}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "12px 0 8px" }}>── 防具(タップで外す・鍵で入れ替え防止)</div>
+                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "12px 0 8px" }}>── 防具(タップで外す)</div>
                 <div className="kw-grid">
                   {Object.entries(ARMOR_TYPES).map(([slot, a]) => g.armor[slot]
                     ? <div key={slot} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -4752,18 +4824,29 @@ export default function KiriwatariNoMori() {
             )}
             <div className="kw-divider" />
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, margin: "4px 0 8px" }}>
               <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em" }}>── 袋の中身 ({g.inv.length}/{invCap})</div>
-              {(meta.dewBank || 0) > 0 && (
-                <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10 }}
-                  onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
-                  <Sparkles size={10} style={{ display: "inline", marginRight: 3 }} />スキルツリー {meta.dewBank}個
-                </button>
-              )}
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 3 }}>
+                  <button className={`kw-btn ${(meta.bagSortMode || "type") === "type" ? "primary" : "ghost"}`}
+                    style={{ padding: "3px 9px", fontSize: 10 }}
+                    onClick={() => setBagSortMode("type")}>種類順</button>
+                  <button className={`kw-btn ${meta.bagSortMode === "acquired" ? "primary" : "ghost"}`}
+                    style={{ padding: "3px 9px", fontSize: 10 }}
+                    onClick={() => setBagSortMode("acquired")}>入手順</button>
+                </div>
+                {(meta.dewBank || 0) > 0 && (
+                  <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10 }}
+                    onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
+                    <Sparkles size={10} style={{ display: "inline", marginRight: 3 }} />スキルツリー {meta.dewBank}個
+                  </button>
+                )}
+              </div>
             </div>
             {g.inv.length === 0 && <div className="kw-sub">袋は空です。森で拾い集めましょう。</div>}
             {(() => {
               const inBattle = g.phase === "battle";
+              const sortForDisplay = (arr) => (meta.bagSortMode || "type") === "acquired" ? arr : [...arr].sort(bagSortByType);
               const catLabel = (label) => (
                 <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
               );
@@ -4792,7 +4875,8 @@ export default function KiriwatariNoMori() {
                 );
               };
               const renderEquip = (it) => {
-                if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
+                // 戦闘中は装備を変えられないが、章開始直後の戦闘準備(gearPrep)は例外(外した武器を付け直せる)。
+                if (inBattle && !g.gearPrep) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <ItemCell item={it} actionLabel="装備する" onClick={() => equipItem(it)} hint={hintFor(it)} />
@@ -4824,12 +4908,12 @@ export default function KiriwatariNoMori() {
                   </div>
                 );
               };
-              const weapons  = g.inv.filter(it => it.kind === "weapon");
-              const armors   = g.inv.filter(it => it.kind === "armor");
-              const heals    = g.inv.filter(it => it.kind === "item" && ["heal","cure"].includes(CONSUMABLES[it.itemId]?.kind));
-              const buffs    = g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "buff");
-              const attacks  = g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "bomb");
-              const specials = g.inv.filter(it => it.kind === "item" && ["orb","metaHp"].includes(CONSUMABLES[it.itemId]?.kind));
+              const weapons  = sortForDisplay(g.inv.filter(it => it.kind === "weapon"));
+              const armors   = sortForDisplay(g.inv.filter(it => it.kind === "armor"));
+              const heals    = sortForDisplay(g.inv.filter(it => it.kind === "item" && ["heal","cure"].includes(CONSUMABLES[it.itemId]?.kind)));
+              const buffs    = sortForDisplay(g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "buff"));
+              const attacks  = sortForDisplay(g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "bomb"));
+              const specials = sortForDisplay(g.inv.filter(it => it.kind === "item" && ["orb","metaHp"].includes(CONSUMABLES[it.itemId]?.kind)));
               return (
                 <>
                   {weapons.length  > 0 && <>{catLabel("武器")}<div className="kw-grid">{weapons.map(renderEquip)}</div></>}
@@ -4851,6 +4935,43 @@ export default function KiriwatariNoMori() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- 武器の並び替えポップアップ(武器だけ・スクロール無し) ---------- */}
+      {g.bag && reorderPopup && (
+        <div className="kw-overlay top" style={{ zIndex: 55 }} onClick={() => { setReorderPopup(false); setReorderSel(null); }}>
+          <div className="kw-panel kw-sheet" style={{ maxWidth: 420, textAlign: "left" }} onClick={(e) => e.stopPropagation()}>
+            <h2>武器の並び替え</h2>
+            <div className="kw-sub">入れ替えたい武器を2つ順にタップ、または別の武器の上へドラッグしてください。</div>
+            <div className="kw-grid">
+              {g.weapons.map((w, i) => {
+                const dragging = popDrag && popDrag.idx === i && (Math.abs(popDrag.dx) + Math.abs(popDrag.dy) > 10);
+                const isOver = popDrag && popDrag.over === i;
+                return (
+                  <div key={i} ref={(el) => { popSlotRefs.current[i] = el; }}
+                    style={{ borderRadius: 10, touchAction: "none", position: "relative", zIndex: dragging ? 5 : undefined,
+                      transform: dragging ? `translate(${popDrag.dx}px, ${popDrag.dy}px) scale(1.05)` : undefined,
+                      transition: dragging ? "none" : "transform .15s ease",
+                      boxShadow: (reorderSel === i || isOver) ? "0 0 0 2px var(--hotaru)" : undefined }}
+                    onPointerDown={(e) => popDragStart(e, i)}
+                    onPointerMove={popDragMove}
+                    onPointerUp={popDragEnd}
+                    onPointerCancel={() => setPopDrag(null)}>
+                    {w
+                      ? <ItemCell item={w} equipped onClick={() => {}} />
+                      : <div className="kw-panel kw-cell" style={{ opacity: .5, cursor: "pointer" }}>
+                          <div className="kw-cmeta">空きスロット</div>
+                        </div>}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="kw-actions" style={{ justifyContent: "center" }}>
+              <button className="kw-btn ghost" style={{ padding: "9px 48px" }}
+                onClick={() => { setReorderPopup(false); setReorderSel(null); }}>閉じる</button>
+            </div>
           </div>
         </div>
       )}
@@ -4953,7 +5074,7 @@ export default function KiriwatariNoMori() {
             <div className="kw-sub" style={{ marginTop: 10 }}>
               {STAGES[stageOf(g.floor)].boss.name}は道を譲った。<br />
               霧の向こうに、第{stageOf(g.floor) + 2}章「{STAGES[Math.min(9, stageOf(g.floor) + 1)].name}」への降り口が見えている。<br /><br />
-              <b style={{ color: "var(--hotaru)" }}>報酬:</b> 継承枠 +1 ／ 以後、死んでもこの先の章から再開できる ／ 主の戦利品
+              <b style={{ color: "var(--hotaru)" }}>報酬:</b> 以後、死んでもこの先の章から再開できる ／ 主の戦利品
             </div>
             <div className="kw-grid" style={{ textAlign: "left" }}>
               {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
