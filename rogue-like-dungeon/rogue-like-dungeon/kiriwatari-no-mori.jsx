@@ -479,7 +479,7 @@ function weaponSlotsOf(m) {
 }
 function invCapOf(m, runBonus = 0) {
   const s = m?.skills || {};
-  return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0) + runBonus;
+  return 14 + (s.bagCapI ? 5 : 0) + (s.bagCapII ? 5 : 0) + (s.bagCapIII ? 6 : 0) + runBonus;
 }
 // 章ごとの金枝の精の基本出現率: 8〜12%は+1%刻み、以降+2%刻み
 const RARE_CHANCE_BY_STAGE = [0.08, 0.09, 0.10, 0.11, 0.12, 0.14, 0.16, 0.18, 0.20, 0.22];
@@ -760,6 +760,9 @@ const SKILL_TREE = [
   { id: "soundEcho", name: "残響の真髄", category: "戦闘拡張", cost: 11, requires: "soundMastery",
     desc: "音属性武器のダメージ、さらに+7%(合計+27%)。旋律の残響がさらに響く。", effect: { type: "elementDmgPct", element: "音", value: 0.07 } },
 
+  // 高レアスキル: 他のスキルより重いコスト(25)。
+  { id: "soundDaze", name: "怯みの旋律", category: "戦闘拡張", cost: 25, requires: "soundEcho",
+    desc: "楽器で下げた敵の攻撃力の低下が、2ターン→3ターン持続する。音の極みに至った者だけが奏でられる旋律。", effect: { type: "instrumentDebuffTurns", value: 1 } },
   { id: "powerSeal", name: "力の刻印", category: "戦闘拡張", cost: 20, requiresAll: ["bladeMastery", "magicMastery", "pierceMastery", "bluntMastery", "soundMastery"],
     desc: "全武器のダメージ+10%(属性の極意と重複可)。五属性すべての極意を極めた者だけが辿り着ける。", effect: { type: "allDmgPct", value: 0.10 } },
 
@@ -790,6 +793,8 @@ const SKILL_TREE = [
     desc: "鞄の容量 14→19。" },
   { id: "bagCapII", name: "巨大な鞄", category: "探索", cost: 6, requires: "bagCapI",
     desc: "鞄の容量 19→24。" },
+  { id: "bagCapIII", name: "果てなき鞄", category: "探索", cost: 25, requires: "bagCapII",
+    desc: "鞄の容量 24→30。高レアスキル。" },
   { id: "goldSenseI", name: "精霊の気配I", category: "探索", cost: 4, requires: null,
     desc: "金枝の精の出現率+1%。", effect: { type: "rareChancePct", value: 0.01 } },
   { id: "goldSenseII", name: "精霊の気配II", category: "探索", cost: 6, requires: "goldSenseI",
@@ -1611,7 +1616,9 @@ function autoLockArmor(armor, meta) {
 }
 
 function starterState(meta, initialWeaponType = "dagger") {
-  const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid(), locked: false }));
+  // 継承品は前の生でのロック状態をそのまま引き継ぐ(毎回ロックし直さなくて済むように)。
+  const inherited = (meta.inherited || []).map((it) => ({ ...it, id: uid(), locked: !!it.locked }));
+  const inheritedIds = new Set(inherited.map((it) => it.id));
   const weaponCount = weaponSlotsOf(meta);
   const weapons = Array(weaponCount).fill(null);
   const armor = { helm: null, armor: null, charm: null };
@@ -1638,7 +1645,13 @@ function starterState(meta, initialWeaponType = "dagger") {
   if (meta?.skills?.fateMemory2) inv.push(makeConsumable("spore"));
   if (meta?.skills?.startBerryB) inv.push(makeConsumable("berryBig"));
   if (meta?.skills?.startBerryB2) inv.push(makeConsumable("berryBig"));
-  return { weapons: autoLockAll(weapons, meta), armor: autoLockArmor(armor, meta), inv: autoLockAll(inv, meta) };
+  // 保護設定による自動ロックは新しく手に入る品だけが対象(継承品は引き継いだ状態のまま)。
+  const lockNew = (it) => (it && !inheritedIds.has(it.id) ? autoLockItem(it, meta) : it);
+  return {
+    weapons: weapons.map(lockNew),
+    armor: Object.fromEntries(Object.entries(armor).map(([k, v]) => [k, lockNew(v)])),
+    inv: inv.map(lockNew),
+  };
 }
 
 function floorNodes(floor) {
@@ -1705,7 +1718,7 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
             <div style={sectionLabel}>アイテムの保護</div>
             <div style={{ fontSize: 10, color: "rgba(157,180,166,.7)", lineHeight: 1.7, marginBottom: 8 }}>
-              ONにすると、該当するアイテムを拾った瞬間に自動でロックされます。手放したい時は袋の中の鍵アイコンをもう一度押せば、その品だけロックを解除できます。
+              ONにすると、これから拾う該当アイテムが自動でロックされます。今持っている品のロック状態は、ON/OFFを切り替えても変わりません。ロックは死亡後の継承でも引き継がれます。手放したい時は袋の中の鍵アイコンをもう一度押せば、その品だけロックを解除できます。
             </div>
             <div style={rowStyle}>
               <span style={{ letterSpacing: ".05em" }}>回復アイテムを保護</span>
@@ -1775,14 +1788,14 @@ const SKILL_ICON_MAP = {
   magicBasics: Wand2, magicMastery: Wand2, magicEdge: Waves, magicWard: Shield,
   pierceBasics: Crosshair, pierceMastery: Crosshair, pierceEdge: Waves, pierceDepth: Crosshair,
   bluntBasics: Axe, bluntMastery: Axe, bluntEdge: Waves, bluntWeight: Axe,
-  soundBasics: Music, soundMastery: Music, soundEdge: Waves, soundEcho: Music,
+  soundBasics: Music, soundMastery: Music, soundEdge: Waves, soundEcho: Music, soundDaze: Music,
   powerSeal: Flame,
   vitalitySeed: Heart, vitalityI: Heart, vitalityII: Heart,
   dodgeI: Wind, dodgeII: Wind,
   guardSeed: Shield, guardMastery: Shield,
   regenSeed: Sprout, regen: Sprout,
   lastStand: Bone,
-  bagCapI: Package, bagCapII: Package,
+  bagCapI: Package, bagCapII: Package, bagCapIII: Package,
   goldSenseI: Sparkles, goldSenseII: Sparkles, goldSenseIII: Sparkles, goldSenseIV: Sparkles,
   luckyEyeI: PiggyBank, luckyEyeII: PiggyBank,
   startAntidote: Leaf, startAntidote2: Leaf, startBerryS: Apple, startBerryS2: Apple,
@@ -2425,23 +2438,9 @@ export default function KiriwatariNoMori() {
   // meta の真偽フラグ(アイテム保護設定など)を切り替えて永続化する
   async function toggleMetaFlag(key) {
     if (!metaRef.current) return;
-    const m2 = updateMeta((m) => ({ ...m, [key]: !m[key] }));
-    // 保護設定を ON にした瞬間、今の手持ち品にも即座にロックを反映する
-    // (解除は鍵アイコンのみ。OFF にしても既にロック済みのものは遡って解除しない)。
-    if ((key === "protectHeals" || key === "protectRareItems") && m2[key]) {
-      const s0 = gRef.current;
-      if (s0 && s0.inv) {
-        const ns = {
-          ...s0,
-          weapons: autoLockAll(s0.weapons, m2),
-          armor: autoLockArmor(s0.armor, m2),
-          inv: autoLockAll(s0.inv, m2),
-        };
-        setG(ns);
-        gRef.current = ns;
-        scheduleSaveRun(ns);
-      }
-    }
+    // 保護設定は「これから手に入る品」の自動ロックにだけ使う。ON/OFF を切り替えても、
+    // 今持っている品のロック状態は変えない(ロックの解除・設定は鍵アイコンのみ)。
+    updateMeta((m) => ({ ...m, [key]: !m[key] }));
   }
 
   // 袋の並び順設定を切り替えて永続化する
@@ -2786,14 +2785,6 @@ export default function KiriwatariNoMori() {
       inv: run.inv || [],
       player: run.player || { hp: 0, poison: 0, atkUp: 0, guard: false },
     };
-    // 保護設定の対象アイテムを一括ロックする(設定を後から ON にした場合や、
-    // この機能より前からある未ロックの手持ち品を、再開のたびに追いつかせる)。
-    run = {
-      ...run,
-      weapons: autoLockAll(run.weapons, metaRef.current),
-      armor: autoLockArmor(run.armor, metaRef.current),
-      inv: autoLockAll(run.inv, metaRef.current),
-    };
     if (run.phase === "dead") {
       // タスキル後の死亡画面復元: 継承選択画面を直接表示
       const stDead = {
@@ -3035,13 +3026,13 @@ export default function KiriwatariNoMori() {
       const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
       const heal = Math.round(maxHpOf(s) * 0.1);
       s.player = { ...s.player, hp: Math.min(maxHpOf(s), s.player.hp + heal) };
-      floats.push({ key: uid(), targetId: "player", text: `回復 ${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
+      floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
       s = pushLog(s, `${weapon.name}の光が敵を打ち、身体を癒す。`);
       extraLogs.push(`HPを${heal}回復した`);
     } else if (weapon.type === "instrument") {
       for (const e of enemies) if (e.hp > 0) {
         const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg;
-        e.atkDown = 2;
+        e.atkDown = 2 + skillEffectTotal(meta?.skills, "instrumentDebuffTurns");
       }
       s = pushLog(s, `${weapon.name}の旋律が敵を怯ませる(攻撃弱体)。`);
     }
@@ -3054,7 +3045,7 @@ export default function KiriwatariNoMori() {
       const heal = Math.round(dmgDealtThisAction * lifestealPct);
       if (heal > 0 && s.player.hp < mx) {
         s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-        floats.push({ key: uid(), targetId: "player", text: `回復 ${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
+        floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
         s = pushLog(s, `余韻でHPを${heal}回復した`);
       }
     }
@@ -3093,7 +3084,8 @@ export default function KiriwatariNoMori() {
      消えることがあった。 */
   async function useItem(item) {
     const st0 = gRef.current;
-    const inBattle = st0.phase === "battle";
+    // 章開始直後の戦闘準備(gearPrep)は、戦闘後と同じ扱い(ターンを消費せず、敵も動かない)。
+    const inBattle = st0.phase === "battle" && !st0.gearPrep;
     if (inBattle && st0.busy) return;
     const c = CONSUMABLES[item.itemId];
     if (!c) return;
@@ -3118,12 +3110,12 @@ export default function KiriwatariNoMori() {
     if (c.kind === "heal") {
       const heal = Math.round(mx * c.power);
       s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-      s = addFloat(s, "player", `回復 ${heal}`, "#8fd39a", 20);
+      s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
       s = pushLog(s, `${c.label}を口にした。HPを${heal}回復した`);
     } else if (c.kind === "cure") {
       const heal = Math.round(mx * c.power);
       s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + heal) };
-      s = addFloat(s, "player", `回復 ${heal}`, "#8fd39a", 20);
+      s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
       s = pushLog(s, `${c.label}で毒が消えた。HPを${heal}回復した`);
     } else if (c.kind === "buff") {
       s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
@@ -3426,7 +3418,7 @@ export default function KiriwatariNoMori() {
       const p = Math.max(2, Math.round(mx * 0.06));
       player.hp = Math.max(0, player.hp - p);
       player.poison -= 1;
-      s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `毒 ${p}`, color: "#a98ad9", size: 16, t: Date.now() }] };
+      s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `-${p}`, color: "#a98ad9", size: 16, t: Date.now() }] };
       s = pushLog(s, `毒で${p}ダメージを受けた`);
     }
     if (player.atkUp > 0) player.atkUp -= 1;
@@ -3745,7 +3737,7 @@ export default function KiriwatariNoMori() {
       const heal = Math.round(mx * 0.5);
       let ns = { ...s, eventDone: true };
       ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + heal), poison: 0 };
-      ns = addFloat(ns, "player", `回復 ${heal}`, "#8fd39a", 22);
+      ns = addFloat(ns, "player", `+${heal}`, "#8fd39a", 22);
       if (Math.random() < 0.35) { ns.drops = [makeConsumable(null, s.floor)]; return pushLog(ns, `泉の底に何かが沈んでいた。HPを${heal}回復した`, true); }
       return pushLog(ns, `泉の水が傷と毒を洗い流した。HPを${heal}回復した`);
     });
@@ -4845,7 +4837,7 @@ export default function KiriwatariNoMori() {
             </div>
             {g.inv.length === 0 && <div className="kw-sub">袋は空です。森で拾い集めましょう。</div>}
             {(() => {
-              const inBattle = g.phase === "battle";
+              const inBattle = g.phase === "battle" && !g.gearPrep;
               const sortForDisplay = (arr) => (meta.bagSortMode || "type") === "acquired" ? arr : [...arr].sort(bagSortByType);
               const catLabel = (label) => (
                 <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
@@ -4876,7 +4868,7 @@ export default function KiriwatariNoMori() {
               };
               const renderEquip = (it) => {
                 // 戦闘中は装備を変えられないが、章開始直後の戦闘準備(gearPrep)は例外(外した武器を付け直せる)。
-                if (inBattle && !g.gearPrep) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
+                if (inBattle) return <ItemCell key={it.id} item={it} onClick={() => {}} />;
                 return (
                   <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <ItemCell item={it} actionLabel="装備する" onClick={() => equipItem(it)} hint={hintFor(it)} />

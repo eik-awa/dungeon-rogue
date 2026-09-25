@@ -5,7 +5,8 @@
 //     auto-locked (it.locked = true) the moment it enters the bag/equipped slots (pickup).
 //   - Once auto-locked, pressing that item's own lock icon again releases (unlocks) it —
 //     the category setting no longer permanently overrides the per-item lock icon.
-//   - Turning a protect setting ON retroactively locks currently-held matching items too.
+//   - Toggling a protect setting does NOT change the lock state of items already held: ON does
+//     not retroactively lock them, OFF does not unlock already-locked ones.
 const { makeDriver } = require('./drive');
 const SAVE_KEY = 'kiriwatari-forest-save';
 const RUN_SAVE_KEY = 'kiriwatari-run-save';
@@ -65,7 +66,7 @@ async function testPickupAutoLocksAndIconUnlocks() {
   return item && item.locked === false && !stillThere;
 }
 
-async function testTogglingSettingOnRetroactivelyLocksHeldItems() {
+async function testTogglingSettingDoesNotTouchHeldItems() {
   const d = makeDriver();
   // protectRareItems starts OFF; the player already holds a legendary item, unlocked.
   d.seed(SAVE_KEY, { slots: 1, checkpoint: 1, discovered: {}, protectRareItems: false });
@@ -101,16 +102,16 @@ async function testTogglingSettingOnRetroactivelyLocksHeldItems() {
 
   run = d.readJSON(RUN_SAVE_KEY);
   item = (run.inv || []).find((x) => x.id === 'legendItem');
-  console.log('[5] already-held legendary item retroactively locked the moment the setting is switched ON:', item && item.locked === true);
+  console.log('[5] already-held unlocked item stays unlocked when the setting is switched ON:', item && item.locked !== true);
 
-  return item && item.locked === true;
+  return item && item.locked !== true;
 }
 
 async function main() {
   const a = await testPickupAutoLocksAndIconUnlocks();
-  const b = await testTogglingSettingOnRetroactivelyLocksHeldItems();
+  const b = await testTogglingSettingDoesNotTouchHeldItems();
   console.log(a ? 'PASS: pickup auto-locks, and the lock icon alone can release it' : 'FAIL: pickup/unlock flow');
-  console.log(b ? 'PASS: switching a protect setting ON retroactively locks currently-held matches' : 'FAIL: retroactive lock on toggle');
+  console.log(b ? 'PASS: switching a protect setting does not retroactively lock held items' : 'FAIL: setting toggle changed held items');
   process.exit(a && b ? 0 : 1);
 }
 main().catch((e) => { console.error('TEST ERROR', e); process.exit(1); });

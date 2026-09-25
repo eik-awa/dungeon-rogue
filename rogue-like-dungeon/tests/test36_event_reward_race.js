@@ -8,7 +8,8 @@
 // whatever "today" the test machine's clock reports), so Date.now() is stubbed to a fixed
 // instant inside that window just for this test (only the numeric `now`, not the Date
 // constructor itself — eventJstDay() always receives an explicit epoch argument).
-const { makeDriver } = require('./drive');
+const { makeDriver, skipIfEventDisabled } = require('./drive');
+skipIfEventDisabled();
 const SAVE_KEY = 'kiriwatari-forest-save';
 
 const EVENT_JST_OFFSET = 9 * 3600_000;

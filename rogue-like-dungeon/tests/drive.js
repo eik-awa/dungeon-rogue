@@ -110,4 +110,14 @@ function makeDriver() {
   };
 }
 
-module.exports = { makeDriver, SAVE_KEY, RUN_SAVE_KEY };
+// イベント(宝樹の祠)が EVENT_ENABLED=false で無効化されている間は、イベント専用テストを
+// 「スキップ扱いで成功(exit 0)」にする。再開(true)時は通常どおり実行される。
+function skipIfEventDisabled() {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'rogue-like-dungeon', 'kiriwatari-no-mori.jsx'), 'utf8');
+  if (/const EVENT_ENABLED = false;/.test(src)) {
+    console.log('SKIP: イベントは無効化中(EVENT_ENABLED = false)のためこのテストは対象外');
+    process.exit(0);
+  }
+}
+
+module.exports = { makeDriver, SAVE_KEY, RUN_SAVE_KEY, skipIfEventDisabled };

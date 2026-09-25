@@ -1,8 +1,7 @@
 // ITEM-14: a protected item (locked, or high-value under `protectRareItems`) cannot be
 // discarded — the "捨てる" button itself is disabled, AND discardItem() independently guards
 // on isItemProtected() so even a raw click bypassing the disabled attribute is a no-op.
-// (Protect settings and per-item lock are now unified: resumeRun() auto-locks any item that
-// matches an active protect setting, so a "protected" item just shows as a real locked item
+// (Protect settings and per-item lock are unified: a "protected" item is just a real locked item
 // — "ロック中" — and can be freed again from the bag's own lock icon, not just via Settings.)
 const { makeDriver } = require('./drive');
 const { act } = require('react-dom/test-utils');
@@ -15,7 +14,7 @@ function mkRun() {
     player: { hp: 72, poison: 0, atkUp: 0, guard: false },
     weapons: [{ id: 'w1', kind: 'weapon', type: 'dagger', name: '試験の短剣', rarity: 'common', atk: 5, asset: 'dagger' }],
     armor: { helm: null, armor: null, charm: null },
-    inv: [{ id: 'legendaryDrop', kind: 'weapon', type: 'greatsword', name: '伝説の大剣', rarity: 'legend', atk: 999, asset: 'greatsword' }],
+    inv: [{ id: 'legendaryDrop', kind: 'weapon', type: 'greatsword', name: '伝説の大剣', rarity: 'legend', atk: 999, asset: 'greatsword', locked: true }],
     cds: {}, lastRareSeen: 0, orbBagBonus: 0,
   };
 }

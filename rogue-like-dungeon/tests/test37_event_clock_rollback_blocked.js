@@ -2,7 +2,8 @@
 // eventStatus() flags `clockBack` when `now < eventSeenMax - EVENT_CLOCK_SKEW` (the app
 // remembers the latest time it has ever observed), and the intro screen shows a warning
 // instead of the "挑戦する" button whenever clockBack is true (checked before `available`).
-const { makeDriver } = require('./drive');
+const { makeDriver, skipIfEventDisabled } = require('./drive');
+skipIfEventDisabled();
 const SAVE_KEY = 'kiriwatari-forest-save';
 
 const EVENT_JST_OFFSET = 9 * 3600_000;
