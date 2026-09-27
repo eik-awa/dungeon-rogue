@@ -825,7 +825,40 @@ const SKILL_TREE = [
     desc: "旅の始まりに生命の果実が1つ追加される。" },
   { id: "startBerryB2", name: "旅装の記憶VI", category: "転生", cost: 12, requires: "startBerryB",
     desc: "旅の始まりにさらに生命の果実が1つ追加される。" },
+
+  // 到達章で解放される上位スキル(各系統の最後に派生)。unlock.stage: その章に到達(最深到達層)で解放。
+  // 第6章で解放されるものより、難易度が大きく下がるものは第9章到達が必要。
+  { id: "specialHp", name: "大樹の恩恵", category: "生存", cost: 14, requires: "vitalityII", unlock: { stage: 6 },
+    desc: "最大HPが永続+30。", effect: { type: "maxHp", value: 30 } },
+  { id: "specialDodge", name: "風纏い", category: "生存", cost: 14, requires: "dodgeII", unlock: { stage: 6 },
+    desc: "敵の攻撃を避ける確率がさらに+6%。", effect: { type: "dodgeChancePct", value: 0.06 } },
+  { id: "sporeTurns", name: "胞子の余韻", category: "転生", cost: 12, requires: "fateMemory2", unlock: { stage: 6 },
+    desc: "力の胞子の効果が、3ターン→4ターン持続する。", effect: { type: "sporeTurnsBonus", value: 1 } },
+  { id: "sporePower", name: "胞子の昂ぶり", category: "転生", cost: 16, requires: "sporeTurns", unlock: { stage: 6 },
+    desc: "力の胞子の攻撃力上昇が+40%→+50%になる。", effect: { type: "sporeAtkBonus", value: 0.1 } },
+  { id: "fruitRegen", name: "実りの加護", category: "転生", cost: 22, requires: "startBerryB2", unlock: { stage: 6 },
+    desc: "生命の果実を使うと、3ターンの間、毎ターン最大HPの10%を回復する。", effect: { type: "fruitRegen", value: 3 } },
+  { id: "lastStand2", name: "不屈の極み", category: "生存", cost: 25, requires: "lastStand", unlock: { stage: 9 },
+    desc: "不屈の心得の被ダメージ軽減が、さらに-20%(合計-50%)。第9章に到達で解放。", effect: { type: "lowHpDmgReduction", value: 0.20, threshold: 0.25 } },
+  { id: "endure", name: "踏みとどまる意志", category: "生存", cost: 30, requires: "lastStand", unlock: { stage: 9 },
+    desc: "敵のターンの開始時にHPが50%以上あれば、そのターン中の致死ダメージをHP1で耐える(毎ターン1回)。第9章に到達で解放。", effect: { type: "endure", value: 1 } },
+  { id: "titanSeal", name: "覇者の刻印", category: "戦闘拡張", cost: 30, requires: "powerSeal", unlock: { stage: 9 },
+    desc: "全ての武器の火力が+10%。第9章に到達で解放。", effect: { type: "allDmgPct", value: 0.10 } },
 ];
+
+// スキルの解放条件(到達章・踏破回数)を満たしているか。
+function skillUnlocked(skill, meta) {
+  const u = skill.unlock;
+  if (!u) return true;
+  if (u.stage != null && stageOf(meta?.bestFloor || 1) < u.stage - 1) return false;
+  if (u.clears != null && (meta?.clears || 0) < u.clears) return false;
+  return true;
+}
+const skillUnlockText = (skill) => {
+  const u = skill.unlock;
+  if (!u) return "";
+  return `第${u.stage}章に到達すると解放されます。`;
+};
 
 // スキル効果の合計値を集計する(構造的な効果[武器枠/鞄容量/開始品]はここでは扱わない)。
 function skillEffectTotal(skills, type, filter) {
@@ -860,6 +893,7 @@ function migrateSkillTree(meta) {
 
 // requires(単一)/requiresAll(複数)のどちらであっても前提条件を満たしているか判定する。
 function skillPrereqsMet(skill, skills) {
+  // 解放条件(unlock)は skillUnlocked() 側で別途判定する。
   if (skill.requiresAll) return skill.requiresAll.every((id) => !!skills?.[id]);
   if (skill.requires) return !!skills?.[skill.requires];
   return true;
@@ -892,7 +926,7 @@ async function loadRun() {
 // 一度きりの確定報酬(伝説武器・苔の心臓など)が二度と手に入らなくなる。
 async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null, rewardPhase = null, drops = null) {
   try {
-    const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
+    const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, regen: player.regen || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
     if (enemies && enemies.length > 0) data.enemies = enemies;
     // 全部拾い終えていても(=drops が空でも)rewardPhase は保持する。ここを外すと、
     // 「拾い終えたが『進む』はまだ押していない」タイミングでのタスキル再開時にボスが
@@ -1796,6 +1830,8 @@ const SKILL_ICON_MAP = {
   regenSeed: Sprout, regen: Sprout,
   lastStand: Bone,
   bagCapI: Package, bagCapII: Package, bagCapIII: Package,
+  specialHp: Heart, specialDodge: Wind, sporeTurns: Leaf, sporePower: Flame, fruitRegen: Apple,
+  lastStand2: Bone, endure: Shield, titanSeal: Flame,
   goldSenseI: Sparkles, goldSenseII: Sparkles, goldSenseIII: Sparkles, goldSenseIV: Sparkles,
   luckyEyeI: PiggyBank, luckyEyeII: PiggyBank,
   startAntidote: Leaf, startAntidote2: Leaf, startBerryS: Apple, startBerryS2: Apple,
@@ -1811,7 +1847,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
   const dewBank = meta?.dewBank || 0;
 
   const isOwned = (id) => !!skills[id];
-  const isRevealed = (skill) => skillPrereqsMet(skill, skills);
+  const isRevealed = (skill) => skillPrereqsMet(skill, skills) && skillUnlocked(skill, meta);
   const canBuy = (sk) => !isOwned(sk.id) && isRevealed(sk) && dewBank >= sk.cost;
 
   const selected = selectedId ? SKILL_BY_ID[selectedId] : null;
@@ -1885,7 +1921,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
       </div>
 
       {/* ── スキルリスト(スクロール) ── */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: "12px 14px 6px" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: "12px 20px 6px 14px" }}>
 
         {/* 結晶還元通知 */}
         {!!meta?.skillRefundNotice && (
@@ -1923,11 +1959,11 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                 const isSelected = selectedId === skill.id;
                 const Icon = SKILL_ICON_MAP[skill.id] || Gem;
                 const accent = owned ? "var(--hotaru)" : buyable ? "#8fd39a" : revealed ? "var(--mist)" : "rgba(157,180,166,.2)";
-                const INDENT = 16;
+                const INDENT = 8; // 深い派生(最大5段)でも右端に見切れないよう、1段あたりは狭くする
                 return (
-                  <div key={skill.id} style={{ display: "flex", alignItems: "center", marginBottom: 5 }}>
+                  <div key={skill.id} style={{ display: "flex", alignItems: "center", marginBottom: 5, minWidth: 0, width: "100%" }}>
                     {depth > 0 && (
-                      <div style={{ width: Math.min(depth, 3) * INDENT, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 5 }}>
+                      <div style={{ width: Math.min(depth, 5) * INDENT, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 5 }}>
                         <div style={{ width: 8, height: 1, background: "rgba(157,180,166,.22)" }} />
                       </div>
                     )}
@@ -1935,8 +1971,8 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                       role="button"
                       onClick={() => setSelectedId(isSelected ? null : skill.id)}
                       style={{
-                        flex: 1, display: "flex", alignItems: "center", gap: 9,
-                        padding: "8px 11px", borderRadius: 8, cursor: "pointer",
+                        flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8,
+                        padding: "8px 9px", borderRadius: 8, cursor: "pointer",
                         border: `1px solid ${isSelected ? "var(--hotaru)" : owned ? "rgba(232,180,74,.32)" : buyable ? "rgba(143,211,154,.28)" : "rgba(157,180,166,.1)"}`,
                         background: isSelected ? "rgba(232,180,74,.08)" : owned ? "rgba(232,180,74,.05)" : buyable ? "rgba(143,211,154,.04)" : "transparent",
                         transition: "border-color .15s",
@@ -1954,7 +1990,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                         </div>
                         {revealed && (
                           <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 1, lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {skill.desc}
+                            {skill.desc.length > 16 - depth * 2 ? skill.desc.slice(0, 16 - depth * 2) + "…" : skill.desc}
                           </div>
                         )}
                       </div>
@@ -1982,7 +2018,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
         }}>
           {!selectedRevealed ? (
             <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", padding: "4px 0" }}>
-              ??? 前提スキルを習得すると解放されます。
+              ??? {!skillUnlocked(selected, meta) ? skillUnlockText(selected) : "前提スキルを習得すると解放されます。"}
             </div>
           ) : (
             <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
@@ -2610,7 +2646,7 @@ export default function KiriwatariNoMori() {
     if (!m0) return;
     const skill = SKILL_TREE.find((s) => s.id === skillId);
     if (!skill || (m0.dewBank || 0) < skill.cost) return;
-    if (!skillPrereqsMet(skill, m0.skills)) return;
+    if (!skillPrereqsMet(skill, m0.skills) || !skillUnlocked(skill, m0)) return;
     if (m0.skills?.[skillId]) return;
     const m2 = updateMeta({
       ...m0,
@@ -2961,7 +2997,7 @@ export default function KiriwatariNoMori() {
     let s = { ...st0, pending: null, busy: true };
     const enemies = s.enemies.map((e) => ({ ...e }));
     const discovered = JSON.parse(JSON.stringify(meta.discovered || {}));
-    const atkMul = (s.player.atkUp > 0 ? 1.4 : 1);
+    const atkMul = (s.player.atkUp > 0 ? 1.4 + skillEffectTotal(meta?.skills, "sporeAtkBonus") : 1);
     // 属性ごとの心得・極意・真髄が積み上がる(この属性のものだけ合計)。
     const masteryMult = 1 + skillEffectTotal(meta?.skills, "elementDmgPct", (e) => e.element === t.dmgType);
     const powerSealMult = 1 + skillEffectTotal(meta?.skills, "allDmgPct");
@@ -3112,14 +3148,20 @@ export default function KiriwatariNoMori() {
       s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
       s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
       s = pushLog(s, `${c.label}を口にした。HPを${heal}回復した`);
+      const regenTurns = item.itemId === "berryBig" ? skillEffectTotal(meta?.skills, "fruitRegen") : 0;
+      if (regenTurns > 0) {
+        s.player = { ...s.player, regen: regenTurns };
+        s = pushLog(s, `実りの加護。${regenTurns}ターンの間、毎ターンHPが回復する。`, true);
+      }
     } else if (c.kind === "cure") {
       const heal = Math.round(mx * c.power);
       s.player = { ...s.player, poison: 0, hp: Math.min(mx, s.player.hp + heal) };
       s = addFloat(s, "player", `+${heal}`, "#8fd39a", 20);
       s = pushLog(s, `${c.label}で毒が消えた。HPを${heal}回復した`);
     } else if (c.kind === "buff") {
-      s.player = { ...s.player, atkUp: c.turns + (inBattle ? 1 : 0) };
-      s = pushLog(s, `${c.label}が全身を巡る。攻撃+40%!`, true);
+      const sporePct = 40 + Math.round(skillEffectTotal(meta?.skills, "sporeAtkBonus") * 100);
+      s.player = { ...s.player, atkUp: c.turns + skillEffectTotal(meta?.skills, "sporeTurnsBonus") + (inBattle ? 1 : 0) };
+      s = pushLog(s, `${c.label}が全身を巡る。攻撃+${sporePct}%!`, true);
     } else if (c.kind === "bomb" && inBattle) {
       const power = bombPowerAt(s.floor); // 深い階ほど強力
       const enemies = s.enemies.map((e) => ({ ...e }));
@@ -3348,6 +3390,8 @@ export default function KiriwatariNoMori() {
     const dodgeChance = skillEffectTotal(meta?.skills, "dodgeChancePct");
     const poisonImmune = skillEffectTotal(meta?.skills, "poisonImmune") > 0;
 
+    // 踏みとどまる意志: 敵のターン開始時にHPが50%以上なら、このターン1回だけ致死ダメージをHP1で耐える。
+    let endureReady = skillEffectTotal(meta?.skills, "endure") > 0 && player.hp >= mx * 0.5;
     const n0 = enemies.length; // このターン開始時にいた敵だけ行動(召喚された敵は次ターンから)
     for (let i = 0; i < n0; i++) {
       const e = enemies[i];
@@ -3392,6 +3436,11 @@ export default function KiriwatariNoMori() {
         s = pushLog(s, `${e.name}から${dmg}ダメージを受けた`);
       }
       player.hp = Math.max(0, player.hp - dmg);
+      if (player.hp <= 0 && endureReady) {
+        endureReady = false;
+        player.hp = 1;
+        s = pushLog(s, "踏みとどまった! HPが1残った。", true);
+      }
       // 吸収(与ダメの半分を回復)
       if (e.drain && dmg > 0) {
         const rec = Math.round(dmg / 2);
@@ -3413,6 +3462,17 @@ export default function KiriwatariNoMori() {
       s = gRef.current; enemies = s.enemies.map((x) => ({ ...x })); player = { ...s.player };
     }
 
+    // 実りの加護: 生命の果実によるリジェネ
+    if (player.hp > 0 && player.regen > 0) {
+      const rec = Math.max(1, Math.round(mx * 0.10));
+      const healed = Math.min(mx, player.hp + rec) - player.hp;
+      player.hp += healed;
+      player.regen -= 1;
+      if (healed > 0) {
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `+${healed}`, color: "#8fd39a", size: 16, t: Date.now() }] };
+        s = pushLog(s, `実りの加護でHPを${healed}回復した`);
+      }
+    }
     // 毒・持続効果の処理
     if (player.hp > 0 && player.poison > 0) {
       const p = Math.max(2, Math.round(mx * 0.06));
@@ -3420,6 +3480,7 @@ export default function KiriwatariNoMori() {
       player.poison -= 1;
       s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `-${p}`, color: "#a98ad9", size: 16, t: Date.now() }] };
       s = pushLog(s, `毒で${p}ダメージを受けた`);
+      if (player.hp <= 0 && endureReady) { endureReady = false; player.hp = 1; s = pushLog(s, "踏みとどまった! HPが1残った。", true); }
     }
     if (player.atkUp > 0) player.atkUp -= 1;
     player.guard = false;
@@ -4637,8 +4698,9 @@ export default function KiriwatariNoMori() {
           <div className={`kw-mybar ${g.player.hp / mx < 0.25 ? "low" : ""}`}><i style={{ width: `${(g.player.hp / mx) * 100}%` }} /></div>
           <div className="kw-num">{g.player.hp} / {mx}</div>
           <div className="kw-status">
-            {g.player.atkUp > 0 && <span className="kw-tag buff">攻+40% {g.player.atkUp}T</span>}
+            {g.player.atkUp > 0 && <span className="kw-tag buff">攻+{40 + Math.round(skillEffectTotal(meta?.skills, "sporeAtkBonus") * 100)}% {g.player.atkUp}T</span>}
             {g.player.poison > 0 && <span className="kw-tag bad">毒 {g.player.poison}T</span>}
+            {g.player.regen > 0 && <span className="kw-tag buff">再生 {g.player.regen}T</span>}
             {g.player.guard && <span className="kw-tag buff">防御中</span>}
           </div>
         </div>
@@ -4756,10 +4818,11 @@ export default function KiriwatariNoMori() {
                     {g.player.hp} / {mx}
                   </span>
                 </div>
-                {(g.player.atkUp > 0 || g.player.poison > 0 || g.player.guard) && (
+                {(g.player.atkUp > 0 || g.player.poison > 0 || g.player.regen > 0 || g.player.guard) && (
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
-                    {g.player.atkUp > 0 && <span className="kw-tag buff">攻+40% {g.player.atkUp}T</span>}
+                    {g.player.atkUp > 0 && <span className="kw-tag buff">攻+{40 + Math.round(skillEffectTotal(meta?.skills, "sporeAtkBonus") * 100)}% {g.player.atkUp}T</span>}
                     {g.player.poison > 0 && <span className="kw-tag bad">毒 {g.player.poison}T</span>}
+            {g.player.regen > 0 && <span className="kw-tag buff">再生 {g.player.regen}T</span>}
                     {g.player.guard && <span className="kw-tag buff">防御中</span>}
                   </div>
                 )}

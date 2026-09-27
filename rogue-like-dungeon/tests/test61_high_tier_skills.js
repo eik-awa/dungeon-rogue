@@ -22,7 +22,8 @@ async function debuffTurns(skills) {
   await d.flush(600);
   // Read the debuff right after our attack (before the enemy consumes a turn of it).
   await d.click(d.findButtonContaining('試験の笛'));
-  await d.flush(800);
+  await d.flushUntil(() => d.container.querySelector('.kw-log').textContent.includes('ターン2'), { tries: 80 });
+  await d.flush(100);
   const e = d.readJSON(RUN_SAVE_KEY).enemies[0];
   // The enemy acts once after our attack and consumes one point of atkDown.
   return e.atkDown;
