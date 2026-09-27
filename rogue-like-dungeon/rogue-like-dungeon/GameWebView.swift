@@ -155,39 +155,82 @@ struct GameWebView: UIViewRepresentable {
             }
         }
 
-        /// ステージ進行度(章クリア・全踏破・死亡到達フロア)を Firebase Analytics に記録する。
-        /// 端末ローカルの meta 保存(bestFloor/checkpoint/clears)と同じタイミングで JS 側から送られてくる。
+        /// ステージ進行度などを Firebase Analytics に記録する。
+        /// GA4 のカスタムディメンションに使う値は必ず String で送る
+        /// (Int のままだと探索レポートで (not set) / 空欄になる)。
         private func logProgress(event: String, body: [String: Any]) {
+            /// 数値を0埋め文字列にする(例: 7 → "007")。レポートで番号順に並ぶ。
+            func num(_ key: String, _ width: Int) -> String {
+                String(format: "%0\(width)ld", (body[key] as? Int) ?? 0)
+            }
+            func str(_ key: String) -> String { (body[key] as? String) ?? "" }
+            func flag(_ key: String) -> String { ((body[key] as? Bool) ?? false) ? "1" : "0" }
+
             switch event {
+            case "run_start":
+                Analytics.logEvent("run_start", parameters: [
+                    "stage": num("stage", 2),
+                    "floor": num("floor", 3),
+                    "clears": num("clears", 2),
+                ])
             case "stage_clear":
                 Analytics.logEvent("stage_clear", parameters: [
-                    "stage": (body["stage"] as? Int) ?? 0,
-                    "checkpoint": (body["checkpoint"] as? Int) ?? 0,
+                    "stage": num("stage", 2),
+                    "checkpoint": num("checkpoint", 2),
                 ])
             case "game_clear":
                 Analytics.logEvent("game_clear", parameters: [
-                    "clears": (body["clears"] as? Int) ?? 0,
+                    "clears": num("clears", 2),
                 ])
             case "death":
                 Analytics.logEvent("player_death", parameters: [
-                    "floor": (body["floor"] as? Int) ?? 0,
-                    "best_floor": (body["bestFloor"] as? Int) ?? 0,
+                    "floor": num("floor", 3),
+                    "best_floor": num("bestFloor", 3),
+                    "enemy_id": str("enemyId"),
+                    "is_boss": flag("boss"),
+                    "poisoned": flag("poisoned"),
+                    "revived": flag("revived"),
                 ])
+            case "boss_kill_stage":
+                // 1〜10層(章)ごとに別名のイベントとして送る。GA4 の「イベント」一覧だけで
+                // 階層別の到達(ボス討伐)回数が表になる(Exploration での内訳集計が不要)。
+                let stage = (body["stage"] as? Int) ?? 0
+                guard (1...10).contains(stage) else { break }
+                Analytics.logEvent("boss_kill_stage_\(stage)", parameters: [:])
             case "weapon_run_start":
                 Analytics.logEvent("weapon_run_start", parameters: [
-                    "weapon_type": (body["weapon_type"] as? String) ?? "",
-                    "floor": (body["floor"] as? Int) ?? 0,
+                    "weapon_type": str("weapon_type"),
+                    "floor": num("floor", 3),
                 ])
             case "weapon_boss_kill":
                 Analytics.logEvent("weapon_boss_kill", parameters: [
-                    "weapon_type": (body["weapon_type"] as? String) ?? "",
-                    "stage": (body["stage"] as? Int) ?? 0,
+                    "weapon_type": str("weapon_type"),
+                    "stage": num("stage", 2),
                 ])
+            case "event_challenge":
+                // 以前は case がなく捨てられていた
+                Analytics.logEvent("event_challenge", parameters: [
+                    "reward2x": flag("reward2x"),
+                ])
+            case "skill_unlock":
+                Analytics.logEvent("skill_unlock", parameters: [
+                    "skill_id": str("skillId"),
+                    "dew_left": (body["dewLeft"] as? Int) ?? 0,  // 合計する数値なので Int のまま
+                ])
+            case "user_props":
+                // 自己ベスト等をユーザープロパティへ(全期間の到達分布を見る用)
+                if let best = body["bestFloor"] as? Int {
+                    Analytics.setUserProperty(String(format: "%03ld", best), forName: "max_floor")
+                    Analytics.setUserProperty(String(format: "%02ld", min(10, (best - 1) / 10 + 1)), forName: "best_stage")
+                }
+                if let clears = body["clears"] as? Int {
+                    Analytics.setUserProperty(String(clears), forName: "total_clears")
+                }
             case "reward_ad_result":
                 // リワード広告の視聴結果(不具合①の計測・S2-6)。
                 Analytics.logEvent("reward_ad_result", parameters: [
-                    "context": (body["context"] as? String) ?? "",
-                    "result": (body["result"] as? String) ?? "",
+                    "context": str("context"),
+                    "result": str("result"),
                 ])
             case "item_use":
                 // 回復アイテムの効果不発(不具合②)の原因確定用計測・S2-6。
@@ -205,7 +248,7 @@ struct GameWebView: UIViewRepresentable {
                     "resumed": (body["resumed"] as? Bool) ?? false ? 1 : 0,
                 ])
             default:
-                break
+                break  // app_hidden など記録不要のもの
             }
         }
     }

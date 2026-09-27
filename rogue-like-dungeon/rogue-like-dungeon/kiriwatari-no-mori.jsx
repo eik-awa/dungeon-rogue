@@ -2353,6 +2353,18 @@ export default function KiriwatariNoMori() {
     return () => { delete window.__setConsentApplicable__; };
   }, []);
 
+  // 自己ベスト等を Firebase のユーザープロパティへ同期する(起動時・死亡時・章クリア時に発火)
+  useEffect(() => {
+    if (!meta) return;
+    try {
+      window.webkit?.messageHandlers?.progress?.postMessage({
+        event: "user_props",
+        bestFloor: meta.bestFloor || 1,
+        clears: meta.clears || 0,
+      });
+    } catch (_) {}
+  }, [meta?.bestFloor, meta?.clears]);
+
   const openURL = (url) => {
     try { window.webkit?.messageHandlers?.openURL?.postMessage({ url }); } catch {}
   };
@@ -2653,6 +2665,8 @@ export default function KiriwatariNoMori() {
       dewBank: m0.dewBank - skill.cost,
       skills: { ...m0.skills, [skillId]: true },
     });
+    // スキル習得を記録(どのスキルが先に取られるか・雫の使われ方)
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "skill_unlock", skillId, dewLeft: m2.dewBank || 0 }); } catch (_) {}
 
     // 武器スロット拡張は g.weapons の長さが固定のため、進行中のランには
     // starterState を通らないと反映されない。ここで即座にスロットを増やす。
@@ -2747,6 +2761,8 @@ export default function KiriwatariNoMori() {
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
     saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    // ラン開始を記録(開始章・周回数)
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "run_start", stage: chapterIdx + 1, floor: startFloor, clears: m.clears || 0 }); } catch (_) {}
     // ラン開始時の装備武器を記録(武器バランス調整の参考用)
     try { first.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_run_start", weapon_type: w.type, floor: startFloor })); } catch (_) {}
     setG(first);
@@ -3301,6 +3317,9 @@ export default function KiriwatariNoMori() {
       const sIdx = stage - 1;
       const clearsBefore = metaRef.current.clears; // レビュー促し判定用(更新前の値が必要)
       const checkpointBefore = metaRef.current.checkpoint || 1;
+      // 章ごとの到達回数(ボス討伐)を Firebase の「イベント」一覧だけで階層別に数えられるよう、
+      // 階層ごとに別名のイベントとして送る(weapon_boss_kill と同じタイミング)。
+      try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "boss_kill_stage", stage }); } catch (_) {}
       if (stage >= 10) {
         // 百層踏破 — エンディング。所持品は全て次の生へ持ち越せるが、次の生が実際に
         // 保持できる上限(武器スロット+防具3+袋の最大数)は超えられないため、価値の高い順に切り詰める。
@@ -3371,7 +3390,15 @@ export default function KiriwatariNoMori() {
     bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
     const m2 = updateMeta((m) => ({ ...m, deaths: m.deaths + 1, bestFloor: Math.max(m.bestFloor, stFainted.floor) }));
     // 進行度をFirebaseに記録(死亡=到達フロア)
-    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "death", floor: stFainted.floor, bestFloor: m2.bestFloor }); } catch (_) {}
+    // 死因として、死亡時に残っていた先頭の敵を記録する(とどめを刺した敵とは限らない)
+    const foe = (stFainted.enemies || []).find((e) => e.hp > 0);
+    try {
+      window.webkit?.messageHandlers?.progress?.postMessage({
+        event: "death", floor: stFainted.floor, bestFloor: m2.bestFloor,
+        enemyId: foe?.bookId || "", boss: !!foe?.boss,
+        poisoned: (stFainted.player?.poison || 0) > 0, revived: !!stFainted.reviveUsed,
+      });
+    } catch (_) {}
     // 死亡時は継承選択のためデータを保持（タスキル後も死亡画面を復元できるよう）
     saveDeadRun(stFainted.floor, stFainted.weapons, stFainted.armor, stFainted.inv, stFainted.orbBagBonus || 0, stFainted.orbSlotBonus || 0);
     setSavedRun(null);

@@ -56,6 +56,8 @@ final class LevelPlayAdsController: ObservableObject {
     /// かえって配信に悪影響が出かねない(収益に関わる分岐点のため慎重に)。
     private static let reinitCooldown: TimeInterval = 10 * 60
     private var lastForcedReinitAt: Date?
+    /// 収益デリゲートの登録済みフラグ(再初期化で二重登録しないため)。
+    private var didAddImpressionDelegate = false
 
     private init() {
         // バックグラウンドに入ったらリトライを止め、次のフォアグラウンド復帰まで待つ。
@@ -133,6 +135,10 @@ final class LevelPlayAdsController: ObservableObject {
         // デバッグ端末以外では本番の広告配信に影響しないよう有効化しない。
         if DebugDeviceConfig.isDebugDevice {
             LevelPlay.setMetaDataWithKey("is_test_suite", value: "enable")
+        }
+        if !didAddImpressionDelegate {
+            LevelPlay.add(AdRevenueLogger.shared)
+            didAddImpressionDelegate = true
         }
         let request = LPMInitRequestBuilder(appKey: levelPlayAppKey).build()
         LevelPlay.initWith(request) { [weak self] _, error in
@@ -320,5 +326,21 @@ extension UIApplication {
             .flatMap { $0.windows }
             .first { $0.isKeyWindow }?
             .rootViewController
+    }
+}
+
+/// LevelPlay のインプレッション収益を Firebase に記録する。
+final class AdRevenueLogger: NSObject, LPMImpressionDataDelegate {
+    static let shared = AdRevenueLogger()  // 強参照を保持する
+
+    func impressionDataDidSucceed(_ impressionData: LPMImpressionData) {
+        Analytics.logEvent(AnalyticsEventAdImpression, parameters: [
+            AnalyticsParameterAdPlatform: "LevelPlay",
+            AnalyticsParameterAdSource: impressionData.adNetwork ?? "unknown",
+            AnalyticsParameterAdFormat: impressionData.adFormat ?? "unknown",
+            AnalyticsParameterAdUnitName: impressionData.instanceName ?? "unknown",
+            AnalyticsParameterCurrency: "USD",
+            AnalyticsParameterValue: impressionData.revenue?.doubleValue ?? 0,
+        ])
     }
 }
