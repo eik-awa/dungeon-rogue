@@ -170,7 +170,11 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
 
     func didReceiveUSRegulationsConsent(usRegData: USRegulationsData) {
         print("[Consent] US regulations: saleOptOut=\(usRegData.SaleOptOut) sharingOptOut=\(usRegData.SharingOptOut)")
-        let optedOut = usRegData.SaleOptOut != 0 || usRegData.SharingOptOut != 0
+        // IAB GPP 米国セクション準拠のフィールドで、値は 0 = 対象外, 1 = 拒否した, 2 = 拒否していない。
+        // 以前は `!= 0` で判定していたため、同意画面で「OK」(2 = 拒否していない)を選んだユーザーも
+        // optedOut = true として SDK に伝わり、非パーソナライズ広告のみになって在庫が細る不具合だった。
+        // 「同意しても広告が出ない」という報告の一因(要実機確認)。
+        let optedOut = usRegData.SaleOptOut == 1 || usRegData.SharingOptOut == 1
         LPMPrivacySettings.setCCPA(optedOut)
     }
 
