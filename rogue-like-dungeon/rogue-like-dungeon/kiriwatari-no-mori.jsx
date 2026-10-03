@@ -638,7 +638,7 @@ const COMPENSATION_DEW_AMOUNT = 5;
 /* ------------------------------------------------------------
    リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
 ------------------------------------------------------------ */
-const REWARD_AD_DAILY_LIMIT = 3;
+const REWARD_AD_DAILY_LIMIT = 5;
 const rewardAdTodayKey = () => {
   const d = new Date();
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
@@ -2392,20 +2392,26 @@ export default function KiriwatariNoMori() {
   };
 
   // リワード広告が出せなかったときの案内文(S1-5)。読込中は表示しない。
+  // 在庫不足(nofill)はユーザー側の環境が原因ではないため、他と文言を分ける。
   const rewardAdFailNote = (style) => {
     if (!g.rewardAdFailedAt || g.rewardAdPending != null) return null;
-    const loadfail = g.rewardAdFailReason !== "dismissed";
+    const text = g.rewardAdFailReason === "dismissed"
+      ? "報酬を受け取るには、広告を最後まで視聴してください。"
+      : g.rewardAdFailReason === "nofill"
+      ? "ただいま表示できる広告がありません。少し時間をおいてお試しください。"
+      : g.rewardAdFailReason === "nonetwork"
+      ? "通信状態をご確認のうえ、もう一度お試しください。"
+      : "広告を読み込めませんでした。広告ブロック機能などをお使いの場合は、一時的にオフにしてお試しください。";
     return (
       <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--danger)", marginTop: 8, lineHeight: 1.75, ...(style || {}) }}>
-        {loadfail
-          ? "広告を読み込めませんでした。通信環境をご確認ください。広告ブロック機能・コンテンツブロッカー・プライベートDNS・VPN が有効な場合は解除のうえ、アプリを一度終了して再起動してからお試しください。"
-          : "報酬を受け取るには、広告を最後まで視聴してください。"}
+        {text}
       </div>
     );
   };
 
   // リワード広告の結果コールバック。gRef/metaRef 経由で常に最新の状態を扱う。
-  // result は "rewarded" | "dismissed" | "unavailable" | "timeout"(旧 boolean も許容・S1-5)。
+  // result は "rewarded" | "dismissed" | "nofill" | "nonetwork" | "unavailable" | "timeout"
+  // (旧 boolean も許容・S1-5)。
   useEffect(() => {
     window.__onRewardAdResult__ = (contextId, result) => {
       const s0 = gRef.current;
@@ -2417,8 +2423,9 @@ export default function KiriwatariNoMori() {
         window.webkit?.messageHandlers?.progress?.postMessage({ event: "reward_ad_result", context: contextId, result: r });
       } catch (_) {}
       if (r !== "rewarded") {
-        // unavailable / timeout はロード不能、dismissed は視聴中断。UI の文言を出し分ける。
-        const reason = (r === "unavailable" || r === "timeout") ? "loadfail" : "dismissed";
+        // dismissed 以外は全てロード不能系。理由(nofill/nonetwork/unavailable/timeout)を
+        // そのまま持たせ、rewardAdFailNote 側で文言を出し分ける。
+        const reason = r;
         setG((s) => (s.rewardAdPending === contextId
           ? { ...s, rewardAdPending: null, rewardAdFailedAt: Date.now(), rewardAdFailReason: reason }
           : s));

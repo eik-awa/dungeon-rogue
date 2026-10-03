@@ -105,22 +105,47 @@ final class LevelPlayAdsController: ObservableObject {
     }
 
     /// state == .ready のまま広告が出せなくなっている(SDK セッションが内部的に失効した)
-    /// ことを疑い、SDK を丸ごと再初期化する。長時間バックグラウンド復帰時(原因E対策)に
-    /// 加えて、個別の広告(バナー/リワード)が続けて失敗した時にも呼ばれる。
+    /// ことを疑うシグナル。長時間バックグラウンド復帰時(原因E対策)に加えて、個別の広告
+    /// (バナー/リワード)が続けて失敗した時にも呼ばれる。
     /// reinitCooldown 未満の間隔で連打されないようガードする(収益に関わる分岐点のため、
     /// ネットワークへの過剰リクエストを避ける)。
+    ///
+    /// SDK が既に初期化済み(.ready)の場合、initWith を再度呼ぶことはしない —
+    /// 成功後の再初期化は公式ドキュメントにも挙動が明記されておらず、.initializing のまま
+    /// 固着するリスクがある(在庫不足のバナー失敗が3回続いただけでリワード広告の土台まで
+    /// 壊しかねなかった)。代わりにリワード広告のオブジェクトだけを作り直す。
+    /// 未初期化・初期化失敗のときは、これまで通り SDK の初期化からやり直す。
     func forceReinitialize(reason: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let last = self.lastForcedReinitAt, Date().timeIntervalSince(last) < Self.reinitCooldown {
                 return
             }
-            if case .initializing = self.state { return }
-            print("[AdBanner] re-initializing SDK session (reason: \(reason))")
-            Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason])
-            self.lastForcedReinitAt = Date()
-            self.state = .idle
-            self.startInit()
+            switch self.state {
+            case .initializing:
+                return
+            case .ready:
+                print("[AdBanner] rebuilding reward ad (reason: \(reason)); SDK already initialized")
+                Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason, "action": "rebuild_ad"])
+                self.lastForcedReinitAt = Date()
+                RewardedAdController.shared.rebuildAd()
+            case .idle, .failed:
+                print("[AdBanner] re-initializing SDK session (reason: \(reason))")
+                Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason, "action": "reinit"])
+                self.lastForcedReinitAt = Date()
+                self.state = .idle
+                self.startInit()
+            }
+        }
+    }
+
+    /// 計測用: 現在の SDK 初期化状態を文字列で返す(reward_ad_show_request に添える)。
+    var stateDescription: String {
+        switch state {
+        case .idle: return "idle"
+        case .initializing: return "initializing"
+        case .ready: return "ready"
+        case .failed: return "failed"
         }
     }
 
@@ -157,6 +182,7 @@ final class LevelPlayAdsController: ObservableObject {
                 self.retryWorkItem = nil
                 self.isInitialized = true
                 RewardedAdController.shared.preload()
+                RewardedAdController.shared.startPeriodicPreload()
                 // デバッグ端末でのみ、アダプター(Unity Ads等)が正しく統合されているかを
                 // コンソールに出力する(本番端末では余計なログを出さないよう限定)。
                 if DebugDeviceConfig.isDebugDevice {
@@ -185,7 +211,7 @@ final class LevelPlayAdsController: ObservableObject {
     /// デバッグ端末(DebugDeviceConfig.isDebugDevice)からのみ呼び出す想定。
     /// LevelPlay の Test Suite を起動し、テストモードで広告在庫を確認できるようにする。
     func launchTestSuite() {
-        guard let vc = UIApplication.shared.kwRootViewController else { return }
+        guard let vc = UIApplication.shared.kwTopViewController else { return }
         LevelPlay.launchTestSuite(vc)
     }
 }
@@ -200,7 +226,7 @@ private struct AdBannerUIView: UIViewRepresentable {
         let config = LPMBannerAdViewConfigBuilder().set(adSize: .banner()).build()
         let banner = LPMBannerAdView(adUnitId: adUnitID, config: config)
         banner.setDelegate(context.coordinator)
-        if let vc = UIApplication.shared.kwRootViewController {
+        if let vc = UIApplication.shared.kwTopViewController {
             banner.loadAd(with: vc)
             context.coordinator.requestedLoad = true
         }
@@ -208,8 +234,8 @@ private struct AdBannerUIView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: LPMBannerAdView, context: Context) {
-        // ルート VC がまだ無かった場合に備えて、表示更新時に補う。
-        if !context.coordinator.requestedLoad, let vc = UIApplication.shared.kwRootViewController {
+        // 最前面の VC がまだ無かった場合に備えて、表示更新時に補う。
+        if !context.coordinator.requestedLoad, let vc = UIApplication.shared.kwTopViewController {
             uiView.loadAd(with: vc)
             context.coordinator.requestedLoad = true
         }
@@ -326,6 +352,18 @@ extension UIApplication {
             .flatMap { $0.windows }
             .first { $0.isKeyWindow }?
             .rootViewController
+    }
+
+    /// 実際に画面の最前面にある ViewController。同意画面や ATT ダイアログなど、何かが
+    /// モーダル表示されている間は root VC の上にそれが乗っているため、root VC のまま
+    /// showAd を呼ぶと失敗することがある(H9)。presentedViewController を辿って
+    /// 最前面を返す。広告の表示・読み込みは常にこちらを使う。
+    var kwTopViewController: UIViewController? {
+        var vc = kwRootViewController
+        while let presented = vc?.presentedViewController {
+            vc = presented
+        }
+        return vc
     }
 }
 

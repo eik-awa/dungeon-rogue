@@ -1,4 +1,4 @@
-// AD-03: the reward-ad daily use cap (REWARD_AD_DAILY_LIMIT = 3) must actually block a 4th
+// AD-03: the reward-ad daily use cap (REWARD_AD_DAILY_LIMIT = 5) must actually block a 6th
 // offer once exhausted for today, and must reset once the stored date no longer matches
 // today's key (rewardAdTodayKey()). We don't mock Date (broad blast radius on the whole test
 // env, including log/float timestamps) — instead we compute today's key with the exact same
@@ -25,9 +25,9 @@ function mkRareKillRun() {
 }
 
 async function main() {
-  // Case 1: already used all 3 today -> no offer.
+  // Case 1: already used all 5 today -> no offer.
   const d1 = makeDriver();
-  d1.seed(SAVE_KEY, { slots: 1, checkpoint: 1, discovered: {}, rewardAd: { date: todayKey(), count: 3 } });
+  d1.seed(SAVE_KEY, { slots: 1, checkpoint: 1, discovered: {}, rewardAd: { date: todayKey(), count: 5 } });
   d1.seed(RUN_SAVE_KEY, mkRareKillRun());
   await d1.mount();
   await d1.click('再開');
@@ -35,11 +35,11 @@ async function main() {
   await d1.click(d1.findButtonContaining('試験の短剣'));
   await d1.flushUntil(() => d1.text().includes('勝 利'), { tries: 60 });
   const offeredAfterCapUsed = d1.text().includes('宝 樹 の 雫');
-  console.log('[1] no dew-ad offer after 3 daily uses already spent today:', !offeredAfterCapUsed);
+  console.log('[1] no dew-ad offer after 5 daily uses already spent today:', !offeredAfterCapUsed);
 
-  // Case 2: 3 uses recorded under a DIFFERENT (stale) date -> resets, offer appears again.
+  // Case 2: 5 uses recorded under a DIFFERENT (stale) date -> resets, offer appears again.
   const d2 = makeDriver();
-  d2.seed(SAVE_KEY, { slots: 1, checkpoint: 1, discovered: {}, rewardAd: { date: '2000-1-1', count: 3 } });
+  d2.seed(SAVE_KEY, { slots: 1, checkpoint: 1, discovered: {}, rewardAd: { date: '2000-1-1', count: 5 } });
   d2.seed(RUN_SAVE_KEY, mkRareKillRun());
   await d2.mount();
   await d2.click('再開');
