@@ -178,8 +178,8 @@ const WEAPON_TYPES = {
   },
   spear: {
     label: "槍", asset: "spear", dmgType: "突", base: 8, cd: 1,
-    desc: "貫通。狙った敵の後ろにも70%威力。",
-    tags: ["貫通", "CT1"],
+    desc: "深く刺さる一撃。狙った敵を毒に侵し、持続ダメージを与える。",
+    tags: ["毒", "CT1"],
   },
   book: {
     label: "本", asset: "book", dmgType: "魔", base: 7, cd: 2,
@@ -198,6 +198,21 @@ const WEAPON_TYPES = {
   },
 };
 
+/* ---- 敵への毒(槍が付与する状態異常) ----
+   毎ターン終了時(敵ターンの最後)に、付与時の「攻撃の基準値(武器攻撃×属性スキル×力の刻印)×係数」の
+   ダメージを受ける(敵の防御力・弱点/耐性は無視する。突属性は耐性を持つ敵が多いため、その穴を埋める役目)。
+   胞子のお守り等の攻撃バフ(atkUp)は毒のダメージには乗らない。
+   再付与では持続ターンだけ延長・係数は大きい方を採る(重ねがけで加算はしない)。
+   スキルによる強化には必ず上限がある(他の武器より強くなりすぎないようにするため)。
+   付与するのは槍だけ(狙った1体)。弓は毒を付与しない。毒ダメージは弱点・耐性の対象外(固定ダメージ)。 */
+const ENEMY_POISON = {
+  turnsBase: 2,       // 持続ターン数の基本値
+  turnsMax: 3,        // スキルで延ばしても、これ以上にはならない
+  pctMax: 0.50,       // スキルで強化しても、毒の割合はこれ以上にならない(基本30% → 極意で40% → 真髄で50%)
+  pct: { spear: 0.30 }, // 1ターンあたりのダメージ = 攻撃の基準値 × (この割合 + スキルの加算)。ここに載っていない武器は毒を付与しない
+  bossPctCut: 0.10,   // ボスは毒への耐性があり、毒の割合がこのぶん下がる(30/40/50% → 20/30/40%。持続は変わらない)
+};
+
 // 「遊び方」の武器一覧の表示順。属性(斬・打・突・魔・音)ごとにまとめつつ、
 // 槍と斧は指定により打→突の順(斧が槍より先)にしてある。
 const GUIDE_WEAPON_ORDER = ["dagger", "greatsword", "axe", "bow", "spear", "book", "staff", "instrument"];
@@ -208,7 +223,7 @@ const GUIDE_WEAPON_MECHANICS = {
   greatsword: "狙った敵1体に2.2倍のダメージ。再使用まで2ターンかかる。",
   axe: "狙った敵1体に1.6倍のダメージ。さらに相手の防御力を永続的に2下げる(重ねがけ可能)。再使用まで1ターンかかる。",
   bow: "狙った敵1体に等倍のダメージ。さらに、狙った敵以外の生存中の敵からランダムに1体選び、0.5倍のダメージ(流れ矢)。",
-  spear: "狙った敵1体に1.1倍のダメージ。さらに、敵の並び順でその敵より後ろにいる生存中の敵のうち最初の1体に0.7倍のダメージ(貫通)。再使用まで1ターンかかる。",
+  spear: "狙った敵1体に1.1倍のダメージ。さらに、その敵は2ターンの間「毒」になり、毎ターン終了時に攻撃力の約30%のダメージ(スキルで最大50%。防御・弱点・耐性を無視。攻撃バフは乗らない。ボスには効きにくく、割合が10ポイント下がる)を受ける。再使用まで1ターンかかる。",
   book: "生存している敵全員に等倍のダメージ。再使用まで2ターンかかる。",
   staff: "狙った敵1体に1.4倍のダメージ。同時に自分の最大HPの10%を回復する。再使用まで1ターンかかる。",
   instrument: "生存している敵全員に等倍のダメージ。さらに全員の攻撃力を2ターンの間下げる。再使用まで2ターンかかる。",
@@ -624,6 +639,8 @@ let memorySave = null;
 const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null,
   // アイテム保護設定(捨てる操作をブロックする)。レアは既定でロック、回復は任意。
   protectHeals: false, protectRareItems: true,
+  // 先へ進むとき「拾い忘れがあります」の確認を出すか。既定 ON。OFF だと未回収の戦利品は確認なしで置いていく。
+  confirmLeaveDrops: true,
   // 不具合(宝樹の雫を使っても報酬が付与されない)のお詫び配布(精の結晶 x5)。1アカウント1回のみ。
   compensationDewClaimed: false,
   // タイトルの「はじめの武器を選ぶ」を出すかどうかの判定用。meta.inherited は
@@ -663,12 +680,12 @@ const consumeRewardAdUse = (meta) => {
 const EVENT_JST_OFFSET = 9 * 3600_000;        // 日付境界は JST 固定(端末TZに依存させない)
 const EVENT_CLOCK_SKEW = 120_000;             // NTP 揺らぎの許容(2分)
 const EVENT_TURNS = 3;                         // 金枝の古精が留まるターン数
-// カテゴリ別ランキング70位突破記念 — 期間限定(JST。両端を含む)。次回開催時はこの2つを更新する。
-const EVENT_START = "2026-09-19";
-const EVENT_END   = "2026-09-24";
+// 10,000ダウンロード記念 — 期間限定(JST。両端を含む。10/17 0:00 から1週間)。次回開催時はこの2つを更新する。
+const EVENT_START = "2026-10-17";
+const EVENT_END   = "2026-10-23";
 // このイベントを一旦無効化する(バナー・古精の出現とも止まる)。再開する時は true に戻し、
 // 上の EVENT_START/EVENT_END を次回開催の期間に更新する。
-const EVENT_ENABLED = false;
+const EVENT_ENABLED = true;
 const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
 function eventStatus(meta) {
   const now = Date.now();
@@ -741,6 +758,14 @@ const SKILL_TREE = [
     desc: "突属性で与えたダメージの4%を自らの傷に還す。", effect: { type: "lifestealPct", element: "突", value: 0.04 } },
   { id: "pierceDepth", name: "貫きの真髄", category: "戦闘拡張", cost: 11, requires: "pierceMastery",
     desc: "突属性武器のダメージ、さらに+7%(合計+27%)。矢と穂先がさらに冴える。", effect: { type: "elementDmgPct", element: "突", value: 0.07 } },
+
+  // 突の毒系(槍が敵に与える毒を伸ばす。上限は ENEMY_POISON で固定: 最大3ターン・毒の割合は最大50%)
+  { id: "pierceVenom", name: "毒塗りの心得", category: "戦闘拡張", cost: 8, requires: "pierceMastery",
+    desc: "槍が敵に与える毒の持続が、2ターン→3ターンになる。", effect: { type: "enemyPoisonTurns", value: 1 } },
+  { id: "pierceVenomMastery", name: "猛毒の極意", category: "戦闘拡張", cost: 11, requires: "pierceVenom",
+    desc: "槍が敵に与える毒のダメージが、攻撃力の30%→40%になる。", effect: { type: "enemyPoisonPctAdd", value: 0.10 } },
+  { id: "pierceVenomDeep", name: "毒牙の真髄", category: "戦闘拡張", cost: 25, requiresAll: ["pierceVenomMastery", "pierceDepth"],
+    desc: "槍が敵に与える毒のダメージが、攻撃力の40%→50%になる。高レアスキル。", effect: { type: "enemyPoisonPctAdd", value: 0.10 } },
 
   { id: "bluntBasics", name: "打の心得", category: "戦闘拡張", cost: 3, requires: null,
     desc: "打属性武器のダメージ+5%。地道な鍛錬の第一歩。", effect: { type: "elementDmgPct", element: "打", value: 0.05 } },
@@ -1048,6 +1073,8 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-enemy.rare { box-shadow: 0 0 0 1px var(--hotaru), 0 0 24px var(--hotaru-dim); }
 .kw-enemy.rare .kw-ename { color: var(--hotaru); }
 .kw-enemy.boss { width: 200px; }
+.kw-enemy-count { flex-basis: 100%; text-align: center; font-size: 10px; letter-spacing: .2em; color: var(--mist); margin-top: -6px; }
+.kw-enemy-count b { color: var(--hotaru); font-size: 12px; }
 .kw-enemy.hit { animation: kwShake .32s ease; }
 @keyframes kwFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
 @keyframes kwShake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(5px); } }
@@ -1059,6 +1086,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-chip { font-size: 10px; padding: 1px 6px; border-radius: 3px; letter-spacing: .1em; }
 .kw-chip.weak { color: var(--hotaru); border: 1px solid var(--hotaru-dim); }
 .kw-chip.res { color: var(--paper-dim); border: 1px solid rgba(185,183,165,.25); }
+.kw-chip.poison { color: #a98ad9; border: 1px solid rgba(169,138,217,.4); }
 .kw-chip.unknown { color: var(--mist); border: 1px dashed rgba(157,180,166,.3); }
 
 /* --- ダメージ演出 --- */
@@ -1191,8 +1219,19 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   .kw-floor { font-size: 24px; }
   .kw-enemy { width: 116px; }
   .kw-enemy.boss { width: 170px; }
+  /* 通常戦闘で敵が3体以上のときは、3体が1行に収まるようカードを小さくする(ボス戦は対象外) */
+  .kw-field-inner.compact { gap: 8px; padding: 14px 4px 14px; }
+  .kw-field-inner.compact .kw-enemy { width: 96px; padding: 10px 6px 8px; }
+  .kw-field-inner.compact .kw-enemy .kw-eicon { padding: 8px; margin-bottom: 2px; }
+  .kw-field-inner.compact .kw-enemy .kw-ename { font-size: 11px; letter-spacing: .02em; }
+  .kw-field-inner.compact .kw-enemy .kw-hpbar { margin-top: 5px; }
+  .kw-field-inner.compact .kw-enemy .kw-affin { gap: 3px; margin-top: 5px; }
+  .kw-field-inner.compact .kw-enemy .kw-chip { font-size: 9px; padding: 1px 4px; letter-spacing: .04em; }
   .kw-hand { grid-template-columns: repeat(2, 1fr); }
   .kw-tate { display: none; }
+}
+@media (max-width: 360px) {
+  .kw-field-inner.compact .kw-enemy { width: 84px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .kw-enemy { animation: none; }
@@ -1484,7 +1523,7 @@ function RarityName({ item, small }) {
 }
 
 /* 敵カード(モジュールレベル=再生成されないので浮遊ダメージが再アニメしない) */
-function EnemyCard({ e, disc, pending, hitId, floats, onAttack }) {
+function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
   const d = disc[e.bookId] || { w: [], r: [] };
   const known = [...(e.weak || []), ...(e.resist || [])];
   const revealed = e.rare || e.boss ? { w: e.weak, r: e.resist } : d;
@@ -1501,7 +1540,7 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack }) {
         <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, left: `calc(50% + ${floatOffsetX(i, myFloats.length)}px)` }}>{f.text}</div>
       ))}
       <div className="kw-eicon">
-        <AssetIcon assetId={e.asset} size={e.boss ? 54 : 36} color={e.rare ? "var(--hotaru)" : "var(--mist)"} />
+        <AssetIcon assetId={e.asset} size={e.boss ? 54 : compact ? 28 : 36} color={e.rare ? "var(--hotaru)" : "var(--mist)"} />
       </div>
       <div className="kw-ename">{e.name}</div>
       <div className={`kw-hpbar ${e.boss ? "boss" : ""}`}><i style={{ width: `${(e.hp / e.maxHp) * 100}%` }} /></div>
@@ -1511,6 +1550,7 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack }) {
         {revealed.r?.map((t) => <span key={"r" + t} className="kw-chip res">耐 {t}</span>)}
         {hidden && <span className="kw-chip unknown">?</span>}
         {e.rare && <span className="kw-chip weak">あと{e.fleeIn}T</span>}
+        {e.hp > 0 && e.poisonT > 0 && <span className="kw-chip poison">毒 {e.poisonT}T</span>}
       </div>
     </div>
   );
@@ -1775,6 +1815,23 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           </div>
         )}
 
+        {/* 確認ダイアログ */}
+        {toggleMetaFlag && (
+          <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
+            <div style={sectionLabel}>確認</div>
+            <div style={{ ...rowStyle, borderBottom: "none" }}>
+              <span style={{ letterSpacing: ".05em" }}>拾い忘れの確認
+                <br /><span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(戦利品が残ったまま進むとき)</span>
+              </span>
+              <button className={`kw-btn ${meta?.confirmLeaveDrops !== false ? "primary" : "ghost"}`}
+                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44, flexShrink: 0 }}
+                onClick={() => toggleMetaFlag("confirmLeaveDrops")}>
+                {meta?.confirmLeaveDrops !== false ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* プライバシー */}
         <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
           <div style={sectionLabel}>プライバシー</div>
@@ -1821,6 +1878,7 @@ const SKILL_ICON_MAP = {
   bladeBasics: Sword, bladeMastery: Sword, bladeEdge: Waves, critUp: Zap,
   magicBasics: Wand2, magicMastery: Wand2, magicEdge: Waves, magicWard: Shield,
   pierceBasics: Crosshair, pierceMastery: Crosshair, pierceEdge: Waves, pierceDepth: Crosshair,
+  pierceVenom: Leaf, pierceVenomMastery: Leaf, pierceVenomDeep: Leaf,
   bluntBasics: Axe, bluntMastery: Axe, bluntEdge: Waves, bluntWeight: Axe,
   soundBasics: Music, soundMastery: Music, soundEdge: Waves, soundEcho: Music, soundDaze: Music,
   powerSeal: Flame,
@@ -2352,6 +2410,23 @@ export default function KiriwatariNoMori() {
     } catch {}
     return () => { delete window.__setConsentApplicable__; };
   }, []);
+
+  // デバッグ用: ネイティブ側が「デバッグ端末」と判定した端末でだけ、起動時に精の結晶を指定数まで引き上げる
+  // (Swift の DebugDeviceConfig.debugDewBank。nil なら呼ばれない)。meta の読み込み前に呼ばれても
+  // 取りこぼさないよう、いったん ref に預けて meta が揃ってから反映する。既に指定数以上なら何もしない。
+  const debugDewRef = useRef(null);
+  const applyDebugDew = () => {
+    const n = debugDewRef.current;
+    if (!n || !metaRef.current) return;
+    debugDewRef.current = null;
+    if ((metaRef.current.dewBank || 0) >= n) return;
+    updateMeta((m) => ({ ...m, dewBank: n }));
+  };
+  useEffect(() => {
+    window.__debugSetDewBank__ = (n) => { debugDewRef.current = Number(n) || null; applyDebugDew(); };
+    return () => { delete window.__debugSetDewBank__; };
+  }, []);
+  useEffect(() => { applyDebugDew(); }, [meta]);
 
   // 自己ベスト等を Firebase のユーザープロパティへ同期する(起動時・死亡時・章クリア時に発火)
   useEffect(() => {
@@ -3032,6 +3107,21 @@ export default function KiriwatariNoMori() {
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
     const floats = [];
+    // 槍が敵に与える毒。持続は基本2ターン+スキル(上限3)、ダメージは基準値×割合(基本30%+スキルの加算。上限50%)。
+    // 再付与は持続を延長・ダメージは大きい方を採る(加算しない)。ダメージ判定は敵ターンの最後(enemyPhase)。
+    const poisonTurns = Math.min(ENEMY_POISON.turnsMax, ENEMY_POISON.turnsBase + skillEffectTotal(meta?.skills, "enemyPoisonTurns"));
+    // 毒のダメージには攻撃バフ(atkMul)を乗せない。属性スキル・力の刻印だけを反映する。
+    const poisonRaw = weapon.atk * masteryMult * powerSealMult;
+    const poisonPctAdd = skillEffectTotal(meta?.skills, "enemyPoisonPctAdd");
+    // 0 = この武器は毒を付与しない。スキルの加算込みでも pctMax(50%)を超えない。
+    const poisonPct = ENEMY_POISON.pct[weapon.type] ? Math.min(ENEMY_POISON.pctMax, ENEMY_POISON.pct[weapon.type] + poisonPctAdd) : 0;
+    const poisonEnemy = (e) => {
+      if (!poisonPct || !e || e.hp <= 0) return;
+      const tick = Math.max(1, Math.round(poisonRaw * Math.max(0, poisonPct - (e.boss ? ENEMY_POISON.bossPctCut : 0))));
+      e.poisonT = Math.max(e.poisonT || 0, poisonTurns);
+      e.poisonDmg = Math.max(e.poisonDmg || 0, tick);
+      floats.push({ key: uid(), targetId: e.id, text: "毒", color: "#a98ad9", size: 13, t: Date.now() });
+    };
     // フロートの数字は1.1秒で消えてしまうため(kwRise)、戦闘ログにも残す。
     const hitLogs = [];
     const extraLogs = [];
@@ -3073,11 +3163,10 @@ export default function KiriwatariNoMori() {
       floats.push({ key: uid(), targetId: target.id, text: "防御破壊", color: "var(--mist)", size: 13, t: Date.now() });
       s = pushLog(s, `${weapon.name}が守りを砕く。`);
     } else if (weapon.type === "spear") {
-      const idx = enemies.findIndex((e) => e.id === target.id);
       const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
-      const behind = enemies.slice(idx + 1).find((e) => e.hp > 0);
-      if (behind) { const r2 = hitEnemy(s, behind, raw, t.dmgType, 0.7, discovered); F(behind.id, r2); dmgDealtThisAction += r2.dmg; }
-      s = pushLog(s, `${weapon.name}の貫きが奥まで届く。`);
+      poisonEnemy(target);
+      s = pushLog(s, `${weapon.name}の穂先が深く刺さる。`);
+      if (poisonPct && target.hp > 0) extraLogs.push(`${target.name}は毒に侵された(${poisonTurns}ターン${target.boss ? "・ボスには効きにくい" : ""})`);
     } else if (weapon.type === "book") {
       for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg; }
       s = pushLog(s, `${weapon.name}の一節が森を薙ぐ。`);
@@ -3496,6 +3585,19 @@ export default function KiriwatariNoMori() {
       s = gRef.current; enemies = s.enemies.map((x) => ({ ...x })); player = { ...s.player };
     }
 
+    // 敵の毒(槍の付与)。敵ターンの最後に、防御・弱点/耐性を無視して固定ダメージを与える。
+    // 旧セーブの敵には poisonT が無い(undefined)ので > 0 判定で安全にスキップされる。
+    if (player.hp > 0) {
+      for (const e of enemies) {
+        if (e.hp <= 0 || !(e.poisonT > 0)) continue;
+        const pd = Math.min(e.hp, Math.max(1, e.poisonDmg || 1));
+        e.hp -= pd;
+        e.poisonT -= 1;
+        if (e.poisonT <= 0) e.poisonDmg = 0;
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `毒 ${pd}`, color: "#a98ad9", size: 15, t: Date.now() }] };
+        s = pushLog(s, `${e.name}は毒で${pd}ダメージを受けた`);
+      }
+    }
     // 実りの加護: 生命の果実によるリジェネ
     if (player.hp > 0 && player.regen > 0) {
       const rec = Math.max(1, Math.round(mx * 0.10));
@@ -3786,7 +3888,11 @@ export default function KiriwatariNoMori() {
   // 「保存された敵」がずれる恐れがある。gRef.current から同期的に一度だけ計算する。
   function tryProceed() {
     const s = gRef.current;
-    if (s.drops.length > 0) { setG({ ...s, confirm: "drops", full: false }); return; }
+    if (s.drops.length > 0) {
+      // 設定で確認を OFF にしている場合は確認を挟まず、そのまま置いて進む(proceedLeaving と同じ)。
+      if (metaRef.current?.confirmLeaveDrops === false) { proceedLeaving(); return; }
+      setG({ ...s, confirm: "drops", full: false }); return;
+    }
     if ((s.phase === "chest" || s.phase === "spring") && !s.eventDone) { setG({ ...s, confirm: "event", full: false }); return; }
     setG(nextNode({ ...s, confirm: null, full: false }));
   }
@@ -4464,7 +4570,7 @@ export default function KiriwatariNoMori() {
           <X size={16} />
         </button>
         <div className="kw-title">
-          <div className="kw-tsub">カテゴリ別ランキング 70 位突破記念</div>
+          <div className="kw-tsub">10,000 ダウンロード記念</div>
           <h2 style={{ fontSize: 26 }}>宝 樹 の 祠</h2>
           <div style={{ fontSize: 10.5, letterSpacing: ".2em", color: "var(--paper-dim)", marginTop: -2 }}>
             {EVENT_START.replaceAll("-", ".")} 〜 {EVENT_END.replaceAll("-", ".")} 期間限定
@@ -4638,10 +4744,15 @@ export default function KiriwatariNoMori() {
         {/* フィールド */}
         <div className="kw-field">
           {g.phase === "battle" && (
-            <div className="kw-field-inner">
+            // 通常戦闘で敵が3体以上のときだけ、3体が1行に収まるよう小さく表示し、残数も出す(ボス戦は従来どおり)
+            <div className={`kw-field-inner ${g.enemies.length >= 3 && !g.enemies.some((e) => e.boss) ? "compact" : ""}`}>
               {g.enemies.map((e) => (
-                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} />
+                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith}
+                  compact={g.enemies.length >= 3 && !g.enemies.some((x) => x.boss)} />
               ))}
+              {g.enemies.length >= 3 && !g.enemies.some((e) => e.boss) && (
+                <div className="kw-enemy-count">敵 のこり <b>{g.enemies.filter((e) => e.hp > 0).length}</b> 体</div>
+              )}
             </div>
           )}
 

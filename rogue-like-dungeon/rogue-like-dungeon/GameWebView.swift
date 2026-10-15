@@ -106,6 +106,11 @@ struct GameWebView: UIViewRepresentable {
                     let applicable = ConsentManager.shared.isRegulationApplicable
                     let js = "window.__setConsentApplicable__ && window.__setConsentApplicable__(\(applicable))"
                     webView?.evaluateJavaScript(js, completionHandler: nil)
+                    // デバッグ端末だけ、精の結晶を指定数まで引き上げる(DebugDeviceConfig.debugDewBank が nil なら何もしない)
+                    if DebugDeviceConfig.isDebugDevice, let dew = DebugDeviceConfig.debugDewBank {
+                        let debugJS = "window.__debugSetDewBank__ && window.__debugSetDewBank__(\(dew))"
+                        webView?.evaluateJavaScript(debugJS, completionHandler: nil)
+                    }
                 }
             case "settings":
                 guard let body = message.body as? [String: Any],

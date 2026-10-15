@@ -31,6 +31,10 @@ enum DebugDeviceConfig {
             .filter { !$0.isEmpty }
     }()
 
+    /// デバッグ端末で起動するたびに、精の結晶(meta.dewBank)をこの数まで引き上げる(既にそれ以上なら何もしない)。
+    /// 不要になったら nil にする。デバッグ端末以外では、この値に関わらず何も起きない。
+    static let debugDewBank: Int? = nil
+
     static var isDebugDevice: Bool {
         registeredIDs.contains(persistentDeviceID)
     }
