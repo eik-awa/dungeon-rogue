@@ -24,6 +24,12 @@ import FirebaseAnalytics
 final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
     static let shared = ConsentManager()
 
+    /// 同意 SDK(CMP)の読み込み完了・同意状態の変化を知らせる通知。設定画面に「同意設定を管理」を出す
+    /// 判定(isRegulationApplicable)は CMP の読み込み完了前だと false になるため、完了後にもう一度
+    /// WebView 側へ判定結果を送り直すのに使う(以前は起動直後の1回だけで、EEA 等のユーザーに項目が
+    /// 出ないままになることがあった)。
+    static let didUpdateNotification = Notification.Name("kw.consent.didUpdate")
+
     /// choice.inmobi.com のダッシュボードで Bundle ID(eik-awa.rogue-like-dungeon)に
     /// 紐づけて発行された App Key(= p-code)。
     private let pcode = "e_de1zrrLkmzK"
@@ -127,13 +133,17 @@ final class ConsentManager: NSObject, ChoiceCmpDelegate, CCPADelegate {
         didComplete = true
         let cb = completion
         completion = nil
-        DispatchQueue.main.async { cb?(resolved) }
+        DispatchQueue.main.async {
+            cb?(resolved)
+            NotificationCenter.default.post(name: Self.didUpdateNotification, object: nil)
+        }
     }
 
     // MARK: - ChoiceCmpDelegate
 
     func cmpDidLoad(info: PingResponse) {
         print("[Consent] cmpDidLoad: displayStatus=\(info.displayStatus.rawValue) gdpr=\(info.gdprApplies)")
+        defer { DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didUpdateNotification, object: nil) } }
         if info.displayStatus == .visible {
             // 同意 UI が表示された — ユーザーが選択するまでタイムアウトをブロックする。
             // 米国ユーザーが CCPA opt-out を選択し didReceiveUSRegulationsConsent が呼ばれてから

@@ -42,11 +42,52 @@ enum RewardAdResult: String {
     }
 }
 
+/// 広告オブジェクト1つにつき1つ作るデリゲート。`generation`(その広告を作った時点の世代)を持ち、
+/// 差し替え済みの古い広告オブジェクトからのコールバックを `RewardedAdController` 側で見分けられるようにする。
+/// (以前はコントローラー自身が全ての広告のデリゲートだったため、古い広告の読み込み完了/失敗が
+/// 新しい広告の状態を上書きしたり、読み込み中の判定を狂わせたりしうる作りだった。)
+private final class RewardedAdDelegate: NSObject, LPMRewardedAdDelegate {
+    private weak var owner: RewardedAdController?
+    let generation: UInt64
+
+    init(owner: RewardedAdController, generation: UInt64) {
+        self.owner = owner
+        self.generation = generation
+    }
+
+    func didLoadAd(with adInfo: LPMAdInfo) { owner?.handleLoad(generation: generation) }
+    func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) { owner?.handleFailToLoad(generation: generation, error: error) }
+    func didDisplayAd(with adInfo: LPMAdInfo) { owner?.handleDisplay(generation: generation, adInfo: adInfo) }
+    func didRewardAd(with adInfo: LPMAdInfo, reward: LPMReward) { owner?.handleReward(generation: generation) }
+    func didFailToDisplayAd(with adInfo: LPMAdInfo, error: Error) { owner?.handleFailToDisplay(generation: generation, error: error) }
+    func didClickAd(with adInfo: LPMAdInfo) {}
+    func didCloseAd(with adInfo: LPMAdInfo) { owner?.handleClose(generation: generation) }
+}
+
 /// リワード広告のロード・表示・コールバックを一元管理する。
-final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
+final class RewardedAdController: NSObject {
     static let shared = RewardedAdController()
 
     private var ad: LPMRewardedAd?
+    /// 最新の広告オブジェクトの世代(preload のたびに +1)と、そのデリゲート(強参照で保持)。
+    private var adGeneration: UInt64 = 0
+    private var currentDelegate: RewardedAdDelegate?
+
+    /// 広告を表示している最中かどうか。表示中は preload / 作り直し / 二重表示をすべて止める。
+    /// 以前は、広告タップで App Store へ飛んで戻った等でアプリが非アクティブ→アクティブに戻ると
+    /// preloadIfNeeded() が走り、表示中の広告(isAdReady() == false)の代わりに新しい広告が `ad` に
+    /// 入って表示中の広告への唯一の強参照が切れ、didCloseAd / didRewardAd が届かず、広告が閉じられない・
+    /// 報酬が付かない・JS が「読み込み中…」のまま固まる、という症状になりえた。
+    private var isShowing = false
+    /// 表示中の広告とそのデリゲートの強参照(閉じて結果を確定するまで手放さない)。
+    private var showingAd: LPMRewardedAd?
+    private var showingDelegate: RewardedAdDelegate?
+    private var showingGeneration: UInt64 = 0
+    private var showStartedAt: Date?
+    private var recoveryScheduled = false
+    /// 「広告表示中にアプリが終了された」ことを次回起動時に検知するための印(UserDefaults)。
+    private static let showingNetworkKey = "kw.rewardAd.showingNetwork"
+    private var didReportKilledDuringShow = false
     private var onResult: ((RewardAdResult) -> Void)?
     /// show() がロード完了前に呼ばれた場合に保持する待機中コールバック。
     private var pendingCompletion: ((RewardAdResult) -> Void)?
@@ -102,10 +143,15 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
 
     /// LevelPlay SDK 初期化完了後に一度呼び、次に見せる広告を先読みしておく。
     func preload() {
+        reportKilledDuringShowIfNeeded()
+        guard !isShowing else { return } // 表示中は広告オブジェクトを差し替えない
         guard !isLoading else { return }
         loadStartedAt = Date()
+        adGeneration += 1
+        let delegate = RewardedAdDelegate(owner: self, generation: adGeneration)
         let newAd = LPMRewardedAd(adUnitId: rewardedAdUnitID)
-        newAd.setDelegate(self)
+        newAd.setDelegate(delegate)
+        currentDelegate = delegate
         ad = newAd
         newAd.loadAd()
     }
@@ -114,6 +160,7 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
     /// フォアグラウンド復帰時などに呼び、広告ブロック解除後の復旧トリガーにする(S1-2)。
     /// 読み込みから30分以上たった広告は、isAdReady() が true のままでも古いとみなして作り直す。
     func preloadIfNeeded() {
+        guard !isShowing else { return }
         if let ad = ad, ad.isAdReady(), !isStale { return }
         if isStale {
             ad = nil
@@ -138,13 +185,14 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
 
     private func periodicPreloadTick() {
         guard UIApplication.shared.applicationState == .active else { return }
-        guard onResult == nil, pendingCompletion == nil else { return }
+        guard !isShowing, onResult == nil, pendingCompletion == nil else { return }
         preloadIfNeeded()
     }
 
     /// SDK は初期化済みのまま、リワード広告のオブジェクトだけを作り直す。
     /// forceReinitialize から呼ばれる(SDK 自体の再初期化はもう行わない)。
     func rebuildAd() {
+        guard !isShowing else { return }
         ad = nil
         adLoadedAt = nil
         preload()
@@ -159,6 +207,11 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
             showDebugTestAd(completion: completion)
             return
         }
+        // 既に広告を表示している最中の二重表示は許さない(結果は先に始めた方へ返る)。
+        if isShowing {
+            completion(.unavailable)
+            return
+        }
         guard let vc = UIApplication.shared.kwTopViewController else {
             completion(.unavailable)
             return
@@ -167,8 +220,7 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
             logShowRequest(ready: true)
             onResult = completion
             pendingRequestID = nil
-            pendingRewardGranted = false
-            ad.showAd(viewController: vc, placementName: nil)
+            beginShowing(ad, from: vc)
             return
         }
         // 広告がロード中・未ロード・古くなった(isStale)のいずれか — リクエストIDを採番し、
@@ -236,9 +288,67 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
         callback(result)
     }
 
-    // MARK: - LPMRewardedAdDelegate
+    // MARK: - 表示中の管理
 
-    func didLoadAd(with adInfo: LPMAdInfo) {
+    /// 広告の表示を開始する。表示中は広告オブジェクトとデリゲートを強参照で保持し、
+    /// preload / 作り直し / 二重表示を止める(閉じて結果を確定した時点で endShowing() で解除する)。
+    private func beginShowing(_ ad: LPMRewardedAd, from vc: UIViewController) {
+        isShowing = true
+        showingAd = ad
+        showingDelegate = currentDelegate
+        showingGeneration = adGeneration
+        showStartedAt = Date()
+        pendingRewardGranted = false
+        UserDefaults.standard.set("unknown", forKey: Self.showingNetworkKey)
+        ad.showAd(viewController: vc, placementName: nil)
+    }
+
+    private func endShowing() {
+        isShowing = false
+        showingAd = nil
+        showingDelegate = nil
+        showStartedAt = nil
+        UserDefaults.standard.removeObject(forKey: Self.showingNetworkKey)
+    }
+
+    /// 前回、広告表示中にアプリが終了されていたら、そのときのネットワーク名を Firebase に送る
+    /// (閉じるボタンの無い壊れた広告素材などを出しているネットワークの特定に使う)。
+    private func reportKilledDuringShowIfNeeded() {
+        guard !didReportKilledDuringShow else { return }
+        didReportKilledDuringShow = true
+        let defaults = UserDefaults.standard
+        guard let network = defaults.string(forKey: Self.showingNetworkKey) else { return }
+        defaults.removeObject(forKey: Self.showingNetworkKey)
+        Analytics.logEvent("reward_ad_killed_during_show", parameters: ["network": network])
+    }
+
+    /// フォアグラウンド復帰時に呼ぶ。「広告は既に閉じているのに、閉じた通知(didCloseAd)が届いていない」
+    /// 状態で固まっていたら、結果を確定させて固まりを解消する。広告画面が前面に残っている間は
+    /// 何もしない(広告を強制的に閉じることはしない)。
+    func recoverIfShowingStuck() {
+        guard isShowing, !recoveryScheduled else { return }
+        recoveryScheduled = true
+        let gen = showingGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self else { return }
+            self.recoveryScheduled = false
+            guard self.isShowing, self.showingGeneration == gen else { return }
+            // 表示を始めて間もない間(提示アニメーション中など)は判断しない。
+            if let t = self.showStartedAt, Date().timeIntervalSince(t) < 4 { return }
+            // 広告画面(ルート VC の上に提示されたもの)がまだ残っているなら、そのまま待つ。
+            if UIApplication.shared.kwRootViewController?.presentedViewController != nil { return }
+            Analytics.logEvent("reward_ad_stuck_recovered", parameters: ["rewarded": self.pendingRewardGranted ? 1 : 0])
+            self.finish(self.pendingRewardGranted ? .rewarded : .dismissed)
+            self.endShowing()
+            self.preload()
+        }
+    }
+
+    // MARK: - デリゲートからの通知(generation で古い広告オブジェクトの通知を捨てる)
+
+    fileprivate func handleLoad(generation: UInt64) {
+        // 差し替え済みの古い広告の読み込み完了は無視する(新しい広告の状態を触らせない)。
+        guard generation == adGeneration, !isShowing else { return }
         print("[RewardedAd] loaded")
         loadStartedAt = nil
         adLoadedAt = Date()
@@ -251,13 +361,14 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
         pendingRequestID = nil
         pendingRequestDeadline = nil
         onResult = cb
-        pendingRewardGranted = false
-        ad.showAd(viewController: vc, placementName: nil)
+        beginShowing(ad, from: vc)
     }
 
     private static let loadRetryDelays: [TimeInterval] = [5, 15, 30]
 
-    func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
+    fileprivate func handleFailToLoad(generation: UInt64, error: Error) {
+        // 差し替え済みの古い広告の読み込み失敗は無視する(新しい読み込みを失敗扱いにしない)。
+        guard generation == adGeneration, !isShowing else { return }
         print("[RewardedAd] load failed: \(error)")
         loadStartedAt = nil
         let code = (error as NSError).code
@@ -290,38 +401,49 @@ final class RewardedAdController: NSObject, LPMRewardedAdDelegate {
         }
     }
 
-    func didDisplayAd(with adInfo: LPMAdInfo) {}
+    fileprivate func handleDisplay(generation: UInt64, adInfo: LPMAdInfo) {
+        guard isShowing, generation == showingGeneration else { return }
+        // 表示できたネットワークを記録しておく(表示中に終了された場合の特定に使う)。
+        UserDefaults.standard.set(adInfo.adNetwork ?? "unknown", forKey: Self.showingNetworkKey)
+    }
 
-    func didRewardAd(with adInfo: LPMAdInfo, reward: LPMReward) {
+    fileprivate func handleReward(generation: UInt64) {
+        guard isShowing, generation == showingGeneration else { return }
         pendingRewardGranted = true
         finish(.rewarded)
     }
 
-    func didFailToDisplayAd(with adInfo: LPMAdInfo, error: Error) {
+    fileprivate func handleFailToDisplay(generation: UInt64, error: Error) {
+        guard isShowing, generation == showingGeneration else { return }
         print("[RewardedAd] display failed: \(error)")
         loadStartedAt = nil
         adLoadedAt = nil
         logFailure(stage: "display", code: (error as NSError).code)
         finish(.unavailable)
+        endShowing()
         // 表示失敗後は次回のために即リロードする。
         preload()
     }
 
-    func didClickAd(with adInfo: LPMAdInfo) {}
-
-    func didCloseAd(with adInfo: LPMAdInfo) {
+    fileprivate func handleClose(generation: UInt64) {
+        guard isShowing, generation == showingGeneration else { return }
         // didRewardAd を経ずに閉じられた場合(視聴を最後まで完了しなかった)は dismissed 扱い。
         // 回数を消費するのは didRewardAd 経由の成功時のみ(S1-6)。
         // ただし公式ドキュメント通り didRewardAd が didCloseAd より後に届くことがあるため、
         // ここで即座に .dismissed 確定させると、視聴自体は成功していたのに報酬を取り逃す
         // (finish は最初の呼び出しだけが有効なので、後から来た didRewardAd が無視される)。
         // pendingRewardGranted がまだ立っていなければ、少し待ってから確定する。
-        if !pendingRewardGranted {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self, !self.pendingRewardGranted else { return }
-                self.finish(.dismissed)
-            }
+        // 表示中の印(isShowing)と広告の強参照は、結果を確定させるまで手放さない。
+        if pendingRewardGranted {
+            endShowing()
+            preload()
+            return
         }
-        preload()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.isShowing, self.showingGeneration == generation else { return }
+            if !self.pendingRewardGranted { self.finish(.dismissed) }
+            self.endShowing()
+            self.preload()
+        }
     }
 }

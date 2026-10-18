@@ -66,6 +66,9 @@ struct GameWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let bgm = BGMController()
         var onReady: (() -> Void)?
+        /// appReady を送ってきた WebView。同意設定の表示可否を後から送り直すために保持する(弱参照)。
+        private weak var readyWebView: WKWebView?
+        private var observingConsent = false
 
         init(onReady: (() -> Void)? = nil) {
             self.onReady = onReady
@@ -85,6 +88,30 @@ struct GameWebView: UIViewRepresentable {
             }
         }
 
+        /// 同意設定の表示可否を WebView(JS)へ送る。何度呼んでも安全(JS 側は値を置き換えるだけ)。
+        private func pushConsentApplicable() {
+            let applicable = ConsentManager.shared.isRegulationApplicable
+            let js = "window.__setConsentApplicable__ && window.__setConsentApplicable__(\(applicable))"
+            readyWebView?.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        private func startObservingConsent() {
+            guard !observingConsent else { return }
+            observingConsent = true
+            NotificationCenter.default.addObserver(self, selector: #selector(consentMayHaveChanged),
+                                                   name: ConsentManager.didUpdateNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(consentMayHaveChanged),
+                                                   name: UIApplication.didBecomeActiveNotification, object: nil)
+        }
+
+        @objc private func consentMayHaveChanged() {
+            DispatchQueue.main.async { [weak self] in self?.pushConsentApplicable() }
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             switch message.name {
@@ -101,11 +128,13 @@ struct GameWebView: UIViewRepresentable {
                 let webView = message.webView
                 DispatchQueue.main.async {
                     self.onReady?()
+                    self.readyWebView = webView
                     // GDPR/米国州法が実際に適用される地域のユーザーにだけ、
                     // 設定画面の「広告の同意設定を管理」項目を出す。
-                    let applicable = ConsentManager.shared.isRegulationApplicable
-                    let js = "window.__setConsentApplicable__ && window.__setConsentApplicable__(\(applicable))"
-                    webView?.evaluateJavaScript(js, completionHandler: nil)
+                    // 判定は同意 SDK の読み込み前だと false になるため、読み込み完了・同意状態の変化・
+                    // フォアグラウンド復帰のたびに送り直す。
+                    self.pushConsentApplicable()
+                    self.startObservingConsent()
                     // デバッグ端末だけ、精の結晶を指定数まで引き上げる(DebugDeviceConfig.debugDewBank が nil なら何もしない)
                     if DebugDeviceConfig.isDebugDevice, let dew = DebugDeviceConfig.debugDewBank {
                         let debugJS = "window.__debugSetDewBank__ && window.__debugSetDewBank__(\(dew))"
@@ -266,11 +295,17 @@ final class BGMController: NSObject {
     private var bgmPlayer: AVAudioPlayer?
     private var sePlayer:  AVAudioPlayer?
     private var bgmStarted = false
+    /// 今「鳴らしているべき」状態か(JS から play / 音量>0 で true、pause / 音量0 で false)。
+    /// 電話などの割り込みが終わったときに、鳴らしているべきなら BGM を再開するための判断に使う。
+    private var shouldBePlaying = false
 
     override init() {
         super.init()
         try? AVAudioSession.sharedInstance().setCategory(
             .ambient, mode: .default, options: [.mixWithOthers])
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance())
         if let url = Bundle.main.url(forResource: "Where_the_Willow_Bends", withExtension: "mp3") {
             bgmPlayer = try? AVAudioPlayer(contentsOf: url)
             bgmPlayer?.numberOfLoops = -1
@@ -282,6 +317,23 @@ final class BGMController: NSObject {
             sePlayer?.volume = 0.68
             sePlayer?.prepareToPlay()
         }
+    }
+
+    /// 電話・アラーム・Siri などの割り込みが終わったら、鳴らしているべき状態だった BGM を再開する
+    /// (AVAudioPlayer は割り込み後に自動では再開しない)。
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw),
+              type == .ended else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.shouldBePlaying, !(self.bgmPlayer?.isPlaying ?? false) else { return }
+            try? AVAudioSession.sharedInstance().setActive(true)
+            self.bgmPlayer?.play()
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     func handle(_ message: WKScriptMessage) {
@@ -298,6 +350,7 @@ final class BGMController: NSObject {
         switch action {
         case "play":
             bgmStarted = true
+            shouldBePlaying = true
             let v = (body["v"] as? Double).map { Float($0) } ?? bgmPlayer?.volume ?? 0.35
             bgmPlayer?.volume = v
             if !(bgmPlayer?.isPlaying ?? false) {
@@ -306,11 +359,13 @@ final class BGMController: NSObject {
                 bgmPlayer?.play()
             }
         case "pause":
+            shouldBePlaying = false
             bgmPlayer?.pause()
         case "volume":
             guard let v = (body["v"] as? Double).map({ Float($0) }) else { return }
             bgmPlayer?.volume = v
             if bgmStarted {
+                shouldBePlaying = v > 0
                 if v > 0 && !(bgmPlayer?.isPlaying ?? false) { bgmPlayer?.play() }
                 else if v <= 0 { bgmPlayer?.pause() }
             }

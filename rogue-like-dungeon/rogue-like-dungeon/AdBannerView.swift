@@ -89,6 +89,8 @@ final class LevelPlayAdsController: ObservableObject {
             self.isForeground = true
             let staleReturn = self.backgroundedAt.map { Date().timeIntervalSince($0) > Self.staleAfter } ?? false
             self.backgroundedAt = nil
+            // リワード広告の表示中に「広告は閉じたのに閉じた通知が届かない」まま固まっていたら解消する。
+            RewardedAdController.shared.recoverIfShowingStuck()
             switch self.state {
             case .ready where staleReturn:
                 self.forceReinitialize(reason: "long_background_return")

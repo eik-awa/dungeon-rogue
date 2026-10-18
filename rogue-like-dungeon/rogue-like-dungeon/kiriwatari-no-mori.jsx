@@ -656,10 +656,10 @@ const COMPENSATION_DEW_AMOUNT = 5;
    リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
 ------------------------------------------------------------ */
 const REWARD_AD_DAILY_LIMIT = 5;
-const rewardAdTodayKey = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-};
+// 日付境界は祠(eventJstDay)と同じ JST に揃える。端末のタイムゾーンを変えるだけで1日の上限が
+// リセットされないようにするため。形式は旧実装("2026-10-8" のようにゼロ埋めなし)と同じにして、
+// 更新直後に同日分のカウントが途切れないようにする。
+const rewardAdTodayKey = () => eventJstDay(Date.now()).split("-").map(Number).join("-");
 const rewardAdUsesLeft = (meta) => {
   const ra = meta?.rewardAd;
   if (!ra || ra.date !== rewardAdTodayKey()) return REWARD_AD_DAILY_LIMIT;
@@ -940,16 +940,41 @@ async function saveMeta(meta) {
   try { await window.storage.set(SAVE_KEY, JSON.stringify(meta)); } catch (e) { /* メモリ保存で継続 */ }
 }
 async function loadRun() {
+  let raw = null;
   try {
     const r = await window.storage.get(RUN_SAVE_KEY);
-    if (r && r.value) return JSON.parse(r.value);
-  } catch {}
+    if (r && r.value) { raw = r.value; return JSON.parse(r.value); }
+  } catch {
+    // 壊れた中断セーブを無言で捨てて上書きさせない(loadMeta と同じ)。復旧の手がかりとして退避する。
+    if (raw) { try { await window.storage.set(RUN_SAVE_KEY + ".corrupt_backup", raw); } catch {} }
+  }
   return null;
 }
 // rewardPhase/drops: ボス撃破直後など「未回収の確定ドロップ」がある場合に渡す。
 // これが無いと、ドロップ確定〜プレイヤーが実際に拾うまでの間にタスキルされると、
 // 一度きりの確定報酬(伝説武器・苔の心臓など)が二度と手に入らなくなる。
-async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null, rewardPhase = null, drops = null) {
+// 中断セーブに足す付帯情報。これが無いと再開のたびに中間マス(宝箱・泉)が抽選し直され、
+// 宝箱の中身や泉の回復を何度でも引ける/開けた箱の中身が消える、復活オファー中に閉じると HP0 のまま
+// 別の敵で再開される、といった不整合が起きる。
+//  - nodes: そのフロアの構成(戦闘/宝箱/泉/ボス)。再開時に抽選し直さない。
+//  - midPhase/eventDone/midDrops: 宝箱・泉の画面にいる場合の状態(開封済みか、未回収の中身)。
+//  - reviveOffer: 広告復活オファーの最中だった(敵も一緒に保存し、再開時にオファー画面を復元する)。
+function runExtraOf(s) {
+  const x = {};
+  if (Array.isArray(s.nodes)) x.nodes = s.nodes;
+  if (s.phase === "chest" || s.phase === "spring") { x.midPhase = s.phase; x.eventDone = !!s.eventDone; x.midDrops = s.drops || []; }
+  if (s.phase === "reviveOffer") x.reviveOffer = true;
+  return x;
+}
+// 戦闘中と復活オファー中だけ敵を保存する(宝箱・泉・報酬画面には敵がいない)。
+const enemiesToSave = (s) => (s.phase === "battle" || s.phase === "reviveOffer") ? s.enemies : null;
+// 保存されたフロア構成が妥当ならそれを使い、無い/壊れている(旧セーブ等)ときだけ抽選し直す。
+function nodesOfRun(run) {
+  const n = run.nodes;
+  const ok = Array.isArray(n) && n.length > 0 && n.every((k) => k === "battle" || k === "boss" || k === "chest" || k === "spring");
+  return ok ? n : floorNodes(run.floor);
+}
+async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null, rewardPhase = null, drops = null, extra = null) {
   try {
     const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, regen: player.regen || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
     if (enemies && enemies.length > 0) data.enemies = enemies;
@@ -957,6 +982,7 @@ async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSe
     // 「拾い終えたが『進む』はまだ押していない」タイミングでのタスキル再開時にボスが
     // 再生成されてしまう(倒したはずのボスと再戦させられる)。
     if (rewardPhase) { data.rewardPhase = rewardPhase; data.drops = drops || []; }
+    if (extra) Object.assign(data, extra);
     await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
   } catch {}
 }
@@ -2340,18 +2366,20 @@ export default function KiriwatariNoMori() {
       saveRunTimerRef.current = null;
       saveRun(snap.floor, snap.node, snap.player, snap.weapons, snap.armor, snap.inv,
         snap.cds, snap.lastRareSeen, snap.orbBagBonus,
-        snap.phase === "battle" ? snap.enemies : null,
+        enemiesToSave(snap),
         hasUncollectedReward(snap.phase) ? snap.phase : null,
-        hasUncollectedReward(snap.phase) ? snap.drops : null);
+        hasUncollectedReward(snap.phase) ? snap.drops : null,
+        runExtraOf(snap));
     }, 300);
   };
   const flushSaveRun = (s) => {
     if (saveRunTimerRef.current) { clearTimeout(saveRunTimerRef.current); saveRunTimerRef.current = null; }
     if (!s || !s.floor || s.phase === "dead") return;
     saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv,
-      s.cds, s.lastRareSeen, s.orbBagBonus, s.phase === "battle" ? s.enemies : null,
+      s.cds, s.lastRareSeen, s.orbBagBonus, enemiesToSave(s),
       hasUncollectedReward(s.phase) ? s.phase : null,
-      hasUncollectedReward(s.phase) ? s.drops : null);
+      hasUncollectedReward(s.phase) ? s.drops : null,
+      runExtraOf(s));
   };
 
   // --- 音声 (BGM + SE ともに Swift ネイティブ AVAudioPlayer で再生) ---
@@ -2458,9 +2486,27 @@ export default function KiriwatariNoMori() {
   };
 
   // リワード広告(ネイティブ側の LevelPlay)を要求する。結果は __onRewardAdResult__ に届く。
+  // ネイティブから結果が返らないまま固まった場合の保険(広告そのものの再生時間より十分長い3分)。
+  // これが無いと、結果が返らない限りそのラン中ずっと広告ボタンが押せなくなる。
+  // setTimeout ではなく「依頼時刻 + 定期チェック」にしているのは、テスト環境が setTimeout を即時発火に
+  // 差し替えているため(本番の挙動は同じ)。
+  const rewardAdAskedAtRef = useRef(0);
+  const REWARD_AD_WATCHDOG_MS = 180000;
+  useEffect(() => {
+    const id = setInterval(() => {
+      const askedAt = rewardAdAskedAtRef.current;
+      if (!askedAt || Date.now() - askedAt < REWARD_AD_WATCHDOG_MS) return;
+      rewardAdAskedAtRef.current = 0;
+      setG((s) => (s.rewardAdPending
+        ? { ...s, rewardAdPending: null, rewardAdFailedAt: Date.now(), rewardAdFailReason: "timeout" }
+        : s));
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
   const requestRewardAd = (contextId) => {
     // リトライ時に前回の失敗エラーを消す
     setG((s) => ({ ...s, rewardAdPending: contextId, rewardAdFailedAt: null, rewardAdFailReason: null }));
+    rewardAdAskedAtRef.current = Date.now();
     try { window.webkit?.messageHandlers?.rewardAd?.postMessage({ action: "show", context: contextId }); } catch (_) {
       setG((s) => (s.rewardAdPending === contextId ? { ...s, rewardAdPending: null } : s));
     }
@@ -2491,6 +2537,7 @@ export default function KiriwatariNoMori() {
     window.__onRewardAdResult__ = (contextId, result) => {
       const s0 = gRef.current;
       if (s0.rewardAdPending !== contextId) return; // 別画面に移動済みなら無視
+      rewardAdAskedAtRef.current = 0;
       const r = result === true ? "rewarded"
               : result === false ? "unavailable"
               : String(result || "unavailable");
@@ -2534,7 +2581,9 @@ export default function KiriwatariNoMori() {
         }
       } else if (contextId === "revive") {
         const s0 = gRef.current;
-        if (s0.rewardAdPending === "revive") {
+        // 復活オファー画面のままのときだけ適用する(あきらめて死亡確定した後の遅れて届いた結果で
+        // 死亡画面から復活しないように)。
+        if (s0.rewardAdPending === "revive" && s0.phase === "reviveOffer") {
           const mx = maxHpOf(s0, metaRef.current);
           const revived = { ...s0.player, hp: mx, poison: 0, atkDown: 0 };
           const ns = pushLog({ ...s0, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
@@ -2544,14 +2593,19 @@ export default function KiriwatariNoMori() {
           flushSaveRun(ns); // 復活後の状態を即保存(再起動しても復活が反映される)
         }
       } else if (contextId === "eventDew") {
-        setG((s) => {
-          if (s.rewardAdPending !== "eventDew") return s;
-          return { ...s, rewardAdPending: null,
-            event: { ...s.event, reward2x: true, adClaimed: true } };
-        });
-        // meta.eventReward にも reward2x を保存し、× で閉じても復元できるようにする
-        if (metaRef.current?.eventReward) {
-          updateMeta((mr) => ({ ...mr, eventReward: { ...mr.eventReward, reward2x: true } }));
+        const s0 = gRef.current;
+        if (s0.rewardAdPending === "eventDew") {
+          const converted = s0.event?.converted || [];
+          const ns = { ...s0, rewardAdPending: null, event: { ...s0.event, reward2x: true, adClaimed: true } };
+          setG(ns);
+          gRef.current = ns;
+          // meta.eventReward にも reward2x を保存し、× で閉じても復元できるようにする。
+          // 先に1つ変換していた場合は eventReward が既に null(全部受け取り済み扱い)になっているので、
+          // 2つ目が残っている限りここで作り直す(以前は更新されず、2つ目が保存されずに消えていた)。
+          updateMeta((mr) => (converted.length >= 2 ? mr : {
+            ...mr,
+            eventReward: { ...(mr.eventReward || {}), converted: mr.eventReward?.converted ?? converted, reward2x: true },
+          }));
         }
       }
     };
@@ -2720,8 +2774,8 @@ export default function KiriwatariNoMori() {
       }
       if (migrated !== m) saveMeta(migrated);
       setMeta(migrated);
-      // 不具合お詫び配布: 未受け取りなら起動時に1回だけポップアップで知らせる。
-      if (!migrated.compensationDewClaimed) setShowCompensation(true);
+      // 不具合お詫び配布のポップアップは終了した(新規インストールにも出てしまうため、もう出さない)。
+      // 受け取り処理(claimCompensationDew)と meta.compensationDewClaimed は互換のため残している。
     });
     loadRun().then((run) => { if (run && (run.floor || run.phase === "dead")) setSavedRun(run); });
   }, []);
@@ -2842,7 +2896,7 @@ export default function KiriwatariNoMori() {
     m = updateMeta({ ...m, reviveUsedThisRun: false, inherited: [], everHadWeapon: true });
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
-    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies, null, null, runExtraOf(first));
     // ラン開始を記録(開始章・周回数)
     try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "run_start", stage: chapterIdx + 1, floor: startFloor, clears: m.clears || 0 }); } catch (_) {}
     // ラン開始時の装備武器を記録(武器バランス調整の参考用)
@@ -2890,7 +2944,7 @@ export default function KiriwatariNoMori() {
     };
     clearRun(); setSavedRun(null);
     const first = enterNode(base);
-    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies, null, null, runExtraOf(first));
     setG(first);
   }
 
@@ -2941,7 +2995,7 @@ export default function KiriwatariNoMori() {
       // (これが無いと、確定報酬を拾う前にタスキルすると二度と手に入らなくなる。全部拾い終えた
       // 後でも、ここを経由しないと「進む」を押す前に倒したはずのボスと再戦させられてしまう)。
       const restored = {
-        screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "clear",
+        screen: "run", floor: run.floor, node: run.node || 0, nodes: nodesOfRun(run), phase: "clear",
         player: run.player, weapons: padWeaponSlots(run.weapons, metaRef.current), armor: run.armor, inv: run.inv,
         cds: run.cds || {}, drops: run.drops || [], logs: [], floats: [],
         pending: null, busy: false, bag: false, hitId: null, eventDone: false,
@@ -2959,7 +3013,7 @@ export default function KiriwatariNoMori() {
       // (dewAdOffer: false)— 広告視聴の成否に関わらず、この画面へ戻ってきた時点で今回の
       // 遭遇分は決着済みとして扱う(dewAdClaimed: true で以後の再提示経路も塞いでおく)。
       const restored = {
-        screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "reward",
+        screen: "run", floor: run.floor, node: run.node || 0, nodes: nodesOfRun(run), phase: "reward",
         player: run.player, weapons: padWeaponSlots(run.weapons, metaRef.current), armor: run.armor, inv: run.inv,
         cds: run.cds || {}, drops: run.drops || [], logs: [], floats: [],
         pending: null, busy: false, bag: false, hitId: null, eventDone: false,
@@ -2974,7 +3028,7 @@ export default function KiriwatariNoMori() {
     }
     const savedEnemies = (run.enemies || []).filter((e) => e.hp > 0);
     const base = {
-      screen: "run", floor: run.floor, node: run.node || 0, nodes: floorNodes(run.floor), phase: "battle",
+      screen: "run", floor: run.floor, node: run.node || 0, nodes: nodesOfRun(run), phase: "battle",
       player: run.player, weapons: padWeaponSlots(run.weapons, metaRef.current), armor: run.armor, inv: run.inv,
       cds: run.cds || {}, drops: [], logs: [], floats: [],
       pending: null, busy: false, bag: false, hitId: null, eventDone: false,
@@ -2983,13 +3037,34 @@ export default function KiriwatariNoMori() {
       coach: false, stageIntro: null,
     };
     setSavedRun(null);
+    if (run.reviveOffer && savedEnemies.length > 0) {
+      // 復活オファーの最中に閉じられた: HP0 のまま別の敵で再開させず、オファー画面へ戻す。
+      // 広告の残り回数が無い/この転生で既に復活済みなら、そのまま死亡確定にする。
+      const offer = { ...base, enemies: savedEnemies, phase: "reviveOffer", player: { ...run.player, hp: 0 }, turn: run.turn || 1 };
+      const m0 = metaRef.current;
+      if (rewardAdUsesLeft(m0) > 0 && !m0.reviveUsedThisRun) {
+        setG(offer);
+        flushSaveRun(offer);
+      } else {
+        finalizeDeath(offer);
+      }
+      return;
+    }
+    if (run.midPhase === "chest" || run.midPhase === "spring") {
+      // 宝箱・泉の画面で閉じられた: 開封済みか・未回収の中身まで含めてそのまま復元する
+      // (抽選し直さない)。開けた箱をもう一度開ける/泉をもう一度飲む抜け道を塞ぐ。
+      const mid = { ...base, phase: run.midPhase, enemies: [], eventDone: !!run.eventDone, drops: run.midDrops || [] };
+      saveRun(mid.floor, mid.node, mid.player, mid.weapons, mid.armor, mid.inv, mid.cds, mid.lastRareSeen, mid.orbBagBonus, null, null, null, runExtraOf(mid));
+      setG(mid);
+      return;
+    }
     if (savedEnemies.length > 0) {
       const restored = ensureWeapon({ ...base, enemies: savedEnemies });
-      saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, restored.enemies);
+      saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, restored.enemies, null, null, runExtraOf(restored));
       setG(restored);
     } else {
       const next = enterNode(base);
-      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies, null, null, runExtraOf(next));
       setG(next);
     }
   }
@@ -3011,7 +3086,8 @@ export default function KiriwatariNoMori() {
 
   function enterNode(st) {
     const kind = st.nodes[st.node];
-    let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false, dewAdOffer: false };
+    // rewardAdPending も必ず落とす(次のマスへ進んでも広告待機フラグが残り、広告ボタンが押せなくなるのを防ぐ)
+    let s = { ...st, pending: null, drops: [], eventDone: false, dewAdClaimed: false, dewAdOffer: false, rewardAdPending: null };
     if (kind === "battle" || kind === "boss") {
       s = ensureWeapon(s);
       s.phase = "battle";
@@ -3052,7 +3128,7 @@ export default function KiriwatariNoMori() {
     if (s.node + 1 < s.nodes.length) {
       s.node += 1;
       const next = enterNode(s);
-      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+      saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies, null, null, runExtraOf(next));
       return next;
     }
     // 次の階へ
@@ -3066,7 +3142,7 @@ export default function KiriwatariNoMori() {
       s = pushLog(s, `第 ${floorLabel(nf)} 層へ降りた。霧が濃くなる……`);
     }
     const next = enterNode(s);
-    saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies);
+    saveRun(next.floor, next.node, next.player, next.weapons, next.armor, next.inv, next.cds, next.lastRareSeen, next.orbBagBonus, next.enemies, null, null, runExtraOf(next));
     return next;
   }
 
@@ -3471,13 +3547,13 @@ export default function KiriwatariNoMori() {
     } else if (s.phase === "clear") {
       // ボスクリア: 未回収の確定ドロップ(伝説武器・苔の心臓等)を保持したまま保存する。
       // ここで次の階へ進めてしまうと、拾う前にタスキルされた場合に一度きりの報酬が消える。
-      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, {}, s.lastRareSeen, s.orbBagBonus, null, "clear", s.drops);
+      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, {}, s.lastRareSeen, s.orbBagBonus, null, "clear", s.drops, runExtraOf(s));
     } else {
       // 通常戦闘の勝利(敵なし): 未回収の確定ドロップ(金枝の精の宝樹の雫等)を保持したまま
       // 保存する。以前はここで drops を渡していなかったため、雫の広告視聴〜「拾う」を押す
       // までの間にタスキルすると、戦利品(広告で増えた分も含め未回収分)が丸ごと消えていた
       // (実バグ発見・修正)。
-      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen, s.orbBagBonus, null, "reward", s.drops);
+      saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen, s.orbBagBonus, null, "reward", s.drops, runExtraOf(s));
     }
   }
 
@@ -3628,7 +3704,9 @@ export default function KiriwatariNoMori() {
       const stFainted = { ...s, enemies, player, cds, busy: false };
       // 広告視聴の残り回数があれば、死亡確定前に復活オファーを挟む
       if (rewardAdUsesLeft(meta) > 0 && !stFainted.reviveUsed && !meta.reviveUsedThisRun) {
-        setG({ ...stFainted, phase: "reviveOffer" });
+        const offer = { ...stFainted, phase: "reviveOffer" };
+        setG(offer);
+        flushSaveRun(offer); // 閉じられても HP0 のまま別の敵で再開しないよう、オファー中の状態を即保存する
         return;
       }
       finalizeDeath(stFainted);
@@ -3651,7 +3729,7 @@ export default function KiriwatariNoMori() {
     const nextTurn = (finalState.turn || 1) + 1;
     const turnState = pushLog({ ...finalState, turn: nextTurn }, `── ターン${nextTurn} ──`, true);
     setG(turnState);
-    saveRun(turnState.floor, turnState.node, turnState.player, turnState.weapons, turnState.armor, turnState.inv, turnState.cds, turnState.lastRareSeen, turnState.orbBagBonus, turnState.enemies);
+    saveRun(turnState.floor, turnState.node, turnState.player, turnState.weapons, turnState.armor, turnState.inv, turnState.cds, turnState.lastRareSeen, turnState.orbBagBonus, turnState.enemies, null, null, runExtraOf(turnState));
   }
 
   /* ---------- アイテムのロック / 保護 ---------- */
@@ -3708,6 +3786,12 @@ export default function KiriwatariNoMori() {
       return;
     } else if (item.kind === "armor") {
       const old = ns.armor[item.slot];
+      // 付け替えで HP が 1 未満になる場合は付け替えない。HP を 1 に丸めたまま付け直すと、丸めで
+      // 失った分まで「防具を付けた回復」として戻ってきてしまう(HP5 → 61 のような回復の抜け道)。
+      if (ns.player.hp + ((item.hp || 0) - (old ? (old.hp || 0) : 0)) < 1) {
+        setG({ ...s0, bagActionError: "HPが足りないため付け替えられません。(防具のHP分を失うと倒れてしまいます)" });
+        return;
+      }
       // 防具もロックは「捨てる」操作のみをブロックし、装備の入れ替えは妨げない(武器と同じ方針)。
       ns.armor = { ...ns.armor, [item.slot]: item };
       ns.inv = ns.inv.filter((x) => x.id !== item.id);
@@ -3763,6 +3847,8 @@ export default function KiriwatariNoMori() {
     const a = s0.armor[slot];
     if (!a) return;
     if (s0.inv.length >= invCap) { setG({ ...s0, bagActionError: "袋がいっぱいです。何か捨てるか使ってから外してください。" }); return; }
+    // 外すと HP が 1 未満になる場合は外せない(equipItem と同じ理由。丸めで失った分が付け直しで回復になる)。
+    if (s0.player.hp - (a.hp || 0) < 1) { setG({ ...s0, bagActionError: "HPが足りないため外せません。(防具のHP分を失うと倒れてしまいます)" }); return; }
     let ns = { ...s0, armor: { ...s0.armor, [slot]: null }, inv: [...s0.inv, a], bagActionError: null };
     // 装備解除は「新しい防具の付け替え」の片側(旧防具を外すだけ)と同じ収支にする
     // (equipItem のHP差分反映と対称にする。上げ幅だけ加算して下げ幅を無視する経路を
@@ -3888,6 +3974,7 @@ export default function KiriwatariNoMori() {
   // 「保存された敵」がずれる恐れがある。gRef.current から同期的に一度だけ計算する。
   function tryProceed() {
     const s = gRef.current;
+    if (s.rewardAdPending) return; // 広告の読み込み/視聴中は先へ進めない(結果が別の画面に適用されるのを防ぐ)
     if (s.drops.length > 0) {
       // 設定で確認を OFF にしている場合は確認を挟まず、そのまま置いて進む(proceedLeaving と同じ)。
       if (metaRef.current?.confirmLeaveDrops === false) { proceedLeaving(); return; }
@@ -3896,7 +3983,10 @@ export default function KiriwatariNoMori() {
     if ((s.phase === "chest" || s.phase === "spring") && !s.eventDone) { setG({ ...s, confirm: "event", full: false }); return; }
     setG(nextNode({ ...s, confirm: null, full: false }));
   }
-  const proceedLeaving = () => setG(nextNode({ ...gRef.current, drops: [], confirm: null, full: false }));
+  const proceedLeaving = () => {
+    if (gRef.current.rewardAdPending) return;
+    setG(nextNode({ ...gRef.current, drops: [], confirm: null, full: false }));
+  };
 
   // 装備との比較ヒント
   function hintFor(item, st = g) {
@@ -3925,23 +4015,35 @@ export default function KiriwatariNoMori() {
   }
 
   /* ---------- イベント ---------- */
+  // 宝箱・泉は、開けた/飲んだ直後に保存する(開けて拾う前・飲んだ直後にタスキルされても、
+  // 中身や回復が消えたり、再開で同じ箱/泉をもう一度使えたりしないように)。
+  // 乱数(中身の抽選)を setG(updater) の中で引かず、gRef.current から同期的に一度だけ組み立てる。
   function openChest() {
-    setG((s) => {
-      const item = Math.random() < 0.65 ? makeWeapon(s.floor, { luck: 1.3 }) : makeArmor(s.floor, { luck: 1.3 });
-      let ns = { ...s, drops: [item], eventDone: true };
-      return pushLog(ns, "苔むした宝箱を開けた。", true);
-    });
+    const s0 = gRef.current;
+    if (s0.phase !== "chest" || s0.eventDone) return; // 連打・二重開封を弾く
+    const item = Math.random() < 0.65 ? makeWeapon(s0.floor, { luck: 1.3 }) : makeArmor(s0.floor, { luck: 1.3 });
+    const ns = pushLog({ ...s0, drops: [item], eventDone: true }, "苔むした宝箱を開けた。", true);
+    setG(ns);
+    gRef.current = ns;
+    flushSaveRun(ns);
   }
   function drinkSpring() {
-    setG((s) => {
-      const mx = maxHpOf(s);
-      const heal = Math.round(mx * 0.5);
-      let ns = { ...s, eventDone: true };
-      ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + heal), poison: 0 };
-      ns = addFloat(ns, "player", `+${heal}`, "#8fd39a", 22);
-      if (Math.random() < 0.35) { ns.drops = [makeConsumable(null, s.floor)]; return pushLog(ns, `泉の底に何かが沈んでいた。HPを${heal}回復した`, true); }
-      return pushLog(ns, `泉の水が傷と毒を洗い流した。HPを${heal}回復した`);
-    });
+    const s0 = gRef.current;
+    if (s0.phase !== "spring" || s0.eventDone) return; // 連打・二重回復を弾く
+    const mx = maxHpOf(s0);
+    const heal = Math.round(mx * 0.5);
+    let ns = { ...s0, eventDone: true };
+    ns.player = { ...ns.player, hp: Math.min(mx, ns.player.hp + heal), poison: 0 };
+    ns = addFloat(ns, "player", `+${heal}`, "#8fd39a", 22);
+    if (Math.random() < 0.35) {
+      ns.drops = [makeConsumable(null, s0.floor)];
+      ns = pushLog(ns, `泉の底に何かが沈んでいた。HPを${heal}回復した`, true);
+    } else {
+      ns = pushLog(ns, `泉の水が傷と毒を洗い流した。HPを${heal}回復した`);
+    }
+    setG(ns);
+    gRef.current = ns;
+    flushSaveRun(ns);
   }
 
   /* ---------- 死と継承 ---------- */
@@ -4018,7 +4120,7 @@ export default function KiriwatariNoMori() {
     };
     base.player.hp = maxHpOf(base, m2);
     const first = enterNode(base);
-    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies, null, null, runExtraOf(first));
     setG(first);
     // 継承品はこの旅へ渡した時点で meta 上は消費済みにする。残しておくと、中断して
     // タイトルへ戻り再度始めるたびに同じ継承品が何度でも手に入ってしまう(無限増殖)。
@@ -4038,6 +4140,7 @@ export default function KiriwatariNoMori() {
   // 「挑戦する」— 遭遇フェーズへ移行するだけ。日付確定は捕獲完了時(reportApproach)に行う。
   function eventStart() {
     if (!eventStatus(metaRef.current).available) return;
+    if (metaRef.current?.eventReward) return; // 前回分の報酬が未受け取りの間は新しい挑戦を始めさせない
     setG((s) => ({ ...s, event: { phase: "encounter", turn: 1, converted: [] } }));
   }
 
@@ -4217,7 +4320,7 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
             </div>
           )}
-          {eventStatus(meta).withinPeriod && (
+          {(eventStatus(meta).withinPeriod || meta.eventReward) && (
             <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
               <button className="kw-btn ghost" style={{ padding: "10px 28px", position: "relative",
                 borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)",
@@ -4550,7 +4653,8 @@ export default function KiriwatariNoMori() {
     // × で閉じた後に再入した場合、meta.eventReward から報酬フェーズを復元する
     const ev = (() => {
       const raw = g.event || { phase: "intro" };
-      if (meta?.eventReward && est.claimedToday && raw.phase === "intro") {
+      // 日付をまたいでも、未受け取りの報酬が残っていれば必ずそれを先に復元する(前日分を新しい挑戦で上書きしない)
+      if (meta?.eventReward && raw.phase === "intro") {
         return { phase: "reward", ...meta.eventReward };
       }
       return raw;
@@ -4558,7 +4662,7 @@ export default function KiriwatariNoMori() {
     const rewardTotal = 1 + (ev.reward2x ? 1 : 0);
     const remaining = rewardTotal - (ev.converted || []).length;
     const adPending = g.rewardAdPending === "eventDew";
-    const canAd = !ev.adClaimed && rewardAdUsesLeft(meta) > 0;
+    const canAd = !ev.adClaimed && !ev.reward2x && rewardAdUsesLeft(meta) > 0;
     const turn = ev.turn || 1;
     return (
       <div className="kw-root">
@@ -4689,7 +4793,7 @@ export default function KiriwatariNoMori() {
                   {adPending ? "広告を読み込み中…（15秒ほどかかります）" : `広告を見て報酬を2倍にする（本日あと${rewardAdUsesLeft(meta)}回）`}
                 </button>
               )}
-              {!ev.adClaimed && rewardAdFailNote()}
+              {!ev.adClaimed && !ev.reward2x && rewardAdFailNote()}
             </div>
           )}
         </div>
@@ -4770,7 +4874,7 @@ export default function KiriwatariNoMori() {
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
                     </div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
-                  <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={tryProceed}>先へ進む →</button>
                 </div>
               </div>
             </div>
@@ -4794,7 +4898,7 @@ export default function KiriwatariNoMori() {
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
                     </div>)}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
-                  <button className="kw-btn ghost" onClick={tryProceed}>先へ進む →</button>
+                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={tryProceed}>先へ進む →</button>
                 </div>
               </div>
             </div>
@@ -4825,7 +4929,7 @@ export default function KiriwatariNoMori() {
                 )}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
                   {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
-                  <button className="kw-btn primary" onClick={tryProceed}>
+                  <button className="kw-btn primary" disabled={!!g.rewardAdPending} onClick={tryProceed}>
                     {g.node + 1 < g.nodes.length ? "先へ進む →" : `${floorLabel(g.floor + 1)} 層へ降りる ↓`}
                   </button>
                 </div>
@@ -5191,7 +5295,7 @@ export default function KiriwatariNoMori() {
                 {g.rewardAdPending === "revive" ? "広告を読み込み中…（15秒ほどかかります）" : "広告を見て復活する"}
               </button>
               <button className="kw-btn ghost" style={{ fontSize: 12 }}
-                onClick={() => finalizeDeath(g)}>あきらめる</button>
+                disabled={!!g.rewardAdPending} onClick={() => finalizeDeath(g)}>あきらめる</button>
             </div>
             {rewardAdFailNote({ marginTop: 10 })}
           </div>
@@ -5431,8 +5535,8 @@ export default function KiriwatariNoMori() {
                 // 消えていた。"clear"(章ボス)だけでなく "reward"(通常/レア敵撃破)も対象にする。
                 const rewardPhase = hasUncollectedReward(g.phase) ? g.phase : null;
                 const drops = hasUncollectedReward(g.phase) ? g.drops : null;
-                const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies, rewardPhase, drops };
-                saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies, rewardPhase, drops);
+                const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies, rewardPhase, drops, ...runExtraOf(g) };
+                saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies, rewardPhase, drops, runExtraOf(g));
                 setSavedRun(rd);
                 setG({ screen: "title" });
               }}>中断してタイトルへ</button>
