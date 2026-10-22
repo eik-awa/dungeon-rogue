@@ -4,7 +4,7 @@
 //
 //  Created by eiki ogawa on 2026/08/18.
 //
-//  リワード広告(Unity LevelPlay)。1日3回までの制限は JS 側(kiriwatari-no-mori.jsx)で管理し、
+//  リワード広告(Unity LevelPlay)。1日5回までの制限は JS 側(kiriwatari-no-mori.jsx)で管理し、
 //  ネイティブ側は「表示できるかどうか」と「視聴結果(reward / dismissed / unavailable / timeout)」だけを担当する。
 //
 
@@ -211,6 +211,16 @@ final class RewardedAdController: NSObject {
         if isShowing {
             completion(.unavailable)
             return
+        }
+        // 読み込み待ちのまま残っている前の依頼があれば、ここで打ち切る。残しておくと、新しい依頼の
+        // 後で広告が読み込めた時点で、前の依頼の分として意図しない広告がもう1本表示されてしまう
+        // (待機中コールバックが上書きされたり、二重に消化されたりする)。JS 側は文脈が合わない
+        // 結果を無視するので、打ち切りの通知を返しても害はない。
+        if let stale = pendingCompletion {
+            pendingCompletion = nil
+            pendingRequestID = nil
+            pendingRequestDeadline = nil
+            stale(.dismissed)
         }
         guard let vc = UIApplication.shared.kwTopViewController else {
             completion(.unavailable)

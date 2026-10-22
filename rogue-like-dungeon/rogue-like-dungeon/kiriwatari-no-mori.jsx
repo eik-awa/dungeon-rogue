@@ -653,7 +653,7 @@ const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0,
 const COMPENSATION_DEW_AMOUNT = 5;
 
 /* ------------------------------------------------------------
-   リワード広告(1日3回まで。宝珠2倍/復活のどちらかに使える共通回数)
+   リワード広告(1日5回まで。復活・雫2倍・祠2倍で共通の回数。日本時間の0時にリセット)
 ------------------------------------------------------------ */
 const REWARD_AD_DAILY_LIMIT = 5;
 // 日付境界は祠(eventJstDay)と同じ JST に揃える。端末のタイムゾーンを変えるだけで1日の上限が
@@ -878,6 +878,11 @@ function skillUnlocked(skill, meta) {
   if (u.stage != null && stageOf(meta?.bestFloor || 1) < u.stage - 1) return false;
   if (u.clears != null && (meta?.clears || 0) < u.clears) return false;
   return true;
+}
+// 前提スキルの一覧と、それぞれ習得済みか(複数前提[requiresAll]・単一前提[requires]のどちらも)。
+function skillPrereqList(skill, skills) {
+  const ids = skill.requiresAll || (skill.requires ? [skill.requires] : []);
+  return ids.map((id) => ({ id, name: SKILL_TREE.find((x) => x.id === id)?.name || id, owned: !!skills?.[id] }));
 }
 const skillUnlockText = (skill) => {
   const u = skill.unlock;
@@ -2083,7 +2088,11 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                         background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
                         color: accent,
                       }}>
-                        {owned ? "✦ 済" : revealed ? `${skill.cost}結晶` : "???"}
+                        {owned ? "✦ 済" : revealed ? `${skill.cost}結晶` : (() => {
+                          // 前提が複数あるスキルは、いくつ満たしたかを見せる(何が足りないか分からない問題の対策)
+                          const pre = skillPrereqList(skill, skills);
+                          return pre.length > 1 ? `前提 ${pre.filter((x) => x.owned).length}/${pre.length}` : "???";
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -2102,7 +2111,21 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
         }}>
           {!selectedRevealed ? (
             <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", padding: "4px 0" }}>
-              ??? {!skillUnlocked(selected, meta) ? skillUnlockText(selected) : "前提スキルを習得すると解放されます。"}
+              <div>??? {!skillUnlocked(selected, meta) ? skillUnlockText(selected) : "前提スキルを習得すると解放されます。"}</div>
+              {(() => {
+                const pre = skillPrereqList(selected, skills);
+                if (pre.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 6, lineHeight: 1.8 }}>
+                    <span style={{ color: "var(--paper-dim)" }}>必要なスキル:</span>{" "}
+                    {pre.map((x, i) => (
+                      <span key={x.id} style={{ color: x.owned ? "#8fd39a" : "var(--paper)", whiteSpace: "nowrap" }}>
+                        {i > 0 ? "・" : ""}{x.name}{x.owned ? "(習得済)" : "(未習得)"}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
@@ -2498,12 +2521,15 @@ export default function KiriwatariNoMori() {
       if (!askedAt || Date.now() - askedAt < REWARD_AD_WATCHDOG_MS) return;
       rewardAdAskedAtRef.current = 0;
       setG((s) => (s.rewardAdPending
-        ? { ...s, rewardAdPending: null, rewardAdFailedAt: Date.now(), rewardAdFailReason: "timeout" }
+        ? { ...s, rewardAdPending: null, dewAdOffer: false, rewardAdFailedAt: Date.now(), rewardAdFailReason: "timeout" }
         : s));
     }, 5000);
     return () => clearInterval(id);
   }, []);
   const requestRewardAd = (contextId) => {
+    // 別の広告の読み込み/視聴の最中は新しい依頼を受け付けない(ネイティブ側で2件が重なり、
+    // 先の依頼の結果が取り違えられたり、あとから意図しない広告が出たりするのを防ぐ)。
+    if (gRef.current.rewardAdPending) return;
     // リトライ時に前回の失敗エラーを消す
     setG((s) => ({ ...s, rewardAdPending: contextId, rewardAdFailedAt: null, rewardAdFailReason: null }));
     rewardAdAskedAtRef.current = Date.now();
@@ -2549,7 +2575,7 @@ export default function KiriwatariNoMori() {
         // そのまま持たせ、rewardAdFailNote 側で文言を出し分ける。
         const reason = r;
         setG((s) => (s.rewardAdPending === contextId
-          ? { ...s, rewardAdPending: null, rewardAdFailedAt: Date.now(), rewardAdFailReason: reason }
+          ? { ...s, rewardAdPending: null, dewAdOffer: false, rewardAdFailedAt: Date.now(), rewardAdFailReason: reason }
           : s));
         return;
       }
@@ -2571,7 +2597,7 @@ export default function KiriwatariNoMori() {
         if (s0.rewardAdPending === "dew") {
           const dew = makeConsumable("dew");
           const cap = invCapOf(metaRef.current, s0.orbBagBonus || 0);
-          const base = { ...s0, rewardAdPending: null, dewAdClaimed: true };
+          const base = { ...s0, rewardAdPending: null, dewAdClaimed: true, dewAdOffer: false };
           const ns = s0.inv.length < cap
             ? pushLog({ ...base, inv: [...s0.inv, dew] }, "広告視聴の報酬。宝樹の雫が袋に加わった!", true)
             : pushLog({ ...base, drops: [...s0.drops, dew] }, "広告視聴の報酬。宝樹の雫がもう一つ生まれた!(袋が満杯のため戦利品へ)", true);
@@ -5287,7 +5313,8 @@ export default function KiriwatariNoMori() {
             <h2 style={{ color: "var(--danger)" }}>力尽きかけている……</h2>
             <div className="kw-sub" style={{ marginTop: 10 }}>
               広告を見ると、HP満タンでこの場に踏みとどまれる。<br />
-              この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。
+              この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。<br />
+              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回(復活・雫2倍・祠2倍で共通)</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
               <button className="kw-btn primary" style={{ fontSize: 12 }}
@@ -5552,15 +5579,17 @@ export default function KiriwatariNoMori() {
             <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 16 }}>宝 樹 の 雫</h3>
             <div style={{ fontSize: 12.5, color: "var(--mist)", lineHeight: 1.9, marginBottom: 16 }}>
               広告を視聴すると、雫をもう1個もらえます。<br />
-              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回</span>
+              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回(復活・雫2倍・祠2倍で共通)</span>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              {/* 押してもこの画面は閉じない: 読み込み中の表示を出し続け、結果(成功/失敗)が届いてから閉じる */}
               <button className="kw-btn primary" style={{ padding: "10px 20px", fontSize: 12.5 }}
                 disabled={!!g.rewardAdPending}
-                onClick={() => { setG((s) => ({ ...s, dewAdOffer: false })); requestRewardAd("dew"); }}>
+                onClick={() => requestRewardAd("dew")}>
                 {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほど）" : "広 告 を 見 る"}
               </button>
               <button className="kw-btn ghost" style={{ fontSize: 12 }}
+                disabled={!!g.rewardAdPending}
                 onClick={() => setG((s) => ({ ...s, dewAdOffer: false }))}>
                 いいえ
               </button>
