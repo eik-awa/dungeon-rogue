@@ -95,7 +95,7 @@ final class LevelPlayAdsController: ObservableObject {
             case .ready where staleReturn:
                 self.forceReinitialize(reason: "long_background_return")
             case .ready:
-                RewardedAdController.shared.preloadIfNeeded()
+                RewardedAdController.shared.preloadIfNeeded(trigger: "foreground")
             case .initializing:
                 break
             case .idle, .failed:
@@ -106,16 +106,16 @@ final class LevelPlayAdsController: ObservableObject {
         }
     }
 
-    /// state == .ready のまま広告が出せなくなっている(SDK セッションが内部的に失効した)
-    /// ことを疑うシグナル。長時間バックグラウンド復帰時(原因E対策)に加えて、個別の広告
-    /// (バナー/リワード)が続けて失敗した時にも呼ばれる。
+    /// 6時間以上のバックグラウンドから戻った直後に呼ぶ(SDK セッションの失効を疑う: 原因E対策)。
+    /// リワード・バナーの連続失敗からは呼ばない(バナーの no-fill は日常的に起きるうえ、リワード広告の
+    /// 再取得は RewardedAdController 自身の再試行・休止ポリシーに任せるため)。
     /// reinitCooldown 未満の間隔で連打されないようガードする(収益に関わる分岐点のため、
     /// ネットワークへの過剰リクエストを避ける)。
     ///
     /// SDK が既に初期化済み(.ready)の場合、initWith を再度呼ぶことはしない —
     /// 成功後の再初期化は公式ドキュメントにも挙動が明記されておらず、.initializing のまま
-    /// 固着するリスクがある(在庫不足のバナー失敗が3回続いただけでリワード広告の土台まで
-    /// 壊しかねなかった)。代わりにリワード広告のオブジェクトだけを作り直す。
+    /// 固着するリスクがある。リワード広告も作り直さず、ready の広告は保持する
+    /// (ready でなければ、フォアグラウンド復帰と同じ扱いで必要なときだけロードする)。
     /// 未初期化・初期化失敗のときは、これまで通り SDK の初期化からやり直す。
     func forceReinitialize(reason: String) {
         DispatchQueue.main.async { [weak self] in
@@ -127,10 +127,12 @@ final class LevelPlayAdsController: ObservableObject {
             case .initializing:
                 return
             case .ready:
-                print("[AdBanner] rebuilding reward ad (reason: \(reason)); SDK already initialized")
-                Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason, "action": "rebuild_ad"])
+                // SDK は初期化済み。リワード広告は作り直さない(ready の広告を捨てない)。
+                // ready でなければ、フォアグラウンド復帰と同じ扱いで必要なときだけロードする。
+                print("[AdBanner] long background return (reason: \(reason)); SDK already initialized")
+                Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason, "action": "preload_if_needed"])
                 self.lastForcedReinitAt = Date()
-                RewardedAdController.shared.rebuildAd()
+                RewardedAdController.shared.preloadIfNeeded(trigger: "long_background")
             case .idle, .failed:
                 print("[AdBanner] re-initializing SDK session (reason: \(reason))")
                 Analytics.logEvent("ad_sdk_stale_reinit", parameters: ["reason": reason, "action": "reinit"])
@@ -184,7 +186,6 @@ final class LevelPlayAdsController: ObservableObject {
                 self.retryWorkItem = nil
                 self.isInitialized = true
                 RewardedAdController.shared.preload()
-                RewardedAdController.shared.startPeriodicPreload()
                 // デバッグ端末でのみ、アダプター(Unity Ads等)が正しく統合されているかを
                 // コンソールに出力する(本番端末では余計なログを出さないよう限定)。
                 if DebugDeviceConfig.isDebugDevice {
@@ -245,18 +246,14 @@ private struct AdBannerUIView: UIViewRepresentable {
 
     final class Coordinator: NSObject, LPMBannerAdViewDelegate {
         var requestedLoad = false
-        /// 連続ロード失敗回数。LevelPlay 公式ドキュメントは「バナーの更新間隔はダッシュボード側の
-        /// 設定に従い SDK が自動で行うので、loadAd を自前で再試行してはいけない
-        /// (SDK 内蔵の自動更新と衝突しうる)」と明記しているため、ここでは loadAd を
-        /// 呼び直さない。あくまで「SDK 自身の自動更新サイクルが何度も失敗し続けている」ことを
-        /// 検知するためだけにカウントし、3回連続で失敗したら SDK セッションの失効を疑って
-        /// LevelPlayAdsController に丸ごと再初期化させる(loadAd の手動再試行とは別物)。
-        private var consecutiveFailures = 0
+        // LevelPlay 公式ドキュメントは「バナーの更新間隔はダッシュボード側の設定に従い SDK が自動で行うので、
+        // loadAd を自前で再試行してはいけない(SDK 内蔵の自動更新と衝突しうる)」と明記しているため、
+        // ここでは loadAd を呼び直さない。バナーの失敗は、リワード広告に波及させない
+        // (SDK の再初期化やリワード広告の作り直しはしない。バナーの no-fill は日常的に起きる)。
 
         func didLoadAd(with adInfo: LPMAdInfo) {
             print("[AdBanner] banner loaded: \(adInfo.adUnitId)")
             Analytics.logEvent("banner_ad_result", parameters: ["result": "loaded"])
-            consecutiveFailures = 0
         }
         func didFailToLoadAd(withAdUnitId adUnitId: String, error: Error) {
             print("[AdBanner] banner load failed (\(adUnitId)): \(error)")
@@ -266,7 +263,6 @@ private struct AdBannerUIView: UIViewRepresentable {
                 "result": "load_failed",
                 "error": String(describing: error).prefix(100).description,
             ])
-            escalateIfRepeated()
         }
         func didDisplayAd(with adInfo: LPMAdInfo) {
             print("[AdBanner] banner displayed")
@@ -277,22 +273,11 @@ private struct AdBannerUIView: UIViewRepresentable {
                 "result": "display_failed",
                 "error": String(describing: error).prefix(100).description,
             ])
-            escalateIfRepeated()
         }
         func didClickAd(with adInfo: LPMAdInfo) {}
         func didLeaveApp(with adInfo: LPMAdInfo) {}
         func didExpandAd(with adInfo: LPMAdInfo) {}
         func didCollapseAd(with adInfo: LPMAdInfo) {}
-
-        private func escalateIfRepeated() {
-            consecutiveFailures += 1
-            if consecutiveFailures >= 3 {
-                // バナーの自動更新サイクル自体が何度も失敗しているなら、個別のロード問題ではなく
-                // SDK セッション側を疑う。次に成功すれば consecutiveFailures は didLoadAd で
-                // リセットされる。
-                LevelPlayAdsController.shared.forceReinitialize(reason: "banner_repeated_failure")
-            }
-        }
     }
 }
 

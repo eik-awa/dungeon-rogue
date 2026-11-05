@@ -2088,11 +2088,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                         background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
                         color: accent,
                       }}>
-                        {owned ? "✦ 済" : revealed ? `${skill.cost}結晶` : (() => {
-                          // 前提が複数あるスキルは、いくつ満たしたかを見せる(何が足りないか分からない問題の対策)
-                          const pre = skillPrereqList(skill, skills);
-                          return pre.length > 1 ? `前提 ${pre.filter((x) => x.owned).length}/${pre.length}` : "???";
-                        })()}
+                        {owned ? "✦ 済" : revealed ? `${skill.cost}結晶` : "???"}
                       </div>
                     </div>
                   </div>
@@ -2113,16 +2109,26 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
             <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", padding: "4px 0" }}>
               <div>??? {!skillUnlocked(selected, meta) ? skillUnlockText(selected) : "前提スキルを習得すると解放されます。"}</div>
               {(() => {
+                // 前提スキルのうち、すでに画面に見えているもの(習得済み、または「???」でないもの)だけを
+                // 名前つきで出す。まだ見えていないスキルの名前を出すと、何があるかが推測できてしまうため。
+                // 見えていない前提がまだ残っている場合は、名前を伏せたまま「ほかにも必要」とだけ知らせる。
                 const pre = skillPrereqList(selected, skills);
-                if (pre.length === 0) return null;
+                const shown = pre.filter((x) => x.owned || (SKILL_BY_ID[x.id] && isRevealed(SKILL_BY_ID[x.id])));
+                const hiddenCount = pre.length - shown.length;
+                if (shown.length === 0 && hiddenCount === 0) return null;
                 return (
                   <div style={{ marginTop: 6, lineHeight: 1.8 }}>
-                    <span style={{ color: "var(--paper-dim)" }}>必要なスキル:</span>{" "}
-                    {pre.map((x, i) => (
-                      <span key={x.id} style={{ color: x.owned ? "#8fd39a" : "var(--paper)", whiteSpace: "nowrap" }}>
-                        {i > 0 ? "・" : ""}{x.name}{x.owned ? "(習得済)" : "(未習得)"}
-                      </span>
-                    ))}
+                    {shown.length > 0 && (
+                      <div>
+                        <span style={{ color: "var(--paper-dim)" }}>必要なスキル:</span>{" "}
+                        {shown.map((x, i) => (
+                          <span key={x.id} style={{ color: x.owned ? "#8fd39a" : "var(--paper)", whiteSpace: "nowrap" }}>
+                            {i > 0 ? "・" : ""}{x.name}{x.owned ? "(習得済)" : "(未習得)"}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {hiddenCount > 0 && <div style={{ color: "var(--paper-dim)" }}>ほかにも必要なスキルがあります。</div>}
                   </div>
                 );
               })()}

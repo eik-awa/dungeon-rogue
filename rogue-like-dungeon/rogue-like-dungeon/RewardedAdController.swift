@@ -65,17 +65,24 @@ private final class RewardedAdDelegate: NSObject, LPMRewardedAdDelegate {
 }
 
 /// リワード広告のロード・表示・コールバックを一元管理する。
+///
+/// ロードの状態: idle(未ロード)→ loading → ready / backoff(失敗後の再試行を予約中)。showing は表示中。
+/// - ready の広告があるときは何もロードしない。用意できた広告を自分から捨てない
+///   (期限切れの判定は SDK の isAdReady() に任せる)。
+/// - ロードに失敗したら、間隔を広げて再試行する(AdLoadPolicy。上限は5分で、以降は同じ間隔)。
+///   再試行の予約は常に1つだけ(DispatchWorkItem を保持して取り消す)。
+/// - バナーの失敗とは連動させない(バナーの失敗でリワード広告を作り直さない)。
 final class RewardedAdController: NSObject {
     static let shared = RewardedAdController()
 
     private var ad: LPMRewardedAd?
-    /// 最新の広告オブジェクトの世代(preload のたびに +1)と、そのデリゲート(強参照で保持)。
+    /// 最新の広告オブジェクトの世代(ロード要求のたびに +1)と、そのデリゲート(強参照で保持)。
     private var adGeneration: UInt64 = 0
     private var currentDelegate: RewardedAdDelegate?
 
-    /// 広告を表示している最中かどうか。表示中は preload / 作り直し / 二重表示をすべて止める。
+    /// 広告を表示している最中かどうか。表示中は ロード / 作り直し / 二重表示をすべて止める。
     /// 以前は、広告タップで App Store へ飛んで戻った等でアプリが非アクティブ→アクティブに戻ると
-    /// preloadIfNeeded() が走り、表示中の広告(isAdReady() == false)の代わりに新しい広告が `ad` に
+    /// ロードが走り、表示中の広告(isAdReady() == false)の代わりに新しい広告が `ad` に
     /// 入って表示中の広告への唯一の強参照が切れ、didCloseAd / didRewardAd が届かず、広告が閉じられない・
     /// 報酬が付かない・JS が「読み込み中…」のまま固まる、という症状になりえた。
     private var isShowing = false
@@ -92,114 +99,165 @@ final class RewardedAdController: NSObject {
     /// show() がロード完了前に呼ばれた場合に保持する待機中コールバック。
     private var pendingCompletion: ((RewardAdResult) -> Void)?
 
-    /// ロード開始時刻。`didLoadAd` / `didFailToLoadAd` / `didFailToDisplayAd` で nil に戻す。
-    /// 20秒経過してもどちらのコールバックも返らない場合(広告ブロックによるパケット破棄など)は
-    /// スタックとみなし、`isLoading` を false 扱いにして再ロードを許可する(原因B対策)。
-    /// 以前は45秒だったが、show() 側の15秒待ちより長く、押すたびに無駄な15秒待ち→
-    /// タイムアウトを繰り返す余地があったため短縮した。
+    // MARK: ロードの管理
+
+    /// ロード開始時刻。応答(成功/失敗)が届くか、スタックと判定された時点で nil に戻す。
     private var loadStartedAt: Date?
     private var isLoading: Bool {
         guard let t = loadStartedAt else { return false }
-        if Date().timeIntervalSince(t) > 20 { return false }
-        return true
+        return Date().timeIntervalSince(t) <= AdLoadPolicy.stuckTimeout
     }
+    /// いま走っているロードを起こしたトリガー(計測用)。
+    private var currentLoadTrigger = "init"
+    private var stuckWork: DispatchWorkItem?
 
-    /// 現在の `ad` が読み込み完了した時刻。`didLoadAd` で更新する。
-    /// 読み込みから時間が経ちすぎた広告は isAdReady() が true のままでも作り直す(死ぬ前に
-    /// 新しい広告を用意しておくのが狙い)。
+    /// 連続失敗の記録。ロード成功のときだけリセットする。
+    private var failures = AdLoadFailureTracker()
+    /// 再試行の予約(常に1つだけ)と、その予定時刻。バックグラウンド中は予約を取り消すが、
+    /// 予定時刻は残し、復帰時に残り時間で予約し直す。
+    private var retryWork: DispatchWorkItem?
+    private var backoffDueAt: Date?
+
+    /// 現在の `ad` が読み込み完了した時刻(計測用。広告の破棄の判断には使わない)。
     private var adLoadedAt: Date?
-    private static let maxAdAge: TimeInterval = 30 * 60
-    private var isStale: Bool {
-        guard let t = adLoadedAt else { return false }
-        return Date().timeIntervalSince(t) > Self.maxAdAge
-    }
-
-    /// プレイ中も先読みを保つための定期タイマー(SDK 初期化完了後に一度だけ開始する)。
-    /// 広告を表示中・待機中は動かさない(show() の最中に横から ad を差し替えないため)。
-    private var refreshTimer: Timer?
 
     /// show() リクエストごとに採番する連番。タイムアウトを「そのリクエスト」に紐づける(原因C対策)。
     private var requestSeq: UInt64 = 0
     private var pendingRequestID: UInt64?
-    /// show() が待機を始めた際の15秒の期限。didFailToLoadAd 側で「まだ何秒残っているか」の
-    /// 判定に使う(残りが短ければ再読み込みせず素直に失敗を返す)。
+    /// show() が待機を始めた際の15秒の期限。失敗時に「まだ何秒残っているか」の判定に使う。
     private var pendingRequestDeadline: Date?
+    /// 待機中の show() のために、no-fill 以外の失敗後の再試行を1回使ったか。
+    private var pendingRetried = false
 
     /// didRewardAd / didCloseAd は公式ドキュメントでも「順序は保証されない
     /// (didRewardAd が didCloseAd より後に届くことがある)」と明記されている。
     /// didCloseAd を先に受け取っても即座に .dismissed 扱いにはせず、このフラグで
-    /// 「今回の視聴で既に didRewardAd が届いたか」を追跡する(show() のたびにリセット)。
+    /// 「今回の視聴で既に didRewardAd が届いたか」を追跡する(表示のたびにリセット)。
     private var pendingRewardGranted = false
-
-    /// 連続ロード失敗回数。「失敗したら確実に広告が行き渡るように」という要望への対応。
-    /// didFailToLoadAd のたびに preloadIfNeeded で再ロードは試みているが、それでも
-    /// 3回連続で失敗する場合は個別のロード問題ではなく SDK セッション側の失効を疑い、
-    /// LevelPlayAdsController に丸ごと再初期化させる(バナー側と同じ考え方)。
-    private var consecutiveLoadFailures = 0
 
     private override init() {
         super.init()
+        // バックグラウンド中は再試行しない。予約は取り消し、復帰時に残り時間で予約し直す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
     }
+
+    @objc private func appDidEnterBackground() {
+        cancelScheduledRetry(clearDue: false)
+    }
+
+    /// 計測用: 現在のロード状態の名前(reward_ad_show_request に添える)。
+    var loadStateName: String {
+        if isShowing { return "showing" }
+        if let ad = ad, ad.isAdReady() { return "ready" }
+        if isLoading { return "loading" }
+        if backoffDueAt != nil { return "backoff" }
+        return "idle"
+    }
+
+    // MARK: - ロード
 
     /// LevelPlay SDK 初期化完了後に一度呼び、次に見せる広告を先読みしておく。
     func preload() {
+        requestLoad(trigger: "init")
+    }
+
+    /// フォアグラウンド復帰時に呼ぶ。
+    /// - ready なら何もしない(広告を捨てない)。ロード中なら何もしない。
+    /// - 再試行を予約中(backoff)なら、予約を立て直す(バックグラウンド中に取り消されているため)。
+    /// - どれでもなければ(未ロード)、1回ロードする。
+    /// 6時間以上のバックグラウンドからの復帰も同じ扱い(trigger だけ変える)。
+    func preloadIfNeeded(trigger: String = "foreground") {
+        guard !isShowing else { return }
+        if let ad = ad, ad.isAdReady() { return }
+        if isLoading { return }
+        if let due = backoffDueAt {
+            scheduleRetryWork(after: max(1, due.timeIntervalSinceNow))
+            return
+        }
+        requestLoad(trigger: trigger)
+    }
+
+    /// ロードを1回始める。表示中なら何もしない。既に ready / ロード中なら何もしない。
+    private func requestLoad(trigger: String) {
         reportKilledDuringShowIfNeeded()
         guard !isShowing else { return } // 表示中は広告オブジェクトを差し替えない
-        guard !isLoading else { return }
+        if isLoading { return }
+        if let ad = ad, ad.isAdReady() { return }
+        cancelScheduledRetry(clearDue: true) // 予約済みの再試行は、このロードで置き換える
         loadStartedAt = Date()
+        currentLoadTrigger = trigger
         adGeneration += 1
-        let delegate = RewardedAdDelegate(owner: self, generation: adGeneration)
+        let generation = adGeneration
+        let delegate = RewardedAdDelegate(owner: self, generation: generation)
         let newAd = LPMRewardedAd(adUnitId: rewardedAdUnitID)
         newAd.setDelegate(delegate)
         currentDelegate = delegate
         ad = newAd
+        let attempt = failures.consecutiveFailures
+        Analytics.logEvent("reward_ad_load_request", parameters: ["trigger": trigger, "attempt": attempt])
+        print("[RewardedAd] load request trigger=\(trigger) attempt=\(attempt)")
+        scheduleStuckWatchdog(generation: generation)
         newAd.loadAd()
     }
 
-    /// 手持ちの広告が無ければ(または未ロードなら)再ロードする。
-    /// フォアグラウンド復帰時などに呼び、広告ブロック解除後の復旧トリガーにする(S1-2)。
-    /// 読み込みから30分以上たった広告は、isAdReady() が true のままでも古いとみなして作り直す。
-    func preloadIfNeeded() {
-        guard !isShowing else { return }
-        if let ad = ad, ad.isAdReady(), !isStale { return }
-        if isStale {
-            ad = nil
-            adLoadedAt = nil
-        }
-        preload()
+    /// 応答がないままロードが20秒続いたらスタックとみなし、失敗として扱う(再試行を途切れさせないため)。
+    private func scheduleStuckWatchdog(generation: UInt64) {
+        stuckWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.handleStuck(generation: generation) }
+        stuckWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + AdLoadPolicy.stuckTimeout, execute: work)
     }
 
-    /// プレイ中も先読みを保つための定期タイマーを開始する(冪等・SDK 初期化完了後に一度だけ呼ぶ)。
-    /// 2分おきに preloadIfNeeded() を呼ぶが、アプリが前面にあり、かつ広告を表示・待機して
-    /// いない間だけ実行する(show() の最中に横から ad を差し替えないため)。
-    func startPeriodicPreload() {
-        guard refreshTimer == nil else { return }
-        let timer = Timer(timeInterval: 120, repeats: true) { [weak self] _ in
-            self?.periodicPreloadTick()
-        }
-        // .common にしておかないと、スクロール等の UI 操作中にメインの RunLoop が
-        // .default モードを離れてしまい、2分タイマーが遅延・停止することがある。
-        RunLoop.main.add(timer, forMode: .common)
-        refreshTimer = timer
+    private func handleStuck(generation: UInt64) {
+        guard generation == adGeneration, loadStartedAt != nil, !isShowing else { return }
+        let latency = loadStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        loadStartedAt = nil
+        logLoadResult("stuck", code: nil, latencyMs: latency)
+        print("[RewardedAd] load stuck")
+        failures.record()
+        scheduleRetry(after: failures.nextDelay())
     }
 
-    private func periodicPreloadTick() {
+    /// 再試行を予約する(常に1つ)。バックグラウンド中は予定時刻だけ記録し、復帰時に予約し直す。
+    private func scheduleRetry(after delay: TimeInterval) {
+        backoffDueAt = Date().addingTimeInterval(delay)
+        scheduleRetryWork(after: delay)
+    }
+
+    private func scheduleRetryWork(after delay: TimeInterval) {
+        retryWork?.cancel()
+        retryWork = nil
         guard UIApplication.shared.applicationState == .active else { return }
-        guard !isShowing, onResult == nil, pendingCompletion == nil else { return }
-        preloadIfNeeded()
+        let work = DispatchWorkItem { [weak self] in
+            self?.retryWork = nil
+            self?.requestLoad(trigger: "retry")
+        }
+        retryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// SDK は初期化済みのまま、リワード広告のオブジェクトだけを作り直す。
-    /// forceReinitialize から呼ばれる(SDK 自体の再初期化はもう行わない)。
-    func rebuildAd() {
-        guard !isShowing else { return }
-        ad = nil
-        adLoadedAt = nil
-        preload()
+    private func cancelScheduledRetry(clearDue: Bool) {
+        retryWork?.cancel()
+        retryWork = nil
+        if clearDue { backoffDueAt = nil }
     }
+
+    private func logLoadResult(_ result: String, code: Int?, latencyMs: Int) {
+        Analytics.logEvent("reward_ad_load_result", parameters: [
+            "result": result,
+            "code": code ?? -1,
+            "latency_ms": latencyMs,
+            "trigger": currentLoadTrigger,
+        ])
+    }
+
+    // MARK: - 表示
 
     /// 広告を表示する。結果は `RewardAdResult` でコールバックする。
-    /// 広告がまだロード中の場合は最大15秒待ってから表示する。
+    /// ready なら即表示する。ready でなければ1回ロードし、最大15秒待ってから表示する
+    /// (再試行の待ち時間中でも、ボタン押下ではすぐにロードする)。
     /// デバッグ端末(DebugDeviceConfig.isDebugDevice)では本番広告を消費せず、
     /// 数秒待って自動的に成功するだけの簡易テスト広告を表示する。
     func show(completion: @escaping (RewardAdResult) -> Void) {
@@ -216,46 +274,41 @@ final class RewardedAdController: NSObject {
         // 後で広告が読み込めた時点で、前の依頼の分として意図しない広告がもう1本表示されてしまう
         // (待機中コールバックが上書きされたり、二重に消化されたりする)。JS 側は文脈が合わない
         // 結果を無視するので、打ち切りの通知を返しても害はない。
-        if let stale = pendingCompletion {
-            pendingCompletion = nil
-            pendingRequestID = nil
-            pendingRequestDeadline = nil
-            stale(.dismissed)
-        }
+        completePending(.dismissed)
         guard let vc = UIApplication.shared.kwTopViewController else {
             completion(.unavailable)
             return
         }
-        if let ad = ad, ad.isAdReady(), !isStale {
+        if let ad = ad, ad.isAdReady() {
             logShowRequest(ready: true)
             onResult = completion
             pendingRequestID = nil
             beginShowing(ad, from: vc)
             return
         }
-        // 広告がロード中・未ロード・古くなった(isStale)のいずれか — リクエストIDを採番し、
-        // 15秒待って表示を試みる。
+        // ready でない — リクエストIDを採番し、15秒待って表示を試みる。
         logShowRequest(ready: false)
-        if isStale {
-            ad = nil
-            adLoadedAt = nil
-        }
         requestSeq += 1
         let myID = requestSeq
         pendingRequestID = myID
         pendingCompletion = completion
-        pendingRequestDeadline = Date().addingTimeInterval(15)
-        preload()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+        pendingRetried = false
+        pendingRequestDeadline = Date().addingTimeInterval(AdLoadPolicy.showWait)
+        requestLoad(trigger: "show") // ロード中なら、それを待つ
+        DispatchQueue.main.asyncAfter(deadline: .now() + AdLoadPolicy.showWait) { [weak self] in
             guard let self, self.pendingRequestID == myID else { return }
             // 自分のリクエストがまだ待機中のときだけ打ち切る。
-            self.pendingRequestID = nil
-            self.pendingRequestDeadline = nil
-            let cb = self.pendingCompletion
-            self.pendingCompletion = nil
-            self.logFailure(stage: "timeout", code: nil)
-            cb?(.timeout)
+            print("[RewardedAd] show timed out")
+            self.completePending(.timeout)
         }
+    }
+
+    private func completePending(_ result: RewardAdResult) {
+        guard let cb = pendingCompletion else { return }
+        pendingCompletion = nil
+        pendingRequestID = nil
+        pendingRequestDeadline = nil
+        cb(result)
     }
 
     /// 計測用: show() が押された時点の状態を記録する(在庫不足の切り分けに使う。
@@ -266,14 +319,7 @@ final class RewardedAdController: NSObject {
             "ready": ready ? 1 : 0,
             "ad_age_sec": ageSec,
             "sdk_state": LevelPlayAdsController.shared.stateDescription,
-        ])
-    }
-
-    /// 計測用: どの段階で失敗したか(load / display / timeout)と SDK のエラーコードを記録する。
-    private func logFailure(stage: String, code: Int?) {
-        Analytics.logEvent("reward_ad_failure", parameters: [
-            "stage": stage,
-            "code": code ?? -1,
+            "load_state": loadStateName,
         ])
     }
 
@@ -301,7 +347,7 @@ final class RewardedAdController: NSObject {
     // MARK: - 表示中の管理
 
     /// 広告の表示を開始する。表示中は広告オブジェクトとデリゲートを強参照で保持し、
-    /// preload / 作り直し / 二重表示を止める(閉じて結果を確定した時点で endShowing() で解除する)。
+    /// ロード / 作り直し / 二重表示を止める(閉じて結果を確定した時点で endShowing() で解除する)。
     private func beginShowing(_ ad: LPMRewardedAd, from vc: UIViewController) {
         isShowing = true
         showingAd = ad
@@ -350,7 +396,7 @@ final class RewardedAdController: NSObject {
             Analytics.logEvent("reward_ad_stuck_recovered", parameters: ["rewarded": self.pendingRewardGranted ? 1 : 0])
             self.finish(self.pendingRewardGranted ? .rewarded : .dismissed)
             self.endShowing()
-            self.preload()
+            self.requestLoad(trigger: "after_close")
         }
     }
 
@@ -359,10 +405,14 @@ final class RewardedAdController: NSObject {
     fileprivate func handleLoad(generation: UInt64) {
         // 差し替え済みの古い広告の読み込み完了は無視する(新しい広告の状態を触らせない)。
         guard generation == adGeneration, !isShowing else { return }
-        print("[RewardedAd] loaded")
+        let latency = loadStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        print("[RewardedAd] loaded latency=\(latency)ms")
         loadStartedAt = nil
+        stuckWork?.cancel()
         adLoadedAt = Date()
-        consecutiveLoadFailures = 0
+        failures.reset() // 失敗の記録は、ロード成功のときだけリセットする
+        cancelScheduledRetry(clearDue: true)
+        logLoadResult("loaded", code: nil, latencyMs: latency)
         // show() がロード完了前に呼ばれ、まだ待機中ならここで表示する。
         guard let cb = pendingCompletion,
               let ad = ad, ad.isAdReady(),
@@ -374,41 +424,41 @@ final class RewardedAdController: NSObject {
         beginShowing(ad, from: vc)
     }
 
-    private static let loadRetryDelays: [TimeInterval] = [5, 15, 30]
-
     fileprivate func handleFailToLoad(generation: UInt64, error: Error) {
         // 差し替え済みの古い広告の読み込み失敗は無視する(新しい読み込みを失敗扱いにしない)。
         guard generation == adGeneration, !isShowing else { return }
-        print("[RewardedAd] load failed: \(error)")
-        loadStartedAt = nil
         let code = (error as NSError).code
-        logFailure(stage: "load", code: code)
-        if let cb = pendingCompletion {
-            // show() 待機中だった。15秒の猶予がまだ3秒より多く残っていれば、呼び出し元には
-            // 知らせずに少し置いて読み込み直す(以前は一度の失敗ですぐ「読み込めませんでした」
-            // になっていた)。残りが少なければ素直に「表示不能」を通知する。
-            let remaining = pendingRequestDeadline?.timeIntervalSinceNow ?? 0
-            if remaining > 3 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.preload() }
+        let latency = loadStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        print("[RewardedAd] load failed code=\(code) latency=\(latency)ms: \(error)")
+        loadStartedAt = nil
+        stuckWork?.cancel()
+        logLoadResult("failed", code: code, latencyMs: latency)
+        failures.record()
+
+        if pendingCompletion != nil {
+            if AdLoadPolicy.isNoFill(code: code) {
+                // 数秒内の再試行で取れることはまれなので、待たずに「在庫なし」を返す。
+                completePending(.classify(code: code))
             } else {
-                pendingCompletion = nil
-                pendingRequestID = nil
-                pendingRequestDeadline = nil
-                cb(.classify(code: code))
+                // no-fill 以外は、残りが5秒以上あるときだけ1回再試行する。それも失敗したら結果を返す。
+                let remaining = pendingRequestDeadline?.timeIntervalSinceNow ?? 0
+                if remaining >= AdLoadPolicy.showRetryMinRemaining && !pendingRetried {
+                    pendingRetried = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        guard let self else { return }
+                        if self.pendingCompletion != nil {
+                            self.requestLoad(trigger: "show_retry")
+                        } else {
+                            // 待機がもう終わっていたら、通常の再試行の予約に戻る。
+                            self.scheduleRetry(after: self.failures.nextDelay())
+                        }
+                    }
+                    return
+                }
+                completePending(.classify(code: code))
             }
         }
-        consecutiveLoadFailures += 1
-        if consecutiveLoadFailures >= 3 {
-            // リワード広告単体のリロードを何度試みても駄目なら、個別のロード問題ではなく
-            // SDK セッション側を疑う。次に成功すれば didLoadAd でリセットされる。
-            LevelPlayAdsController.shared.forceReinitialize(reason: "rewarded_repeated_failure")
-        }
-        // show() 待機中でなければ、次回のために少し置いて再プリロードする
-        // (待機中は上の 1.5秒後の preload() だけで十分なので二重に走らせない)。
-        if pendingCompletion == nil {
-            let delay = Self.loadRetryDelays[min(consecutiveLoadFailures - 1, Self.loadRetryDelays.count - 1)]
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.preloadIfNeeded() }
-        }
+        scheduleRetry(after: failures.nextDelay())
     }
 
     fileprivate func handleDisplay(generation: UInt64, adInfo: LPMAdInfo) {
@@ -425,14 +475,16 @@ final class RewardedAdController: NSObject {
 
     fileprivate func handleFailToDisplay(generation: UInt64, error: Error) {
         guard isShowing, generation == showingGeneration else { return }
-        print("[RewardedAd] display failed: \(error)")
+        let code = (error as NSError).code
+        print("[RewardedAd] display failed code=\(code): \(error)")
         loadStartedAt = nil
         adLoadedAt = nil
-        logFailure(stage: "display", code: (error as NSError).code)
+        Analytics.logEvent("reward_ad_display_failed", parameters: ["code": code])
         finish(.unavailable)
         endShowing()
-        // 表示失敗後は次回のために即リロードする。
-        preload()
+        // 表示失敗後は、10秒後にロードし直す(連続失敗にも数える)。
+        failures.record()
+        scheduleRetry(after: AdLoadPolicy.displayFailedRetryDelay)
     }
 
     fileprivate func handleClose(generation: UInt64) {
@@ -446,14 +498,14 @@ final class RewardedAdController: NSObject {
         // 表示中の印(isShowing)と広告の強参照は、結果を確定させるまで手放さない。
         if pendingRewardGranted {
             endShowing()
-            preload()
+            requestLoad(trigger: "after_close")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, self.isShowing, self.showingGeneration == generation else { return }
             if !self.pendingRewardGranted { self.finish(.dismissed) }
             self.endShowing()
-            self.preload()
+            self.requestLoad(trigger: "after_close")
         }
     }
 }
