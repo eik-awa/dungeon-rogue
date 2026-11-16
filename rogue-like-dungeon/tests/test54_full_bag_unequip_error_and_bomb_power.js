@@ -30,6 +30,7 @@ async function testFullBagUnequipShowsError() {
   try { await d.click('再開'); await d.flush(); } finally { Math.random = origRandom; }
   await d.click('袋・装備');
   await d.flush();
+  await d.bagTab('装備'); // 装備中の武器は「装備」タブ
   const equippedCard = Array.from(d.container.querySelectorAll('button.kw-cell')).find((b) => b.textContent.includes('試験の短剣'));
   await d.click(equippedCard);
   await d.flush();

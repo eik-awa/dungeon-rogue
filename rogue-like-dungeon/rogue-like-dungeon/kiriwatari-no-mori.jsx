@@ -19,7 +19,7 @@ import {
   Volume1, Volume2, VolumeX,
   Settings, ExternalLink, Lock, LockOpen,
   Cat, Fish, Rabbit, Dog, Squirrel,
-  Bot, Scale, EyeClosed, PiggyBank, Atom, Baby, Flower, Dna, Fan, Pyramid, Cherry, Origami, Egg, Snail, Disc2, Turtle, Shrimp,
+  Bot, ShieldUser, Scale, EyeClosed, PiggyBank, Atom, Baby, Flower, Dna, Fan, Pyramid, Cherry, Origami, Egg, Snail, Disc2, Turtle, Shrimp,
 } from "lucide-react";
 
 // App Store 上の本アプリ(ダンジョンローグ)の数値 ID。レビュー投稿・他アプリ導線で使用。
@@ -59,6 +59,7 @@ const ASSETS = {
   treant:     { icon: TreePine,    img: null },
   shroom:     { icon: Flower2,     img: null },
   goldSprite: { icon: Sparkles,    img: null },
+  shadowSelf: { icon: ShieldUser,  img: null },
   lostChild:  { icon: Baby,        img: null },
   // 敵(第2章: 茸の湿原)
   bogSlime:   { icon: Droplets,    img: null },
@@ -219,14 +220,14 @@ const GUIDE_WEAPON_ORDER = ["dagger", "greatsword", "axe", "bow", "spear", "book
 // 「遊び方」に出す武器の仕様。WEAPON_TYPES.desc は雰囲気文(装備画面などで表示)なので、
 // ここでは数値を省略せずに書いた説明文を別に持つ。倍率は attackWith() の実装と必ず一致させる。
 const GUIDE_WEAPON_MECHANICS = {
-  dagger: "2回連続で攻撃する。1撃ごとに25%の確率で会心が発生し、会心時は通常の1.8倍のダメージになる。",
-  greatsword: "狙った敵1体に2.2倍のダメージ。再使用まで2ターンかかる。",
-  axe: "狙った敵1体に1.6倍のダメージ。さらに相手の防御力を永続的に2下げる(重ねがけ可能)。再使用まで1ターンかかる。",
-  bow: "狙った敵1体に等倍のダメージ。さらに、狙った敵以外の生存中の敵からランダムに1体選び、0.5倍のダメージ(流れ矢)。",
-  spear: "狙った敵1体に1.1倍のダメージ。さらに、その敵は2ターンの間「毒」になり、毎ターン終了時に攻撃力の約30%のダメージ(スキルで最大50%。防御・弱点・耐性を無視。攻撃バフは乗らない。ボスには効きにくく、割合が10ポイント下がる)を受ける。再使用まで1ターンかかる。",
-  book: "生存している敵全員に等倍のダメージ。再使用まで2ターンかかる。",
-  staff: "狙った敵1体に1.4倍のダメージ。同時に自分の最大HPの10%を回復する。再使用まで1ターンかかる。",
-  instrument: "生存している敵全員に等倍のダメージ。さらに全員の攻撃力を2ターンの間下げる。再使用まで2ターンかかる。",
+  dagger: "2回続けて攻撃します。1撃ごとに25%で会心が出て、ダメージが1.8倍になります。",
+  greatsword: "狙った敵1体に2.2倍のダメージ。\n再使用まで2ターンかかります。",
+  axe: "狙った敵1体に1.6倍のダメージ。\n相手の防御力を2下げます(重ねがけできます)。\n再使用まで1ターンかかります。",
+  bow: "狙った敵1体に等倍のダメージ。\nさらに、ほかの生きている敵からランダムに1体選び、0.5倍のダメージ(流れ矢)を与えます。",
+  spear: "狙った敵1体に1.1倍のダメージ。\nさらに相手を2ターン「毒」にします。\n毒は、毎ターン終了時に攻撃力の約30%のダメージ(スキルで最大50%)。防御・弱点・耐性は関係ありません。攻撃バフも乗りません。\nボスには効きにくく、割合が10ポイント下がります。\n再使用まで1ターンかかります。",
+  book: "生きている敵全員に等倍のダメージ。\n再使用まで2ターンかかります。",
+  staff: "狙った敵1体に1.4倍のダメージ。\n同時に、自分の最大HPの10%を回復します。\n再使用まで1ターンかかります。",
+  instrument: "生きている敵全員に等倍のダメージ。\nさらに全員の攻撃力を2ターン下げます。\n再使用まで2ターンかかります。",
 };
 
 // 武器の銘 (レアリティ順に豪華に)
@@ -607,6 +608,181 @@ function makeBoss(floor) {
   };
 }
 
+/* ------------------------------------------------------------
+   ボスラッシュ(百層踏破を1回以上したプレイヤー向けの挑戦)
+   第1章〜第10章のボスを続けて倒す。各ボスは通常より強化され、取り巻きがボスを追うごとに増える。
+   装備は手持ちの継承品(通常の冒険を始めるときと同じ)。使っても継承品は減らない。ここの数値を変えると難易度が変わる。
+------------------------------------------------------------ */
+const RUSH = {
+  bosses: 10,
+  // 敵の強さは「その章のボスの階層」ではなく、次の階層(最大100)の強さを基準にする。
+  // 手持ちの装備は章に関係なく強い(継承品)ので、序盤のボスが一撃で終わらないようにするため。
+  // 基準階層 = statFloorBase + statFloorStep × (ボス番号 0〜9)。後半は伸びを抑えて、最後まで手が届くようにする。
+  statFloorBase: 56, statFloorStep: 4.9,
+  // 最終的に休息の選択肢が5つになると、闘気(+8%)を10回選べて火力がほぼ2倍になる。後半のボスほどHPを厚くして、釣り合わせる。
+  bossHpK: 1.76, bossHpKStep: 0.1,   // ボスのHP倍率(上の基準階層のボスに対して)。ボスごとに加算
+  bossAtkK: 1.04, bossAtkKStep: 0.04, // ボスの攻撃倍率。ボスごとに加算
+  escortBase: 1, escortPerBoss: 0.6, escortMax: 6, // 取り巻きの数 = 1 + 0.6×(ボス番号)。最大6
+  escortHpK: 0.6, escortAtkK: 0.52, // 取り巻きは、同じ基準階層の通常の敵より弱くする(数で押す)
+  // --- ボスの妨害技: ボスは debuffEvery ターンごとに、攻撃へ下の妨害を添える(上から順に使い回す)。
+  //     seal=武器封じ(武器1本が2ターン使えない) / bag=鞄封じ(2ターン袋が開けない) / guard=防御封じ(2ターン防御できない) / weak=火力低下 / poison=毒
+  debuffEvery: 3,
+  bossDebuffs: [["seal"], ["seal"], ["bag"], ["seal", "weak"], ["bag", "guard"], ["seal", "guard"], ["bag", "seal", "weak"], ["seal", "bag", "guard"], ["seal", "bag", "guard", "weak"], ["seal", "bag", "guard", "weak", "poison"]],
+  restHealPct: 0.35,                 // 休息での回復(最大HP比)
+  choices: 3,                        // 休息で選べるバフの数
+  buffAtk: 0.08, buffDr: 0.06, buffHp: 0.08, buffHeal: 0.30, // バフ1回分
+  drMax: 0.6,                        // 被ダメージ軽減の上限(バフ+スキル)
+  // 挑戦すると、倒したボスの数に応じた精の結晶がもらえる(段階式。上から順に、倒した数が from 以上のものを使う)。
+  rewardTiers: [{ from: 7, crystals: 3 }, { from: 3, crystals: 2 }, { from: 0, crystals: 1 }],
+  dailyLimit: 3,                     // 1日の挑戦回数(日本時間の0時にリセット)
+  respawnEvery: 4,                   // このターンごとに、倒した取り巻きが立ち上がる(ボスは立ち上がらない。スキルで間隔が延びる)
+  respawnHpPct: 0.6,                 // 立ち上がった取り巻きのHP(最大HP比)
+  startItems: ["berryBig", "berryBig", "spore", "bomb", "bomb"], // 継承品・通常の初期アイテムに加えて渡す消耗品
+  // --- 核(武器の弱点): 各ボスには指定の武器種があり、その武器で攻撃すると「核」が露出する。
+  //     核が閉じている間は、他の武器のダメージが coreShield 倍に減る。露出中(coreOpen ターン)は全武器が通常ダメージ。
+  cores: ["dagger", "spear", "bow", "staff", "axe", "instrument", "book", "greatsword", "staff", "bow"], // ボス1〜10の核の武器種
+  coreShield: 0.4,                   // 核が閉じている間の、核以外の武器のダメージ倍率
+  coreHit: 1.5,                      // 核を突いた一撃のダメージ倍率(使われにくい武器にも出番が生まれるように)
+  coreOpen: 2,                       // 核を突いたあと、全武器が通常ダメージになるターン数
+  loanKeep: 0.9,                     // 借り武器の火力 = 今の装備の平均火力 × この値(借り武器は、その挑戦の間だけ袋に入る)
+  // --- シークレット: 全ボス撃破後に現れる11体目。写し身の旅人が、武器の影(分身)を連れて戦う。
+  //   組1: 旅人 + 4種の分身 / HPが60%を割ると、少し回復して武器が変わる(組2: 別の4種) /
+  //   HPが30%を割ると、全回復して8種の分身が力を得て現れる(組3)。
+  secretIdx: 10,
+  secretHpK: 3.5, secretAtkK: 1.1,   // 写し身の旅人(基準は100層のボス)
+  secretPhase2: 0.6, secretPhase3: 0.3, // 武器が変わる境目(旅人の残りHP比)
+  secretHeal: 0.35,                  // 組2へ移るときの回復(最大HP比)。組3へ移るときは全回復
+  secretBuffK: 1.25,                 // 組3の旅人と分身の攻撃倍率
+  cloneHpK: 1.0, cloneAtkK: 0.6,     // 武器の分身(基準は100層の通常の敵)
+  // --- 広告(任意)。どれも、押さなくても進める「ちょっとお得」な使い道だけ
+  // --- 同じ敵ターンに何体にも殴られても、すぐ倒れないように: 2体目以降の攻撃は少しずつ弱まり、1ターンの被ダメージには上限がある
+  multiHitDecay: 0.12, multiHitMin: 0.5, // n体目の攻撃 = ×max(multiHitMin, 1 - multiHitDecay × n)
+  phaseCapPct: 0.6,                  // 1回の敵ターンで受けるダメージの上限(最大HP比)
+  reviveHpPct: 0.6,                  // 広告で復活したときのHP(最大HP比)
+  adCrystalPct: 1.0,                 // 結果画面で広告を見たときの追加結晶(基本の結晶比。1.0 = 2倍)
+};
+const RUSH_TOTAL = RUSH.bosses + 1; // シークレットを含めた戦いの数
+const RUSH_MIMIC_ORDER = ["dagger", "greatsword", "bow", "axe", "spear", "book", "staff", "instrument"]; // 写し身の旅人が使う武器の順
+const RUSH_CLONE_WAVES = [["dagger", "greatsword", "axe", "spear"], ["bow", "book", "staff", "instrument"]];
+const RUSH_BUFFS = {
+  atk:   { label: "闘気",     desc: `全ての武器の火力 +${Math.round(RUSH.buffAtk * 100)}%(重ねがけ可)` },
+  dr:    { label: "鉄壁",     desc: `受けるダメージ -${Math.round(RUSH.buffDr * 100)}%(重ねがけ可)` },
+  hp:    { label: "生命の泉", desc: `最大HP +${Math.round(RUSH.buffHp * 100)}%(重ねがけ可)` },
+  heal:  { label: "癒しの風", desc: `今すぐHPを最大の${Math.round(RUSH.buffHeal * 100)}%回復` },
+  berry: { label: "生命の果実", desc: "生命の果実を1個受け取る" },
+  bomb:  { label: "森火の実", desc: "森火の実を1個受け取る" },
+};
+const rushFloorOf = (idx) => Math.min(100, idx * 10 + 10); // ボスの階層(10, 20, ..., 100。シークレットも100)
+const rushIsSecret = (idx) => idx >= RUSH.secretIdx;
+const RUSH_SECRET_NAME = "写し身の旅人";
+const rushBossName = (idx) => rushIsSecret(idx) ? RUSH_SECRET_NAME : STAGES[idx].boss.name;
+// 核を持つボス(クローン・写し身の旅人以外)の核の武器種
+const rushCoreOf = (idx) => rushIsSecret(idx) ? null : RUSH.cores[idx];
+
+// ボスラッシュの1戦分の敵(ボス1体+取り巻き)。ボスは通常より強化、取り巻きは数が増える代わりに1体ずつは弱い。
+function makeRushEncounter(idx, skills, wave = 1) {
+  if (rushIsSecret(idx)) return makeSecretWave(wave, skills);
+  const floor = rushFloorOf(idx);
+  const statFloor = Math.min(100, Math.round(RUSH.statFloorBase + RUSH.statFloorStep * idx)); // 強さの基準にする階層
+  // 見た目・弱点・セリフはその章のボス、HP・攻撃・防御は基準階層のボスの強さ
+  const boss = makeBoss(floor);
+  const stats = makeBoss(statFloor);
+  boss.maxHp = boss.hp = Math.round(stats.hp * (RUSH.bossHpK + idx * RUSH.bossHpKStep));
+  boss.atk = Math.round(stats.atk * (RUSH.bossAtkK + idx * RUSH.bossAtkKStep));
+  boss.def = Math.round(stats.def * (1 - skillEffectTotal(skills, "rushBossDefCut")));
+  boss.summoned = 99; // 眷属は取り巻きとして最初から出ているので、戦闘中の召喚は行わない
+  boss.core = rushCoreOf(idx); boss.coreOpen = 0;
+  boss.debuffs = RUSH.bossDebuffs[idx] || []; // 数ターンごとに攻撃へ添える妨害技(敵に持たせるので、保存して再開しても変わらない)
+  const pool = STAGES[stageOf(floor)].enemies;
+  const count = Math.min(RUSH.escortMax, RUSH.escortBase + Math.floor(idx * RUSH.escortPerBoss));
+  const hpCut = skillEffectTotal(skills, "rushEscortHpCut");
+  const escorts = Array.from({ length: count }, (_, i) => {
+    const e = makeEnemy(pool[i % pool.length], statFloor);
+    e.maxHp = e.hp = Math.max(1, Math.round(e.hp * RUSH.escortHpK * (1 - hpCut)));
+    e.respawn = true; // 一定のターンごとに、倒されても立ち上がる(ボスは立ち上がらない)
+    e.atk = Math.max(1, Math.round(e.atk * RUSH.escortAtkK));
+    return e;
+  });
+  return [boss, ...escorts];
+}
+
+// シークレット戦。写し身の旅人は、どの組でも真ん中に立つ。wave 1: 分身4体(短剣・大剣・斧・槍)、wave 2: 分身4体(弓・本・杖・楽器)、
+// wave 3: 分身8体(全種)で、旅人と分身は攻撃が強まっている。旅人は、その組の武器の攻撃を1ターンごとに順番に使ってくる。
+// 分身は「自分と同じ武器種」の攻撃で核が開く。分身は倒されても、一定のターンで立ち上がる。
+const rushMimicOrder = (wave) => (wave >= 3 ? RUSH_MIMIC_ORDER : RUSH_CLONE_WAVES[Math.max(0, (wave || 1) - 1)]);
+function makeSecretClones(wave, skills) {
+  const ref = makeEnemy(STAGES[9].enemies[0], 100);
+  const buff = wave >= 3 ? RUSH.secretBuffK : 1;
+  const hpCut = skillEffectTotal(skills, "rushEscortHpCut");
+  return rushMimicOrder(wave).map((type) => {
+    const t = WEAPON_TYPES[type];
+    const hp = Math.max(1, Math.round(ref.hp * RUSH.cloneHpK * (1 - hpCut)));
+    return {
+      id: uid(), bookId: "shadowSelf", name: `${t.label}の分身`, asset: t.asset,
+      hp, maxHp: hp, atk: Math.round(ref.atk * RUSH.cloneAtkK * buff), def: Math.round(ref.def * 0.8),
+      weak: [], resist: [], poison: false, drain: false, atkDown: 0, rare: false, boss: false,
+      clone: true, respawn: true, pattern: type, core: type, coreOpen: 0, wave,
+    };
+  });
+}
+function makeSecretWave(wave, skills) {
+  const base = makeBoss(100);
+  const buff = wave >= 3 ? RUSH.secretBuffK : 1;
+  const traveler = {
+    ...base, id: uid(), bookId: "shadowSelf", name: RUSH_SECRET_NAME, asset: "shadowSelf",
+    hp: Math.round(base.hp * RUSH.secretHpK), maxHp: Math.round(base.hp * RUSH.secretHpK),
+    atk: Math.round(base.atk * RUSH.secretAtkK * buff), def: Math.round(base.def * (1 - skillEffectTotal(skills, "rushBossDefCut"))),
+    weak: [], resist: [], summons: [], summoned: 99, charge: false, final: false,
+    secret: true, pattern: "mimic", core: null, coreOpen: 0,
+  };
+  return [traveler, ...makeSecretClones(wave, skills)];
+}
+
+// 核を持つボスに挑む前に、その武器種を持っていなければ借りる(この挑戦の間だけ袋に入る。通常の冒険には持ち帰れない)。
+// 火力は今の装備の平均に合わせる(強すぎる借り物にも、役に立たない借り物にもならないように)。
+function rushLoanWeapon(st, idx, skills) {
+  const type = rushCoreOf(idx);
+  if (!type) return null;
+  const have = [...st.weapons, ...st.inv].some((x) => x && x.kind === "weapon" && x.type === type);
+  if (have) return null;
+  const eq = st.weapons.filter(Boolean);
+  const avg = eq.length ? eq.reduce((a, w) => a + w.atk, 0) / eq.length : 10;
+  const atk = Math.max(2, Math.round(avg * RUSH.loanKeep * (1 + skillEffectTotal(skills, "rushLoanPct"))));
+  const t = WEAPON_TYPES[type];
+  return { id: uid(), kind: "weapon", type, name: `借り物の${t.label}`, rarity: "common", atk, asset: t.asset, loaned: true };
+}
+
+// 袋が上限を超えたままでは、戦闘を始めることも、次の戦いへ進むこともできない(ボスラッシュも通常の冒険も同じ)。超えている個数を返す(0なら進める)。
+// 継承品や初期アイテム、ボスラッシュの初期アイテムで、上限を超えて持ち込むことがある。
+// ボスラッシュの休息では、次のボスの核の武器を借りるときに、その1個が袋に入る分も数える。
+function bagOver(st, cap) {
+  if (!st) return 0;
+  const incoming = st.rush && st.phase === "rushRest" && !rushIsSecret(st.rush.idx + 1) && rushLoanWeapon(st, st.rush.idx + 1, null) ? 1 : 0;
+  return Math.max(0, (st.inv || []).length + incoming - cap);
+}
+const bagOverText = (over) => `袋が上限を超えています。あと${over}個ぶん、使うか捨てて空けてから進みましょう。(ロック中の物は、鍵を外すと捨てられます)`;
+
+// 力の胞子は、効果が最大のターン数のあいだ(使った直後)は、続けて使えない。1ターン進んで残りが減ったら、また使える。
+const sporeBlocked = (player, skills) => (player?.atkUp || 0) >= CONSUMABLES.spore.turns + skillEffectTotal(skills, "sporeTurnsBonus");
+
+// 倒した取り巻きが立ち上がる間隔(ターン)。
+const rushRespawnEvery = (skills) => RUSH.respawnEvery + skillEffectTotal(skills, "rushRespawnDelay");
+
+// 休息で選べるバフの候補(重複なしでランダムに n 個)。
+function rushBuffChoices(n) {
+  const ids = Object.keys(RUSH_BUFFS);
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids.slice(0, Math.min(n, ids.length));
+}
+
+// 倒したボスの数(全部倒したら RUSH_TOTAL)に応じた精の結晶。挑戦すれば最低1個、最大3個。
+function rushRewardOf(defeated) {
+  return (RUSH.rewardTiers.find((t) => defeated >= t.from) || RUSH.rewardTiers[RUSH.rewardTiers.length - 1]).crystals;
+}
+
 // フロアごとの出現テーブル(章の進みに応じて敵種と数が増える)
 // lastRareSeen: 直近で金枝の精を目撃したフロア番号(連続出現を防ぐ)
 // 直近で金枝の精を見てから次に出現するまでの最小フロア数(章が進むと短縮)
@@ -635,8 +811,10 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
 ------------------------------------------------------------ */
 const SAVE_KEY = "kiriwatari-forest-save";
 const RUN_SAVE_KEY = "kiriwatari-run-save";
+// ボスラッシュは通常の冒険と別枠で保存する(どちらか一方が、もう一方の中断データを上書きしない)。
+const RUSH_SAVE_KEY = "kiriwatari-rush-save";
 let memorySave = null;
-const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null,
+const DEFAULT_META = { slots: 1, deaths: 0, bestFloor: 1, clears: 0, rushBest: 0, rushClears: 0, rushSecretClears: 0, rushDaily: null, bonusHp: 0, inherited: [], checkpoint: 1, dewBank: 0, skills: {}, mossHeartStages: [], reviveUsedThisRun: false, eventDay: null, eventSeenMax: 0, eventReward: null, eventResetToken: null,
   // アイテム保護設定(捨てる操作をブロックする)。レアは既定でロック、回復は任意。
   protectHeals: false, protectRareItems: true,
   // 先へ進むとき「拾い忘れがあります」の確認を出すか。既定 ON。OFF だと未回収の戦利品は確認なしで置いていく。
@@ -672,6 +850,18 @@ const consumeRewardAdUse = (meta) => {
   return { ...meta, rewardAd: { date: today, count } };
 };
 
+// ボスラッシュの1日の挑戦回数(日付境界は広告と同じ JST)。挑戦を始めた時点で1回使う。
+const rushAttemptsLeft = (meta) => {
+  const rd = meta?.rushDaily;
+  if (!rd || rd.date !== rewardAdTodayKey()) return RUSH.dailyLimit;
+  return Math.max(0, RUSH.dailyLimit - rd.count);
+};
+const consumeRushAttempt = (meta) => {
+  const today = rewardAdTodayKey();
+  const rd = meta?.rushDaily;
+  return { ...meta, rushDaily: { date: today, count: rd && rd.date === today ? rd.count + 1 : 1 } };
+};
+
 /* ------------------------------------------------------------
    宝樹の祠 — 1日1回のデイリーイベント(本編の攻略とは別枠で並行)
    時刻改ざんはソフト方式で防ぐ: これまで観測した最大時刻(eventSeenMax)より
@@ -680,11 +870,16 @@ const consumeRewardAdUse = (meta) => {
 const EVENT_JST_OFFSET = 9 * 3600_000;        // 日付境界は JST 固定(端末TZに依存させない)
 const EVENT_CLOCK_SKEW = 120_000;             // NTP 揺らぎの許容(2分)
 const EVENT_TURNS = 3;                         // 金枝の古精が留まるターン数
-// 10,000ダウンロード記念 — 期間限定(JST。両端を含む。10/17 0:00 から1週間)。次回開催時はこの2つを更新する。
-const EVENT_START = "2026-10-17";
-const EVENT_END   = "2026-10-23";
+// カテゴリ別ランキング50位突破記念 — 期間限定(JST。11/20 0:00 〜 11/27 23:30)。次回開催時はこの2つを更新する。
+const EVENT_START_AT = "2026-11-20T00:00:00+09:00";
+const EVENT_END_AT   = "2026-11-27T23:30:00+09:00";
+const EVENT_START_MS = Date.parse(EVENT_START_AT);
+const EVENT_END_MS   = Date.parse(EVENT_END_AT);
+// 表示用(JST の月.日 と終了時刻)
+const EVENT_START_LABEL = EVENT_START_AT.slice(5, 10).replace("-", ".");
+const EVENT_END_LABEL   = EVENT_END_AT.slice(5, 10).replace("-", ".") + " " + EVENT_END_AT.slice(11, 16);
 // このイベントを一旦無効化する(バナー・古精の出現とも止まる)。再開する時は true に戻し、
-// 上の EVENT_START/EVENT_END を次回開催の期間に更新する。
+// 上の EVENT_START_AT/EVENT_END_AT を次回開催の期間に更新する。
 const EVENT_ENABLED = true;
 const eventJstDay = (t) => new Date(t + EVENT_JST_OFFSET).toISOString().slice(0, 10);
 function eventStatus(meta) {
@@ -692,8 +887,8 @@ function eventStatus(meta) {
   const seenMax = meta?.eventSeenMax || 0;
   const clockBack = now < seenMax - EVENT_CLOCK_SKEW;
   const today = eventJstDay(now);
-  const beforePeriod = today < EVENT_START;
-  const afterPeriod = today > EVENT_END;
+  const beforePeriod = now < EVENT_START_MS;
+  const afterPeriod = now > EVENT_END_MS;
   const withinPeriod = EVENT_ENABLED && !beforePeriod && !afterPeriod;
   return {
     now, today, clockBack, withinPeriod, beforePeriod, afterPeriod,
@@ -723,6 +918,8 @@ const LEGACY_SKILL_COSTS = {
 
 // requires: 単一の前提スキルID。requiresAll: 複数の前提スキルIDをすべて満たす必要がある場合に使用(requiresより優先)。
 // effect: { type, value, ... } — skillEffectTotal() で集計してゲームロジックに反映する(構造的なもの[武器枠/鞄容量/開始品]は個別に直接参照)。
+// 踏破者向けスキルツリーのカテゴリ名(スキルツリー画面では通常のカテゴリとは別のタブに出す)。
+const RUSH_CATEGORY = "踏破";
 const SKILL_TREE = [
   // 戦闘拡張 — 属性ごとに「心得」(地味な第一歩) → 分岐して「極意」(数値をさらに伸ばす)と「余韻」(攻撃吸収) →「奥義」(属性ごとの個性)
   { id: "weaponSlot4", name: "武器IV", category: "戦闘拡張", cost: 4, requires: null,
@@ -787,7 +984,7 @@ const SKILL_TREE = [
 
   // 高レアスキル: 他のスキルより重いコスト(25)。
   { id: "soundDaze", name: "怯みの旋律", category: "戦闘拡張", cost: 25, requires: "soundEcho",
-    desc: "楽器で下げた敵の攻撃力の低下が、2ターン→3ターン持続する。音の極みに至った者だけが奏でられる旋律。", effect: { type: "instrumentDebuffTurns", value: 1 } },
+    desc: "楽器が敵の攻撃力を下げる時間が、2ターン→3ターンに延びる。音の極みに至った者だけが奏でられる旋律。", effect: { type: "instrumentDebuffTurns", value: 1 } },
   { id: "powerSeal", name: "力の刻印", category: "戦闘拡張", cost: 20, requiresAll: ["bladeMastery", "magicMastery", "pierceMastery", "bluntMastery", "soundMastery"],
     desc: "全武器のダメージ+10%(属性の極意と重複可)。五属性すべての極意を極めた者だけが辿り着ける。", effect: { type: "allDmgPct", value: 0.10 } },
 
@@ -869,6 +1066,112 @@ const SKILL_TREE = [
     desc: "敵のターンの開始時にHPが50%以上あれば、そのターン中の致死ダメージをHP1で耐える(毎ターン1回)。第9章に到達で解放。", effect: { type: "endure", value: 1 } },
   { id: "titanSeal", name: "覇者の刻印", category: "戦闘拡張", cost: 30, requires: "powerSeal", unlock: { stage: 9 },
     desc: "全ての武器の火力が+10%。第9章に到達で解放。", effect: { type: "allDmgPct", value: 0.10 } },
+  // 追加スキル(百層の踏破を目指しやすくするための底上げ。どれも既存の効果の続き)。伸びが大きいので、近い効果の既存スキルより重めのコストにしてある。
+  { id: "warmUp", name: "闘志の灯火", category: "戦闘拡張", cost: 10, requires: null,
+    desc: "全ての武器の火力が+3%。誰でも最初に取れる底上げ。", effect: { type: "allDmgPct", value: 0.03 } },
+  { id: "warmUp2", name: "闘志の炎", category: "戦闘拡張", cost: 16, requires: "warmUp",
+    desc: "全ての武器の火力が、さらに+4%(合計+7%)。", effect: { type: "allDmgPct", value: 0.04 } },
+  { id: "warmUp3", name: "闘志の業火", category: "戦闘拡張", cost: 24, requires: "warmUp2", unlock: { stage: 5 },
+    desc: "全ての武器の火力が、さらに+5%(合計+12%)。第5章に到達で解放。", effect: { type: "allDmgPct", value: 0.05 } },
+  { id: "bladeSoul", name: "斬の真髄", category: "戦闘拡張", cost: 16, requires: "bladeMastery",
+    desc: "斬属性武器のダメージ、さらに+7%(合計+27%)。刃が、さらに冴える。", effect: { type: "elementDmgPct", element: "斬", value: 0.07 } },
+  { id: "magicDepth", name: "魔の真髄", category: "戦闘拡張", cost: 16, requires: "magicMastery",
+    desc: "魔属性武器のダメージ、さらに+7%(合計+27%)。詠唱が、さらに深く届く。", effect: { type: "elementDmgPct", element: "魔", value: 0.07 } },
+  { id: "critUp2", name: "会心の極み", category: "戦闘拡張", cost: 24, requires: "critUp",
+    desc: "短剣の会心率 40%→50%。", effect: { type: "critChancePct", value: 0.10 } },
+  { id: "vitalityIII", name: "生命の器III", category: "生存", cost: 22, requires: "vitalityII", unlock: { stage: 4 },
+    desc: "最大HPがさらに永続+16(合計+42)。第4章に到達で解放。", effect: { type: "maxHp", value: 16 } },
+  { id: "specialHp2", name: "大樹の祝福", category: "生存", cost: 34, requires: "specialHp", unlock: { stage: 8 },
+    desc: "最大HPがさらに永続+40。第8章に到達で解放。", effect: { type: "maxHp", value: 40 } },
+  { id: "guardMastery2", name: "堅牢の極み", category: "生存", cost: 22, requires: "guardMastery",
+    desc: "防具の防御力、さらに+12%(合計30%)。", effect: { type: "defPct", value: 0.12 } },
+  { id: "regen2", name: "再生の極意", category: "生存", cost: 22, requires: "regen",
+    desc: "戦闘開始時の回復、さらに+10%(合計28%)。", effect: { type: "battleStartHealPct", value: 0.10 } },
+  { id: "dodgeIII", name: "神速の心得", category: "生存", cost: 30, requires: "specialDodge", unlock: { stage: 8 },
+    desc: "敵の攻撃を避ける確率がさらに+4%。第8章に到達で解放。", effect: { type: "dodgeChancePct", value: 0.04 } },
+  { id: "luckyEyeIII", name: "宝物庫の鍵", category: "探索", cost: 20, requires: "luckyEyeII",
+    desc: "ドロップのレア度補正、さらに上昇(合計+0.60)。", effect: { type: "dropLuck", value: 0.25 } },
+  { id: "fateMemory3", name: "宿命の記憶III", category: "転生", cost: 22, requires: "fateMemory2",
+    desc: "旅の始まりに、さらに力の胞子が1つ追加される。" },
+  { id: "startBerryB3", name: "旅装の記憶VII", category: "転生", cost: 24, requires: "startBerryB2",
+    desc: "旅の始まりに、さらに生命の果実が1つ追加される。" },
+
+  /* ---- 踏破者のスキルツリー(百層踏破を1回以上で表示。効果はボスラッシュの中だけで働く) ----
+     effect.type は必ず "rush" で始める。通常の冒険では、これらの効果を読む処理が無いので何も起きない。
+     ボスラッシュは、これらを全部そろえて、ようやくクリアに手が届く強さにしてある(RUSH の数値)。
+     コストは通常のスキルより大きく重い(約3倍)。ボスラッシュは結晶を稼ぐ機会が増えるので、その使いみちとして長く遊べるようにするため。 */
+  // 火力
+  { id: "rushAtk1", name: "覇気の目覚め", category: RUSH_CATEGORY, cost: 9, requires: null, unlock: { clears: 1 },
+    desc: "ボスラッシュ中、全ての武器の火力が+8%。", effect: { type: "rushAtkPct", value: 0.08 } },
+  { id: "rushAtk2", name: "覇気の昂ぶり", category: RUSH_CATEGORY, cost: 15, requires: "rushAtk1", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、全ての武器の火力がさらに+10%。", effect: { type: "rushAtkPct", value: 0.1 } },
+  { id: "rushAtk3", name: "覇気の極み", category: RUSH_CATEGORY, cost: 21, requires: "rushAtk2", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、全ての武器の火力がさらに+12%。", effect: { type: "rushAtkPct", value: 0.12 } },
+  { id: "rushAtk4", name: "覇気の頂", category: RUSH_CATEGORY, cost: 27, requires: "rushAtk3", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、全ての武器の火力がさらに+14%。", effect: { type: "rushAtkPct", value: 0.14 } },
+  { id: "rushAtk5", name: "覇気の神域", category: RUSH_CATEGORY, cost: 36, requires: "rushAtk4", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、全ての武器の火力がさらに+16%。", effect: { type: "rushAtkPct", value: 0.16 } },
+  // 武器ごとの習熟(8種すべて): 使われにくい武器にも出番が生まれるよう、武器種ごとに火力を伸ばせる。
+  ...Object.entries({
+    dagger: ["短剣の習熟", "素早い刃が、隙を逃さない。"], greatsword: ["大剣の習熟", "重い一撃を、さらに重く。"],
+    bow: ["弓の習熟", "射抜く精度を研ぎ澄ます。"], axe: ["斧の習熟", "守りごと叩き割る。"],
+    spear: ["槍の習熟", "深く、確実に穿つ。"], book: ["本の習熟", "詠唱が速く、強くなる。"],
+    staff: ["杖の習熟", "精霊の声が、よく届く。"], instrument: ["楽器の習熟", "旋律が、敵の芯まで響く。"],
+  }).map(([type, [name, flavor]]) => ({
+    id: `rushWpn_${type}`, name, category: RUSH_CATEGORY, cost: 12, requires: "rushAtk1", unlock: { clears: 1 },
+    desc: `ボスラッシュ中、${WEAPON_TYPES[type].label}の火力が+15%。${flavor}`,
+    effect: { type: "rushWeaponPct", weaponType: type, value: 0.15 },
+  })),
+  // 耐久
+  { id: "rushHp1", name: "不落の礎", category: RUSH_CATEGORY, cost: 9, requires: null, unlock: { clears: 1 },
+    desc: "ボスラッシュ中、最大HPが+10%。", effect: { type: "rushMaxHpPct", value: 0.1 } },
+  { id: "rushHp2", name: "不落の城壁", category: RUSH_CATEGORY, cost: 15, requires: "rushHp1", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、最大HPがさらに+12%。", effect: { type: "rushMaxHpPct", value: 0.12 } },
+  { id: "rushHp3", name: "不落の要塞", category: RUSH_CATEGORY, cost: 24, requires: "rushHp2", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、最大HPがさらに+14%。", effect: { type: "rushMaxHpPct", value: 0.14 } },
+  { id: "rushGuard", name: "初撃の見切り", category: RUSH_CATEGORY, cost: 18, requires: "rushHp2", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、各戦闘の最初のターンに受けるダメージが40%減る。", effect: { type: "rushFirstTurnCut", value: 0.4 } },
+  { id: "rushDr1", name: "鉄の心得", category: RUSH_CATEGORY, cost: 18, requires: "rushHp1", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、受けるダメージが5%減る。", effect: { type: "rushDrPct", value: 0.05 } },
+  { id: "rushDr2", name: "鉄の覚悟", category: RUSH_CATEGORY, cost: 27, requires: "rushDr1", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、受けるダメージがさらに5%減る。", effect: { type: "rushDrPct", value: 0.05 } },
+  { id: "rushDr3", name: "鉄の誓い", category: RUSH_CATEGORY, cost: 36, requires: "rushDr2", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、受けるダメージがさらに5%減る。", effect: { type: "rushDrPct", value: 0.05 } },
+  // 休息・備え
+  { id: "rushRest1", name: "休息の作法", category: RUSH_CATEGORY, cost: 12, requires: null, unlock: { clears: 1 },
+    desc: "ボスラッシュの休息で回復する量が、最大HPの35%→50%になる。", effect: { type: "rushRestHeal", value: 0.15 } },
+  { id: "rushRest2", name: "深い休息", category: RUSH_CATEGORY, cost: 21, requires: "rushRest1", unlock: { clears: 1 },
+    desc: "ボスラッシュの休息で回復する量が、最大HPの50%→65%になる。", effect: { type: "rushRestHeal", value: 0.15 } },
+  { id: "rushChoice", name: "選び取る眼", category: RUSH_CATEGORY, cost: 18, requires: "rushRest1", unlock: { clears: 1 },
+    desc: "ボスラッシュの休息で選べる強化が、3つ→4つになる。", effect: { type: "rushChoice", value: 1 } },
+  { id: "rushChoice2", name: "見通す眼", category: RUSH_CATEGORY, cost: 30, requires: "rushChoice", unlock: { clears: 1 },
+    desc: "ボスラッシュの休息で選べる強化が、4つ→5つになる。", effect: { type: "rushChoice", value: 1 } },
+  { id: "rushStartBerry", name: "旅立ちの備え", category: RUSH_CATEGORY, cost: 15, requires: "rushRest1", unlock: { clears: 1 },
+    desc: "ボスラッシュを始めるときに渡される生命の果実が、1個増える。", effect: { type: "rushStartBerry", value: 1 } },
+  { id: "rushLoan", name: "借り物の鍛造", category: RUSH_CATEGORY, cost: 12, requires: "rushRest1", unlock: { clears: 1 },
+    desc: "ボスラッシュで借りる武器の火力が+25%。", effect: { type: "rushLoanPct", value: 0.25 } },
+  { id: "rushReviveHp", name: "立て直しの加護", category: RUSH_CATEGORY, cost: 15, requires: "rushRest1", unlock: { clears: 1 },
+    desc: "ボスラッシュで広告を見て復活したときのHPが、最大HPの60%→85%になる。", effect: { type: "rushReviveHp", value: 0.25 } },
+  // ボスと取り巻き
+  { id: "rushBreak", name: "ボス崩し", category: RUSH_CATEGORY, cost: 24, requires: "rushAtk2", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、ボスの防御力が25%下がる。", effect: { type: "rushBossDefCut", value: 0.25 } },
+  { id: "rushBreak2", name: "ボス砕き", category: RUSH_CATEGORY, cost: 36, requires: "rushBreak", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、ボスの防御力がさらに25%下がる。", effect: { type: "rushBossDefCut", value: 0.25 } },
+  { id: "rushEscort", name: "取り巻き狩り", category: RUSH_CATEGORY, cost: 21, requires: "rushAtk1", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、取り巻きのHPが15%減る。", effect: { type: "rushEscortHpCut", value: 0.15 } },
+  { id: "rushEscort2", name: "取り巻き殲滅", category: RUSH_CATEGORY, cost: 30, requires: "rushEscort", unlock: { clears: 1 },
+    desc: "ボスラッシュ中、取り巻きのHPがさらに15%減る。", effect: { type: "rushEscortHpCut", value: 0.15 } },
+  { id: "rushRespawn1", name: "静寂の間", category: RUSH_CATEGORY, cost: 24, requires: "rushRest2", unlock: { clears: 1 },
+    desc: "倒した取り巻きが立ち上がるまでの間隔が、1ターン延びる。", effect: { type: "rushRespawnDelay", value: 1 } },
+  { id: "rushRespawn2", name: "長い静寂", category: RUSH_CATEGORY, cost: 36, requires: "rushRespawn1", unlock: { clears: 1 },
+    desc: "倒した取り巻きが立ち上がるまでの間隔が、さらに1ターン延びる。", effect: { type: "rushRespawnDelay", value: 1 } },
+  // 守りの崩し方
+  { id: "rushCoreOpen", name: "守りの見切り", category: RUSH_CATEGORY, cost: 21, requires: "rushBreak", unlock: { clears: 1 },
+    desc: "ボスラッシュで守りを崩したあと、全ての武器が通常のダメージで通るターンが1つ増える。", effect: { type: "rushCoreOpen", value: 1 } },
+  { id: "rushCoreLeak", name: "固い守りを貫く", category: RUSH_CATEGORY, cost: 18, requires: "rushAtk2", unlock: { clears: 1 },
+    desc: "ボスラッシュで守りが固い間に、通りにくい武器のダメージが通る割合が40%→55%になる。", effect: { type: "rushCoreLeak", value: 0.15 } },
+  { id: "rushCoreLeak2", name: "守りを裂く", category: RUSH_CATEGORY, cost: 27, requires: "rushCoreLeak", unlock: { clears: 1 },
+    desc: "ボスラッシュで守りが固い間に、通りにくい武器のダメージが通る割合が55%→70%になる。", effect: { type: "rushCoreLeak", value: 0.15 } },
 ];
 
 // スキルの解放条件(到達章・踏破回数)を満たしているか。
@@ -887,6 +1190,7 @@ function skillPrereqList(skill, skills) {
 const skillUnlockText = (skill) => {
   const u = skill.unlock;
   if (!u) return "";
+  if (u.stage == null && u.clears != null) return "百層を踏破すると解放されます。";
   return `第${u.stage}章に到達すると解放されます。`;
 };
 
@@ -944,14 +1248,14 @@ async function saveMeta(meta) {
   memorySave = { ...meta };
   try { await window.storage.set(SAVE_KEY, JSON.stringify(meta)); } catch (e) { /* メモリ保存で継続 */ }
 }
-async function loadRun() {
+async function loadRun(key = RUN_SAVE_KEY) {
   let raw = null;
   try {
-    const r = await window.storage.get(RUN_SAVE_KEY);
+    const r = await window.storage.get(key);
     if (r && r.value) { raw = r.value; return JSON.parse(r.value); }
   } catch {
     // 壊れた中断セーブを無言で捨てて上書きさせない(loadMeta と同じ)。復旧の手がかりとして退避する。
-    if (raw) { try { await window.storage.set(RUN_SAVE_KEY + ".corrupt_backup", raw); } catch {} }
+    if (raw) { try { await window.storage.set(key + ".corrupt_backup", raw); } catch {} }
   }
   return null;
 }
@@ -969,6 +1273,10 @@ function runExtraOf(s) {
   if (Array.isArray(s.nodes)) x.nodes = s.nodes;
   if (s.phase === "chest" || s.phase === "spring") { x.midPhase = s.phase; x.eventDone = !!s.eventDone; x.midDrops = s.drops || []; }
   if (s.phase === "reviveOffer") x.reviveOffer = true;
+  // ボスラッシュ中は、進行(何体目か・得たバフ・休息の選択肢)と画面の状態も一緒に保存する。
+  // この付帯情報があると saveRun は通常の冒険ではなくボスラッシュ用の枠へ書く。
+  // turn も一緒に保存する(再開のたびに「最初のターン」扱いになると、初撃の見切りを何度でも使えてしまう)。
+  if (s.rush) { x.rush = s.rush; x.rushPhase = s.phase; x.turn = s.turn || 1; }
   return x;
 }
 // 戦闘中と復活オファー中だけ敵を保存する(宝箱・泉・報酬画面には敵がいない)。
@@ -981,18 +1289,21 @@ function nodesOfRun(run) {
 }
 async function saveRun(floor, node, player, weapons, armor, inv, cds, lastRareSeen, orbBagBonus = 0, enemies = null, rewardPhase = null, drops = null, extra = null) {
   try {
-    const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, regen: player.regen || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
+    const data = { floor, node: node || 0, player: { hp: player.hp, poison: player.poison || 0, atkUp: player.atkUp || 0, regen: player.regen || 0, weakT: player.weakT || 0, bagSealT: player.bagSealT || 0, guardSealT: player.guardSealT || 0, guard: false }, weapons, armor, inv, cds: cds || {}, lastRareSeen: lastRareSeen || 0, orbBagBonus: orbBagBonus || 0 };
     if (enemies && enemies.length > 0) data.enemies = enemies;
     // 全部拾い終えていても(=drops が空でも)rewardPhase は保持する。ここを外すと、
     // 「拾い終えたが『進む』はまだ押していない」タイミングでのタスキル再開時にボスが
     // 再生成されてしまう(倒したはずのボスと再戦させられる)。
     if (rewardPhase) { data.rewardPhase = rewardPhase; data.drops = drops || []; }
     if (extra) Object.assign(data, extra);
-    await window.storage.set(RUN_SAVE_KEY, JSON.stringify(data));
+    await window.storage.set(data.rush ? RUSH_SAVE_KEY : RUN_SAVE_KEY, JSON.stringify(data));
   } catch {}
 }
 async function clearRun() {
   try { await window.storage.set(RUN_SAVE_KEY, ""); } catch {}
+}
+async function clearRush() {
+  try { await window.storage.set(RUSH_SAVE_KEY, ""); } catch {}
 }
 async function saveDeadRun(floor, weapons, armor, inv, orbBagBonus = 0, orbSlotBonus = 0) {
   try {
@@ -1067,11 +1378,14 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 
 /* --- ヘッダ(章と階) --- */
 .kw-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+/* 右のボタン群は縮めない(はみ出さない)。左のタイトルのほうが、幅が足りなければ折り返す */
+.kw-head > :last-child { flex-shrink: 0; }
+.kw-head .kw-floor { min-width: 0; }
 .kw-floor {
   font-family: var(--font-display); font-weight: 800; font-size: 30px; letter-spacing: .08em;
   color: var(--paper); line-height: 1;
 }
-.kw-floor small { font-size: 12px; color: var(--mist); font-weight: 500; display: block; margin-bottom: 4px; letter-spacing: .3em; }
+.kw-floor small { font-size: 13px; color: var(--mist); font-weight: 500; display: block; margin-bottom: 4px; letter-spacing: .15em; }
 .kw-progress { display: flex; gap: 6px; align-items: center; }
 .kw-node { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--moss-lt); opacity: .5; }
 .kw-node.done { background: var(--hotaru); border-color: var(--hotaru); opacity: 1; box-shadow: 0 0 8px var(--hotaru-dim); }
@@ -1100,24 +1414,42 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-enemy.dead { opacity: 0; transform: scale(.7) translateY(10px); pointer-events: none; transition: all .5s ease; }
 .kw-enemy .kw-eicon { display: inline-flex; padding: 14px; border-radius: 50%;
   background: radial-gradient(circle, rgba(94,130,101,.28), transparent 70%); margin-bottom: 6px; }
-.kw-enemy .kw-ename { font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: .06em; }
+.kw-enemy .kw-ename { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: .06em; }
 .kw-enemy.rare { box-shadow: 0 0 0 1px var(--hotaru), 0 0 24px var(--hotaru-dim); }
 .kw-enemy.rare .kw-ename { color: var(--hotaru); }
 .kw-enemy.boss { width: 200px; }
-.kw-enemy-count { flex-basis: 100%; text-align: center; font-size: 10px; letter-spacing: .2em; color: var(--mist); margin-top: -6px; }
-.kw-enemy-count b { color: var(--hotaru); font-size: 12px; }
+/* ボスラッシュ(敵3体以上): ボスを左、取り巻きを右の格子に並べる */
+.kw-field-inner.rushsplit { flex-wrap: wrap; align-items: flex-start; gap: 6px 8px; padding: 12px 6px 12px; }
+.kw-rs-escorts { flex: 1 1 0; min-width: 0; display: grid; gap: 6px; align-content: start; }
+/* ボス戦(取り巻きあり): ボスを中央に、取り巻きを左右の列に並べる */
+.kw-field-inner.bosscenter { display: grid; grid-template-columns: minmax(0, 1fr) 124px minmax(0, 1fr); align-items: center; gap: 6px 8px; padding: 12px 6px; }
+.kw-bc-side { min-width: 0; display: grid; gap: 6px; align-content: center; }
+.kw-bc-boss .kw-enemy.boss { width: 100%; padding: 12px 6px 10px; }
+.kw-bc-boss .kw-enemy .kw-eicon { padding: 10px; margin-bottom: 4px; }
+.kw-bc-boss .kw-enemy .kw-ename { font-size: 13px; letter-spacing: 0; line-height: 1.35; overflow-wrap: anywhere; text-wrap: balance; }
+.kw-rs-escorts .kw-enemy, .kw-bc-side .kw-enemy { width: 100%; padding: 8px 3px 6px; }
+.kw-rs-escorts .kw-enemy .kw-eicon, .kw-bc-side .kw-enemy .kw-eicon { padding: 5px; margin-bottom: 1px; }
+.kw-rs-escorts .kw-enemy .kw-ename, .kw-bc-side .kw-enemy .kw-ename { font-size: 12px; letter-spacing: 0; }
+.kw-rs-escorts .kw-enemy .kw-hpbar, .kw-bc-side .kw-enemy .kw-hpbar { margin-top: 4px; }
+.kw-rs-escorts .kw-enemy .kw-affin, .kw-bc-side .kw-enemy .kw-affin { gap: 2px; margin-top: 4px; }
+.kw-rs-escorts .kw-enemy .kw-chip, .kw-bc-side .kw-enemy .kw-chip { font-size: 11px; padding: 0 3px; letter-spacing: 0; }
+.kw-field-inner.bosscenter .kw-enemy-count { grid-column: 1 / -1; margin-top: 0; }
+.kw-enemy-count { flex-basis: 100%; text-align: center; font-size: 12px; letter-spacing: .2em; color: var(--mist); margin-top: -6px; }
+.kw-enemy-count b { color: var(--hotaru); font-size: 14px; }
+.kw-enemy-count .kw-respawn-note { display: block; margin-top: 3px; font-size: 11.5px; letter-spacing: .04em; color: var(--danger); }
 .kw-enemy.hit { animation: kwShake .32s ease; }
 @keyframes kwFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
 @keyframes kwShake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(5px); } }
 
-.kw-hpbar { height: 5px; border-radius: 3px; background: rgba(0,0,0,.5); overflow: hidden; margin-top: 8px; }
+.kw-hpbar { height: 7px; border-radius: 3px; background: rgba(0,0,0,.5); overflow: hidden; margin-top: 8px; }
 .kw-hpbar i { display: block; height: 100%; background: linear-gradient(90deg, #6fae78, #a3cf9f); transition: width .35s ease; }
 .kw-hpbar.boss i { background: linear-gradient(90deg, #c76a4f, var(--hotaru)); }
 .kw-affin { display: flex; justify-content: center; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
-.kw-chip { font-size: 10px; padding: 1px 6px; border-radius: 3px; letter-spacing: .1em; }
+.kw-chip { font-size: 12px; padding: 1px 6px; border-radius: 3px; letter-spacing: .1em; }
 .kw-chip.weak { color: var(--hotaru); border: 1px solid var(--hotaru-dim); }
 .kw-chip.res { color: var(--paper-dim); border: 1px solid rgba(185,183,165,.25); }
 .kw-chip.poison { color: #a98ad9; border: 1px solid rgba(169,138,217,.4); }
+.kw-chip.core { color: #e07a6a; border: 1px solid rgba(224,122,106,.5); }
 .kw-chip.unknown { color: var(--mist); border: 1px dashed rgba(157,180,166,.3); }
 
 /* --- ダメージ演出 --- */
@@ -1129,45 +1461,73 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   100% { opacity: 0; transform: translate(-50%, -46px) scale(1); } }
 
 /* --- プレイヤーHUD --- */
-.kw-hud { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin-bottom: 10px; flex-shrink: 0; min-height: 50px; }
-.kw-hud .kw-me { font-family: var(--font-display); font-weight: 700; font-size: 14px; letter-spacing: .12em; }
-.kw-mybar { flex: 1; height: 10px; border-radius: 5px; background: rgba(0,0,0,.5); overflow: hidden; }
+.kw-hud { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 16px; margin-bottom: 10px; flex-shrink: 0; min-height: 50px; }
+.kw-hud .kw-me { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: .12em; }
+.kw-mybar { flex: 1 1 0; min-width: 90px; height: 10px; border-radius: 5px; background: rgba(0,0,0,.5); overflow: hidden; }
 .kw-mybar i { display: block; height: 100%; background: linear-gradient(90deg, var(--hotaru), #f3d489); transition: width .3s ease; box-shadow: 0 0 10px var(--hotaru-dim); }
-.kw-hud .kw-num { font-family: var(--font-display); font-size: 15px; min-width: 84px; text-align: right; }
-.kw-status { display: flex; gap: 6px; }
-.kw-tag { font-size: 10px; padding: 2px 7px; border-radius: 3px; border: 1px solid; letter-spacing: .08em; }
+.kw-hud .kw-num { font-family: var(--font-display); font-size: 17px; font-weight: 700; min-width: 84px; text-align: right; }
+/* 状態の表示は2行目に回して、HPバーの幅を削らない(何も無いときは行ごと出さない) */
+.kw-status { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 100%; }
+.kw-status:empty { display: none; }
+.kw-tag { font-size: 12px; padding: 2px 7px; border-radius: 3px; border: 1px solid; letter-spacing: .08em; }
 .kw-tag.buff { color: var(--hotaru); border-color: var(--hotaru-dim); }
 .kw-tag.bad { color: var(--danger); border-color: rgba(217,106,90,.4); }
 
 /* --- 手札(武器) --- */
-.kw-hand { display: flex; flex-direction: row; overflow-x: auto; overflow-y: visible; gap: 8px; flex-shrink: 0;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 6px 4px 8px; margin: -6px -4px -8px; }
-.kw-hand::-webkit-scrollbar { display: none; }
-.kw-wcard { position: relative; padding: 16px 12px; text-align: left; cursor: pointer;
-  flex: 1; min-width: 150px;
+.kw-hand { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; flex-shrink: 0;
+  padding: 6px 4px 8px; margin: -6px -4px -8px; }
+.kw-wslot { position: relative; min-width: 0; -webkit-touch-callout: none; touch-action: manipulation; }
+.kw-wcard { position: relative; width: 100%; height: 58px; padding: 4px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   transition: transform .15s ease, box-shadow .15s ease; color: var(--paper); font-family: var(--font-body); }
 .kw-wcard:hover:not(:disabled) { transform: translateY(-3px); }
-.kw-wcard:disabled { opacity: .38; cursor: default; }
+.kw-wcard:disabled { opacity: .5; cursor: default; pointer-events: none; }
 .kw-wcard.selected { box-shadow: 0 0 0 1.5px var(--hotaru), 0 6px 20px rgba(0,0,0,.45); transform: translateY(-3px); }
-.kw-wcard .kw-wname { font-family: var(--font-display); font-weight: 700; font-size: 13px; margin: 4px 0 2px; line-height: 1.3; }
-.kw-wcard .kw-wmeta { font-size: 11px; color: var(--mist); display: flex; gap: 8px; align-items: center; }
-.kw-wcard .kw-wcd { position: absolute; right: 8px; top: 8px; font-family: var(--font-display); font-size: 18px; font-weight: 800; color: var(--paper-dim); }
-.kw-typechip { font-size: 10px; padding: 0 5px; border-radius: 3px; background: rgba(94,130,101,.25); color: var(--mist); letter-spacing: .1em; }
+.kw-wcard.empty { opacity: .5; border-style: dashed; cursor: default; }
+.kw-wcard .kw-wtype { font-size: 12px; font-weight: 700; line-height: 1; color: var(--mist); }
+.kw-wcard .kw-wcd { position: absolute; right: 4px; top: 2px; font-family: var(--font-display); font-size: 16px; font-weight: 800; color: var(--paper); text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+.kw-wcard .kw-watk { font-family: var(--font-display); font-size: 11px; font-weight: 800; color: var(--paper); margin-left: 3px; }
+.kw-quick { display: flex; justify-content: center; gap: 6px; margin-top: 8px; flex-shrink: 0; }
+.kw-quick .kw-qslot { flex: 0 1 96px; min-width: 0; -webkit-touch-callout: none; touch-action: manipulation; }
+.kw-quick .kw-qtile { position: relative; width: 100%; height: 58px; padding: 4px 2px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  color: var(--paper); font-family: var(--font-body); border-color: rgba(143,211,154,.45); transition: transform .15s ease; }
+.kw-quick .kw-qtile:hover:not(:disabled) { transform: translateY(-2px); border-color: #8fd39a; }
+.kw-quick .kw-qtile:disabled { opacity: .45; cursor: default; }
+.kw-quick .kw-qname { font-size: 11px; line-height: 1; color: var(--mist); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.kw-quick .kw-qcount { position: absolute; right: 5px; top: 2px; font-family: var(--font-display); font-size: 14px; font-weight: 800; color: var(--paper); text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+/* 装備中のカード: ロックは右上の角に置く(「装備中」の印はこの画面では不要なので隠す)。押す範囲は40×40を保つ */
+.kw-eqwrap { position: relative; display: flex; flex-direction: column; }
+.kw-eqwrap .kw-cell.equipped-mark::after { display: none; }
+.kw-eqwrap .kw-eqlock { position: absolute; top: 5px; right: 5px; width: 28px; height: 28px; min-height: 0; padding: 0; z-index: 1;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; }
+/* 見た目は小さくても、押せる範囲は40×40以上に保つ(透明な余白で広げる)。文字には被らない */
+.kw-eqwrap .kw-eqlock::before { content: ""; position: absolute; inset: -7px; }
+.kw-stack { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.kw-stack-main { flex: 1; min-width: 0; }
+.kw-stack-name { font-family: var(--font-display); font-size: 14px; font-weight: 700; line-height: 1.3; }
+.kw-stack-name b { color: var(--hotaru); margin-left: 6px; }
+.kw-stack-desc { font-size: 11.5px; color: var(--mist); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kw-stack-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.kw-stack-actions .kw-btn { padding: 6px 0; width: 50px; font-size: 12.5px; min-height: 36px; letter-spacing: .02em; display: inline-flex; align-items: center; justify-content: center; }
+.kw-stack-actions .kw-btn:nth-child(2) { width: 36px; }
+.kw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.kw-typechip { font-size: 12px; padding: 0 5px; border-radius: 3px; background: rgba(94,130,101,.25); color: var(--mist); letter-spacing: .1em; }
 
 /* --- ボタン --- */
-.kw-btn { font-family: var(--font-body); font-weight: 700; letter-spacing: .14em; cursor: pointer;
+.kw-btn { font-family: var(--font-body); font-weight: 700; letter-spacing: .08em; cursor: pointer;
   background: transparent; color: var(--paper); border: 1px solid rgba(233,228,211,.35);
-  border-radius: 8px; padding: 8px 18px; font-size: 13px; white-space: nowrap; transition: all .18s ease; }
+  border-radius: 8px; padding: 8px 18px; font-size: 14px; white-space: nowrap; transition: all .18s ease; min-height: 40px; }
 .kw-btn:hover { border-color: var(--hotaru); color: var(--hotaru); box-shadow: 0 0 14px var(--hotaru-dim); }
 .kw-btn.primary { border-color: var(--hotaru); color: var(--ink); background: var(--hotaru); }
 .kw-btn.primary:hover { background: #f3c86b; color: var(--ink); }
 .kw-btn.ghost { border-color: rgba(157,180,166,.3); color: var(--mist); }
-.kw-btn:disabled { opacity: .35; cursor: default; box-shadow: none; }
+.kw-btn:disabled { opacity: .45; cursor: default; box-shadow: none; }
 
 /* --- ログ --- */
-.kw-log { margin-top: 10px; padding: 9px 14px; font-size: 12px; color: var(--paper-dim);
-  height: 79px; flex-shrink: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  display: flex; flex-direction: column; line-height: 1.7; box-sizing: border-box; }
+.kw-log { margin-top: 10px; padding: 9px 14px; font-size: 13.5px; color: var(--paper);
+  height: 96px; flex-shrink: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; line-height: 1.65; box-sizing: border-box; }
 .kw-log b { color: var(--hotaru); font-weight: 700; }
 .kw-log .new { color: var(--paper); }
 .kw-log::-webkit-scrollbar { width: 3px; }
@@ -1185,14 +1545,14 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 @keyframes kwFade { from { opacity: 0; } to { opacity: 1; } }
 .kw-sheet { width: 100%; max-width: 660px; max-height: 84vh; overflow-y: auto; padding: 20px 18px 16px; }
 .kw-sheet h2 { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .18em; margin-bottom: 4px; }
-.kw-sheet .kw-sub { color: var(--mist); font-size: 12px; margin-bottom: 12px; line-height: 1.7; }
+.kw-sheet .kw-sub { color: var(--mist); font-size: 13.5px; margin-bottom: 12px; line-height: 1.7; }
 .kw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; }
 .kw-cell { padding: 10px; cursor: pointer; text-align: left; position: relative; color: var(--paper);
   font-family: var(--font-body); width: 100%; transition: box-shadow .15s ease; }
-.kw-cell .kw-cname { font-family: var(--font-display); font-size: 12.5px; font-weight: 700; margin: 4px 0 2px; line-height: 1.35; }
-.kw-cell .kw-cmeta { font-size: 10.5px; color: var(--mist); line-height: 1.5; }
+.kw-cell .kw-cname { font-family: var(--font-display); font-size: 14px; font-weight: 700; margin: 4px 0 2px; line-height: 1.35; }
+.kw-cell .kw-cmeta { font-size: 12px; color: var(--mist); line-height: 1.5; }
 .kw-cell.picked { box-shadow: 0 0 0 1.5px var(--hotaru); }
-.kw-cell.equipped-mark::after { content: "装備中"; position: absolute; top: 7px; right: 8px; font-size: 9px; color: var(--hotaru); letter-spacing: .1em; }
+.kw-cell.equipped-mark::after { content: "装備中"; position: absolute; top: 7px; right: 8px; font-size: 11px; color: var(--hotaru); letter-spacing: .05em; }
 .kw-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
 /* スクロールの最後まで届かないと出てこないのを防ぐ: 主要な進行ボタンは画面下端に
    固定表示する。中身が短ければ通常通りの位置のまま(sticky は必要な時だけ効く)。 */
@@ -1209,7 +1569,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   letter-spacing: .3em; text-indent: .3em; line-height: 1.25;
   text-shadow: 0 0 40px rgba(232,180,74,.25); }
 .kw-title .kw-tsub { color: var(--mist); letter-spacing: .5em; text-indent: .5em; font-size: 13px; }
-.kw-title .kw-tmeta { color: var(--paper-dim); font-size: 12px; line-height: 2; }
+.kw-title .kw-tmeta { color: var(--paper); font-size: 13.5px; line-height: 2; }
 .kw-tate { writing-mode: vertical-rl; font-family: var(--font-display); color: var(--mist);
   font-size: 13px; letter-spacing: .4em; line-height: 2.4; opacity: .85; }
 
@@ -1226,18 +1586,18 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 /* --- 弱点をつける敵のハイライト --- */
 .kw-enemy.goodTarget { box-shadow: 0 0 0 1.5px var(--hotaru), 0 0 22px var(--hotaru-dim); }
 .kw-enemy.goodTarget::before { content: "弱点をつける!"; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
-  font-size: 9.5px; color: var(--ink); background: var(--hotaru); padding: 1px 8px; border-radius: 3px; letter-spacing: .1em; white-space: nowrap; }
+  font-size: 11px; color: var(--ink); background: var(--hotaru); padding: 1px 8px; border-radius: 3px; letter-spacing: .1em; white-space: nowrap; }
 
 /* --- 未回収確認などの最前面モーダル --- */
 .kw-overlay.top { z-index: 50; }
-.kw-notice { font-size: 11.5px; color: var(--danger); border: 1px solid rgba(217,106,90,.4); border-radius: 6px; padding: 7px 12px; margin-top: 10px; line-height: 1.7; }
-.kw-hint-diff { font-size: 10px; margin-top: 3px; letter-spacing: .05em; }
+.kw-notice { font-size: 13px; color: var(--danger); border: 1px solid rgba(217,106,90,.4); border-radius: 6px; padding: 7px 12px; margin-top: 10px; line-height: 1.7; }
+.kw-hint-diff { font-size: 12px; margin-top: 3px; letter-spacing: .05em; }
 
 /* --- 初回チュートリアルの吹き出し --- */
 .kw-coach { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 40;
   max-width: 520px; width: calc(100% - 32px); padding: 14px 18px; animation: kwFade .4s ease; }
-.kw-coach h4 { font-family: var(--font-display); font-size: 13px; letter-spacing: .12em; color: var(--hotaru); margin-bottom: 6px; }
-.kw-coach p { font-size: 12px; color: var(--paper-dim); line-height: 1.8; }
+.kw-coach h4 { font-family: var(--font-display); font-size: 15px; letter-spacing: .12em; color: var(--hotaru); margin-bottom: 6px; }
+.kw-coach p { font-size: 13.5px; color: var(--paper-dim); line-height: 1.8; }
 .kw-coach .kw-actions { margin-top: 10px; }
 
 /* --- エンディング --- */
@@ -1254,11 +1614,14 @@ html, body { color: var(--paper); font-family: var(--font-body); }
   .kw-field-inner.compact { gap: 8px; padding: 14px 4px 14px; }
   .kw-field-inner.compact .kw-enemy { width: 96px; padding: 10px 6px 8px; }
   .kw-field-inner.compact .kw-enemy .kw-eicon { padding: 8px; margin-bottom: 2px; }
-  .kw-field-inner.compact .kw-enemy .kw-ename { font-size: 11px; letter-spacing: .02em; }
+  .kw-field-inner.compact .kw-enemy .kw-ename { font-size: 12.5px; letter-spacing: .02em; }
   .kw-field-inner.compact .kw-enemy .kw-hpbar { margin-top: 5px; }
   .kw-field-inner.compact .kw-enemy .kw-affin { gap: 3px; margin-top: 5px; }
-  .kw-field-inner.compact .kw-enemy .kw-chip { font-size: 9px; padding: 1px 4px; letter-spacing: .04em; }
-  .kw-hand { grid-template-columns: repeat(2, 1fr); }
+  .kw-field-inner.compact .kw-enemy .kw-chip { font-size: 11px; padding: 1px 4px; letter-spacing: .02em; }
+  /* ボスラッシュ: ボスは通常の大きさのまま、取り巻きだけを小さくして並べる */
+  .kw-field-inner.compact .kw-enemy.boss { width: 170px; padding: 16px 10px 12px; }
+  .kw-field-inner.compact .kw-enemy.boss .kw-eicon { padding: 14px; margin-bottom: 6px; }
+  .kw-field-inner.compact .kw-enemy.boss .kw-ename { font-size: 15px; letter-spacing: .06em; }
   .kw-tate { display: none; }
 }
 @media (max-width: 360px) {
@@ -1565,7 +1928,7 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
     <div
       className={`kw-panel kw-enemy ${e.hp <= 0 ? "dead" : ""} ${e.rare ? "rare" : ""} ${e.boss ? "boss" : ""} ${pending ? "targetable" : ""} ${goodTarget ? "goodTarget" : ""} ${hitId === e.id ? "hit" : ""}`}
       onClick={() => { if (pending && e.hp > 0) onAttack(pending, e.id); }}
-      role="button" aria-label={`${e.name}を狙う`}
+      role="button" aria-label={`${e.name}を狙う`} data-enemy-id={e.id}
     >
       {myFloats.map((f, i) => (
         <div key={f.key} className="kw-float" style={{ color: f.color, fontSize: f.size, left: `calc(50% + ${floatOffsetX(i, myFloats.length)}px)` }}>{f.text}</div>
@@ -1575,23 +1938,31 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
       </div>
       <div className="kw-ename">{e.name}</div>
       <div className={`kw-hpbar ${e.boss ? "boss" : ""}`}><i style={{ width: `${(e.hp / e.maxHp) * 100}%` }} /></div>
-      <div style={{ fontSize: 10, color: "var(--paper-dim)", marginTop: 3 }}>{e.hp} / {e.maxHp}</div>
+      <div style={{ fontSize: 11.5, color: "var(--paper-dim)", marginTop: 3 }}>{e.hp} / {e.maxHp}</div>
       <div className="kw-affin">
         {revealed.w?.map((t) => <span key={"w" + t} className="kw-chip weak">弱 {t}</span>)}
         {revealed.r?.map((t) => <span key={"r" + t} className="kw-chip res">耐 {t}</span>)}
         {hidden && <span className="kw-chip unknown">?</span>}
         {e.rare && <span className="kw-chip weak">あと{e.fleeIn}T</span>}
         {e.hp > 0 && e.poisonT > 0 && <span className="kw-chip poison">毒 {e.poisonT}T</span>}
+        {e.hp > 0 && e.core && e.coreOpen > 0 && <span className="kw-chip weak">守り崩れ</span>}
       </div>
     </div>
   );
 }
 
-/* 武器カード(モジュールレベル) */
-function WeaponCard({ w, g, onAttack, onSelect }) {
+/* 武器カード(モジュールレベル)。アイコンだけを並べて1段に収める。
+   タップで攻撃(従来どおり)、長押しで詳細(onInfo)。クールダウン中は button が無効でも長押しできるよう、
+   イベントは外側の div で受ける。名前は読み上げ/検索用に視覚的に隠して残す。 */
+const LONG_PRESS_MS = 450;
+function WeaponCard({ w, g, onAttack, onSelect, onInfo }) {
+  const timer = useRef(null);
+  const longFired = useRef(false);
+  const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  useEffect(() => clearTimer, []);
   if (!w) return (
-    <div className="kw-panel kw-wcard" style={{ opacity: .35, cursor: "default", textAlign: "center", fontSize: 11, color: "var(--mist)", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 74 }}>
-      空きスロット
+    <div className="kw-wslot">
+      <div className="kw-panel kw-wcard empty"><span className="kw-wtype">空き</span></div>
     </div>
   );
   const t = WEAPON_TYPES[w.type];
@@ -1599,32 +1970,115 @@ function WeaponCard({ w, g, onAttack, onSelect }) {
   const cd = g.cds[w.id] || 0;
   const usable = g.phase === "battle" && !g.busy && cd === 0;
   const aoe = w.type === "book" || w.type === "instrument";
+  const selected = g.pending?.id === w.id;
   return (
-    <button className={`kw-panel kw-wcard ${g.pending?.id === w.id ? "selected" : ""}`}
-      disabled={!usable}
-      style={{ boxShadow: g.pending?.id === w.id ? undefined : r.glow }}
-      onClick={() => {
-        if (!usable) return;
-        if (aoe) onAttack(w, null);
-        else if (g.enemies.filter((e) => e.hp > 0).length === 1) onAttack(w, g.enemies.find((e) => e.hp > 0).id);
-        else onSelect(w);
+    <div className="kw-wslot"
+      onPointerDown={() => {
+        longFired.current = false;
+        clearTimer();
+        timer.current = setTimeout(() => { timer.current = null; longFired.current = true; onInfo(w); }, LONG_PRESS_MS);
       }}
-      title={t.desc}
-    >
-      {cd > 0 && <span className="kw-wcd">{cd}</span>}
-      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-        <AssetIcon assetId={w.asset} size={18} color={r.color} />
-        <RarityName item={w} small />
-      </div>
-      <div className="kw-wname">{w.name}</div>
-      <div className="kw-wmeta">
-        <span>攻 {w.atk}</span>
-        <span className="kw-typechip">{t.dmgType}</span>
-        <span style={{ fontSize: 10 }}>{t.tags[0]}</span>
-      </div>
-    </button>
+      onPointerUp={clearTimer}
+      onPointerLeave={() => { clearTimer(); longFired.current = false; }} onPointerCancel={() => { clearTimer(); longFired.current = false; }}
+      onContextMenu={(e) => e.preventDefault()}>
+      <button className={`kw-panel kw-wcard ${selected ? "selected" : ""}`}
+        disabled={!usable}
+        aria-label={`${w.name} 攻${w.atk} ${t.dmgType}属性`}
+        style={{ boxShadow: selected ? undefined : r.glow, borderColor: r.color }}
+        onClick={() => {
+          if (longFired.current) { longFired.current = false; return; }
+          if (!usable) return;
+          if (aoe) onAttack(w, null);
+          else if (g.enemies.filter((e) => e.hp > 0).length === 1) onAttack(w, g.enemies.find((e) => e.hp > 0).id);
+          else onSelect(w);
+        }}
+      >
+        {cd > 0 && <span className="kw-wcd">{cd}</span>}
+        <AssetIcon assetId={w.asset} size={28} color={r.color} />
+        <span className="kw-wtype">{t.dmgType}<b className="kw-watk">{w.atk}</b></span>
+        <span className="kw-sr">{w.name}</span>
+      </button>
+    </div>
   );
 }
+
+/* 武器の詳細(長押しで開く) */
+function WeaponInfoSheet({ w, cd, onClose }) {
+  const t = WEAPON_TYPES[w.type];
+  const r = rarityOf(w.rarity);
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 340, textAlign: "left" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <AssetIcon assetId={w.asset} size={26} color={r.color} />
+          <RarityName item={w} />
+        </div>
+        <h2 style={{ fontSize: 18, letterSpacing: ".06em" }}>{w.name}</h2>
+        <div className="kw-sub" style={{ marginBottom: 8 }}>
+          {t.label}・攻 {w.atk}・{t.dmgType}属性{cd > 0 ? `・再使用まで${cd}ターン` : ""}
+        </div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.8, color: "var(--paper)" }}>{t.desc}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          {t.tags.map((tag) => <span key={tag} className="kw-chip res">{tag}</span>)}
+        </div>
+        <div className="kw-actions">
+          <button className="kw-btn ghost" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 戦闘後の回復・バフのアイコン。タップで使う / 長押しで詳細(武器と同じ操作) */
+function QuickTile({ c, count, disabled, onUse, onInfo }) {
+  const timer = useRef(null);
+  const longFired = useRef(false);
+  const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  useEffect(() => clearTimer, []);
+  return (
+    <div className="kw-qslot"
+      onPointerDown={() => {
+        longFired.current = false;
+        clearTimer();
+        timer.current = setTimeout(() => { timer.current = null; longFired.current = true; onInfo(); }, LONG_PRESS_MS);
+      }}
+      onPointerUp={clearTimer}
+      onPointerLeave={() => { clearTimer(); longFired.current = false; }} onPointerCancel={() => { clearTimer(); longFired.current = false; }}
+      onContextMenu={(e) => e.preventDefault()}>
+      <button className="kw-panel kw-qtile" disabled={disabled}
+        aria-label={`${c.label}を使う(残り${count}個)`}
+        onClick={() => { if (longFired.current) { longFired.current = false; return; } if (!disabled) onUse(); }}>
+        <AssetIcon assetId={c.asset} size={26} color="#8fd39a" />
+        <span className="kw-qname">{c.label}</span>
+        <span className="kw-qcount">×{count}</span>
+      </button>
+    </div>
+  );
+}
+
+/* 道具の詳細(長押しで開く) */
+function ItemInfoSheet({ c, count, lines, onClose }) {
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 340, textAlign: "left" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <AssetIcon assetId={c.asset} size={26} color="#8fd39a" />
+          <span style={{ fontSize: 12, color: "var(--mist)" }}>所持 {count}個</span>
+        </div>
+        <h2 style={{ fontSize: 18, letterSpacing: ".06em" }}>{c.label}</h2>
+        <div style={{ fontSize: 13.5, lineHeight: 1.8, color: "var(--paper)", marginTop: 6 }}>
+          {lines.map((l, i) => <div key={i}>{l}</div>)}
+        </div>
+        <div className="kw-actions">
+          <button className="kw-btn ghost" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 見出しの「## 」。見出しの文字は字間を広げているので、「#」と「#」の間まで開いて「# #」に見えないよう、ここだけ字間を0にする。
+const Hash = () => <span style={{ letterSpacing: 0 }}>## </span>;
 
 function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
   const r = rarityOf(item.rarity) || RARITIES[0];
@@ -1643,7 +2097,7 @@ function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
       <div className="kw-cname">{item.name}</div>
       <div className="kw-cmeta">{meta}</div>
       {hint && <div className="kw-hint-diff" style={{ color: hint.up ? "#8fd39a" : hint.down ? "var(--paper-dim)" : "var(--hotaru)" }}>{hint.text}</div>}
-      {actionLabel && <div style={{ marginTop: 6, fontSize: 10, color: "var(--hotaru)", letterSpacing: ".12em" }}>{actionLabel}</div>}
+      {actionLabel && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--hotaru)", letterSpacing: ".12em" }}>{actionLabel}</div>}
     </button>
   );
 }
@@ -1750,6 +2204,8 @@ function starterState(meta, initialWeaponType = "dagger") {
   if (meta?.skills?.fateMemory2) inv.push(makeConsumable("spore"));
   if (meta?.skills?.startBerryB) inv.push(makeConsumable("berryBig"));
   if (meta?.skills?.startBerryB2) inv.push(makeConsumable("berryBig"));
+  if (meta?.skills?.fateMemory3) inv.push(makeConsumable("spore"));
+  if (meta?.skills?.startBerryB3) inv.push(makeConsumable("berryBig"));
   // 保護設定による自動ロックは新しく手に入る品だけが対象(継承品は引き継いだ状態のまま)。
   const lockNew = (it) => (it && !inheritedIds.has(it.id) ? autoLockItem(it, meta) : it);
   return {
@@ -1770,8 +2226,8 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
                            sleepDisabled, toggleSleep, openURL, manageConsent, consentApplicable, cssClass,
                            meta, toggleMetaFlag }) {
   const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center",
-                     padding: "8px 0", fontSize: 12, color: "var(--mist)", borderBottom: "1px solid rgba(157,180,166,.08)" };
-  const sectionLabel = { fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 10, marginTop: 4 };
+                     padding: "8px 0", fontSize: 13, color: "var(--mist)", borderBottom: "1px solid rgba(157,180,166,.08)" };
+  const sectionLabel = { fontSize: 11.5, letterSpacing: ".3em", color: "var(--mist)", marginBottom: 10, marginTop: 4 };
 
   return (
     <div className={`kw-overlay ${cssClass || ""}`} onClick={onClose}>
@@ -1783,7 +2239,7 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           <div style={sectionLabel}>音声</div>
           <div style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-              <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
+              <span style={{ fontSize: 13, color: "var(--mist)", letterSpacing: ".2em" }}>BGM</span>
               <span style={{ fontSize: 14, color: bgmVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
                 {bgmVolume === 0 ? "OFF" : `${bgmVolume}%`}
               </span>
@@ -1794,7 +2250,7 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           </div>
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-              <span style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
+              <span style={{ fontSize: 13, color: "var(--mist)", letterSpacing: ".2em" }}>効果音 (SE)</span>
               <span style={{ fontSize: 14, color: seVolume === 0 ? "var(--mist)" : "var(--hotaru)", fontWeight: 700 }}>
                 {seVolume === 0 ? "OFF" : `${seVolume}%`}
               </span>
@@ -1811,7 +2267,7 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           <div style={rowStyle}>
             <span style={{ letterSpacing: ".05em" }}>画面スリープ防止</span>
             <button className={`kw-btn ${sleepDisabled ? "primary" : "ghost"}`}
-              style={{ padding: "4px 14px", fontSize: 11, minWidth: 44 }}
+              style={{ padding: "4px 14px", fontSize: 12, minWidth: 44 }}
               onClick={toggleSleep}>
               {sleepDisabled ? "ON" : "OFF"}
             </button>
@@ -1822,23 +2278,26 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
         {toggleMetaFlag && (
           <div style={{ marginTop: 24, borderTop: "1px solid rgba(157,180,166,.1)", paddingTop: 16 }}>
             <div style={sectionLabel}>アイテムの保護</div>
-            <div style={{ fontSize: 10, color: "rgba(157,180,166,.7)", lineHeight: 1.7, marginBottom: 8 }}>
-              ONにすると、これから拾う該当アイテムが自動でロックされます。今持っている品のロック状態は、ON/OFFを切り替えても変わりません。ロックは死亡後の継承でも引き継がれます。手放したい時は袋の中の鍵アイコンをもう一度押せば、その品だけロックを解除できます。
+            <div style={{ fontSize: 13, color: "var(--mist)", lineHeight: 1.85, marginBottom: 8 }}>
+              ONにすると、これから拾うアイテムが自動でロックされます。<br />
+              ・今持っているアイテムのロックは、ON/OFFを切り替えても変わりません。<br />
+              ・ロックは、死亡後の継承にも引き継がれます。<br />
+              ・手放したいときは、袋の鍵アイコンをもう一度押すと、そのアイテムだけ解除できます。
             </div>
             <div style={rowStyle}>
               <span style={{ letterSpacing: ".05em" }}>回復アイテムを保護</span>
               <button className={`kw-btn ${meta?.protectHeals ? "primary" : "ghost"}`}
-                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44 }}
+                style={{ padding: "4px 14px", fontSize: 12, minWidth: 44 }}
                 onClick={() => toggleMetaFlag("protectHeals")}>
                 {meta?.protectHeals ? "ON" : "OFF"}
               </button>
             </div>
             <div style={{ ...rowStyle, borderBottom: "none" }}>
               <span style={{ letterSpacing: ".05em" }}>希少アイテムを保護
-                <br /><span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(エピック・伝説の武具、宝樹の雫、苔の心臓)</span>
+                <br /><span style={{ fontSize: 11, color: "var(--mist)" }}>(エピック・伝説の武具、宝樹の雫、苔の心臓)</span>
               </span>
               <button className={`kw-btn ${meta?.protectRareItems ? "primary" : "ghost"}`}
-                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44, flexShrink: 0 }}
+                style={{ padding: "4px 14px", fontSize: 12, minWidth: 44, flexShrink: 0 }}
                 onClick={() => toggleMetaFlag("protectRareItems")}>
                 {meta?.protectRareItems ? "ON" : "OFF"}
               </button>
@@ -1852,10 +2311,10 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
             <div style={sectionLabel}>確認</div>
             <div style={{ ...rowStyle, borderBottom: "none" }}>
               <span style={{ letterSpacing: ".05em" }}>拾い忘れの確認
-                <br /><span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(戦利品が残ったまま進むとき)</span>
+                <br /><span style={{ fontSize: 11, color: "var(--mist)" }}>(戦利品が残ったまま進むとき)</span>
               </span>
               <button className={`kw-btn ${meta?.confirmLeaveDrops !== false ? "primary" : "ghost"}`}
-                style={{ padding: "4px 14px", fontSize: 11, minWidth: 44, flexShrink: 0 }}
+                style={{ padding: "4px 14px", fontSize: 12, minWidth: 44, flexShrink: 0 }}
                 onClick={() => toggleMetaFlag("confirmLeaveDrops")}>
                 {meta?.confirmLeaveDrops !== false ? "ON" : "OFF"}
               </button>
@@ -1868,7 +2327,7 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
           <div style={sectionLabel}>プライバシー</div>
           <div style={rowStyle}>
             <span style={{ letterSpacing: ".05em" }}>プライバシーポリシー</span>
-            <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 11 }}
+            <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 12 }}
               onClick={() => openURL?.("https://eik-awa.github.io/privacy_policy/")}>
               開く <ExternalLink size={11} style={{ display: "inline", marginLeft: 3, verticalAlign: -1 }} />
             </button>
@@ -1878,9 +2337,9 @@ function SettingsOverlay({ onClose, bgmVolume, seVolume, changeBgmVolume, change
               <span style={{ letterSpacing: ".05em", maxWidth: 210, lineHeight: 1.6 }}>
                 広告の同意設定を管理
                 <br />
-                <span style={{ fontSize: 9, color: "rgba(157,180,166,.7)" }}>(パーソナライズ広告への同意)</span>
+                <span style={{ fontSize: 11, color: "var(--mist)" }}>(パーソナライズ広告への同意)</span>
               </span>
-              <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 11, flexShrink: 0 }}
+              <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 12, flexShrink: 0 }}
                 onClick={() => {
                   // 設定オーバーレイ(WebView側)を閉じてから、少し間を置いてネイティブの同意画面を開く。
                   // 開いたまま重ねると、同意画面側のタップが正しく反応しないことがあるため。
@@ -1924,14 +2383,28 @@ const SKILL_ICON_MAP = {
   goldSenseI: Sparkles, goldSenseII: Sparkles, goldSenseIII: Sparkles, goldSenseIV: Sparkles,
   luckyEyeI: PiggyBank, luckyEyeII: PiggyBank,
   startAntidote: Leaf, startAntidote2: Leaf, startBerryS: Apple, startBerryS2: Apple,
-  fateMemory: Cherry, fateMemory2: Cherry, startBerryB: Heart, startBerryB2: Heart,
+  fateMemory: Cherry, fateMemory2: Cherry, startBerryB: Heart, startBerryB2: Heart, fateMemory3: Cherry, startBerryB3: Heart,
+  warmUp: Flame, warmUp2: Flame, warmUp3: Flame, bladeSoul: Sword, magicDepth: Wand2, critUp2: Zap,
+  vitalityIII: Heart, specialHp2: Heart, guardMastery2: Shield, regen2: Sprout, dodgeIII: Wind, luckyEyeIII: PiggyBank,
+  rushAtk1: Flame, rushAtk2: Flame, rushAtk3: Flame, rushAtk4: Flame, rushAtk5: Flame, rushBreak: Swords, rushBreak2: Swords, rushEscort: Crosshair, rushEscort2: Crosshair,
+  rushHp1: Heart, rushHp2: Shield, rushHp3: Shield, rushGuard: Shield, rushDr1: Shield, rushDr2: Shield, rushDr3: Shield,
+  rushRest1: Sprout, rushRest2: Sprout, rushChoice: Eye, rushChoice2: Eye, rushStartBerry: Apple, rushRespawn1: Moon, rushRespawn2: Moon,
+  rushWpn_dagger: Sword, rushWpn_greatsword: Swords, rushWpn_bow: Crosshair, rushWpn_axe: Axe,
+  rushWpn_spear: Navigation2, rushWpn_book: BookOpen, rushWpn_staff: Wand2, rushWpn_instrument: Music,
+  rushCoreOpen: Eye, rushCoreLeak: Crosshair, rushCoreLeak2: Crosshair, rushLoan: Package, rushReviveHp: Heart,
 };
-const CAT_ICON_MAP = { "戦闘拡張": Swords, "生存": Heart, "探索": Leaf, "転生": Moon };
+const CAT_ICON_MAP = { "戦闘拡張": Swords, "生存": Heart, "探索": Leaf, "転生": Moon, [RUSH_CATEGORY]: Crown };
 const SKILL_BY_ID = Object.fromEntries(SKILL_TREE.map((s) => [s.id, s]));
-const SKILL_TREE_CATEGORIES = [...new Set(SKILL_TREE.map((s) => s.category))];
+// 通常のスキルツリーのカテゴリ(踏破者向けは別タブなので含めない)。
+const SKILL_TREE_CATEGORIES = [...new Set(SKILL_TREE.map((s) => s.category))].filter((c) => c !== RUSH_CATEGORY);
 
-function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
+// embedded: 袋のタブの中に埋め込んで使う(背景・タイトル・閉じるボタンなしで、親の高さいっぱいに広がる)。
+function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund, embedded = false }) {
   const [selectedId, setSelectedId] = useState(null);
+  // 百層を踏破した人にだけ、踏破者向けのタブを出す(未踏破の人には、存在自体を見せない)。
+  const [tab, setTab] = useState("normal");
+  const hasRushTab = (meta?.clears || 0) >= 1;
+  const showRush = hasRushTab && tab === "rush";
   const skills = meta?.skills || {};
   const dewBank = meta?.dewBank || 0;
 
@@ -1973,7 +2446,9 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
     return result;
   }
 
-  return (
+  const frame = (kids) => embedded ? (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, fontFamily: "var(--font-body)" }}>{kids}</div>
+  ) : (
     <div style={{
       position: "fixed", inset: 0, zIndex: 60,
       background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center",
@@ -1987,30 +2462,55 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
         width: "calc(100% - 32px)", maxWidth: 480,
         maxHeight: "82vh",
         overflow: "hidden",
-      }}>
+      }}>{kids}</div>
+    </div>
+  );
+
+  return frame(<>
       {/* ── ヘッダー ── */}
       <div style={{
         flexShrink: 0,
-        padding: "12px 18px 10px",
+        padding: embedded ? "12px 18px 8px" : "12px 18px 10px",
         borderBottom: "1px solid rgba(157,180,166,.12)",
-        background: "rgba(10,18,14,.7)",
+        background: embedded ? "transparent" : "rgba(10,18,14,.7)",
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
       }}>
         <div>
-          <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 20, letterSpacing: ".2em", color: "var(--paper)" }}>スキルツリー</div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4,
+          {!embedded && <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 20, letterSpacing: ".2em", color: "var(--paper)" }}>スキルツリー</div>}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: embedded ? 0 : 4,
             padding: "2px 10px", borderRadius: 12,
             background: "rgba(232,180,74,.1)", border: "1px solid rgba(232,180,74,.3)" }}>
             <Sparkles size={10} color="var(--hotaru)" />
-            <span style={{ fontSize: 11, color: "var(--hotaru)", fontWeight: 700 }}>{dewBank}</span>
-            <span style={{ fontSize: 10, color: "rgba(232,180,74,.7)" }}>精の結晶</span>
+            <span style={{ fontSize: 12, color: "var(--hotaru)", fontWeight: 700 }}>{dewBank}</span>
+            <span style={{ fontSize: 11.5, color: "rgba(232,180,74,.7)" }}>精の結晶</span>
           </div>
         </div>
-        <button className="kw-btn ghost" style={{ padding: "6px 14px", flexShrink: 0 }} onClick={onClose}><X size={14} /></button>
+        {!embedded && <button className="kw-btn ghost" style={{ padding: "6px 14px", flexShrink: 0 }} onClick={onClose}><X size={14} /></button>}
       </div>
+
+      {/* ── タブ(百層踏破後だけ表示) ── */}
+      {hasRushTab && (
+        <div style={{ flexShrink: 0, display: "flex", gap: 6, padding: "8px 14px 0" }}>
+          {[["normal", "通常"], [ "rush", "踏破" ]].map(([id, label]) => (
+            <button key={id} className={`kw-btn ${tab === id ? "primary" : "ghost"}`}
+              style={{ padding: "5px 18px", fontSize: 12, flex: 1 }}
+              onClick={() => { setTab(id); setSelectedId(null); }}>
+              {id === "rush" && <Crown size={11} style={{ display: "inline", marginRight: 4, verticalAlign: "-1px" }} />}{label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── スキルリスト(スクロール) ── */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch", padding: "12px 20px 6px 14px" }}>
+
+        {showRush && (
+          <div style={{ fontSize: 12, color: "var(--mist)", lineHeight: 1.7, marginBottom: 12, padding: "8px 12px", borderRadius: 8,
+            background: "rgba(232,180,74,.06)", border: "1px solid rgba(232,180,74,.2)" }}>
+            踏破者のスキルです。効果は<b style={{ color: "var(--hotaru)" }}>ボスラッシュの中だけ</b>で働き、通常の冒険には影響しません。
+            精の結晶は、ボスラッシュの報酬で手に入ります。
+          </div>
+        )}
 
         {/* 結晶還元通知 */}
         {!!meta?.skillRefundNotice && (
@@ -2019,14 +2519,14 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
             padding: "8px 12px", marginBottom: 14, borderRadius: 8,
             background: "rgba(232,180,74,.12)", border: "1px solid rgba(232,180,74,.35)",
           }}>
-            <div style={{ fontSize: 10, color: "var(--hotaru)", lineHeight: 1.6 }}>
+            <div style={{ fontSize: 11.5, color: "var(--hotaru)", lineHeight: 1.6 }}>
               スキルツリーが再構成されました。失効したスキルの分、結晶を{meta.skillRefundNotice}個還元しました。
             </div>
-            <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 10, flexShrink: 0 }} onClick={onDismissRefund}>OK</button>
+            <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 11.5, flexShrink: 0 }} onClick={onDismissRefund}>OK</button>
           </div>
         )}
 
-        {SKILL_TREE_CATEGORIES.map((cat) => {
+        {(showRush ? [RUSH_CATEGORY] : SKILL_TREE_CATEGORIES).map((cat) => {
           const CatIcon = CAT_ICON_MAP[cat] || Gem;
           const rows = buildRows(cat);
           return (
@@ -2037,7 +2537,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                   background: "rgba(94,130,101,.18)", flexShrink: 0 }}>
                   <CatIcon size={12} color="var(--mist)" strokeWidth={1.5} />
                 </div>
-                <span style={{ fontSize: 10, letterSpacing: ".3em", color: "var(--mist)", whiteSpace: "nowrap" }}>{cat}</span>
+                <span style={{ fontSize: 11.5, letterSpacing: ".3em", color: "var(--mist)", whiteSpace: "nowrap" }}>{cat}</span>
                 <div style={{ flex: 1, height: 1, background: "linear-gradient(to right, rgba(157,180,166,.2), transparent)" }} />
               </div>
 
@@ -2078,13 +2578,13 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                           {revealed ? skill.name : "???"}
                         </div>
                         {revealed && (
-                          <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 1, lineHeight: 1.45, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {skill.desc.length > 16 - depth * 2 ? skill.desc.slice(0, 16 - depth * 2) + "…" : skill.desc}
+                          <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 2, lineHeight: 1.45, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                            {skill.desc}
                           </div>
                         )}
                       </div>
                       <div style={{
-                        fontSize: 9, letterSpacing: ".08em", padding: "2px 7px", borderRadius: 3, flexShrink: 0,
+                        fontSize: 11, letterSpacing: ".08em", padding: "2px 7px", borderRadius: 3, flexShrink: 0,
                         background: owned ? "rgba(232,180,74,.18)" : buyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
                         color: accent,
                       }}>
@@ -2106,7 +2606,7 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
           padding: "11px 16px", background: "rgba(10,18,14,.7)",
         }}>
           {!selectedRevealed ? (
-            <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", padding: "4px 0" }}>
+            <div style={{ textAlign: "center", fontSize: 12, color: "var(--mist)", padding: "4px 0" }}>
               <div>??? {!skillUnlocked(selected, meta) ? skillUnlockText(selected) : "前提スキルを習得すると解放されます。"}</div>
               {(() => {
                 // 前提スキルのうち、すでに画面に見えているもの(習得済み、または「???」でないもの)だけを
@@ -2144,27 +2644,27 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
                     {selected.name}
                   </div>
                   <span style={{
-                    fontSize: 9, padding: "2px 8px", borderRadius: 3, flexShrink: 0, letterSpacing: ".08em",
+                    fontSize: 11, padding: "2px 8px", borderRadius: 3, flexShrink: 0, letterSpacing: ".08em",
                     background: selectedOwned ? "rgba(232,180,74,.18)" : selectedBuyable ? "rgba(143,211,154,.15)" : "rgba(157,180,166,.1)",
                     color: selectedOwned ? "var(--hotaru)" : selectedBuyable ? "#8fd39a" : "var(--mist)",
                   }}>
                     {selectedOwned ? "✦ 習得済" : `${selected.cost} 結晶`}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--mist)", lineHeight: 1.6, marginTop: 3 }}>{selected.desc}</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", lineHeight: 1.6, marginTop: 3 }}>{selected.desc}</div>
                 {selected.requiresAll && (
-                  <div style={{ fontSize: 9, color: "var(--mist)", marginTop: 3, opacity: .7 }}>
+                  <div style={{ fontSize: 11, color: "var(--mist)", marginTop: 3, opacity: .7 }}>
                     前提: {selected.requiresAll.map(pid => SKILL_BY_ID[pid]?.name || pid).join(" ・ ")}
                   </div>
                 )}
                 {selectedBuyable && (
                   <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
-                    <button className="kw-btn primary" style={{ padding: "5px 18px", fontSize: 11 }}
+                    <button className="kw-btn primary" style={{ padding: "5px 18px", fontSize: 12 }}
                       onClick={() => onBuy(selected.id)}>この結晶で習得する</button>
                   </div>
                 )}
                 {!selectedOwned && !selectedBuyable && dewBank < (selected.cost || 0) && selectedRevealed && (
-                  <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 4 }}>
+                  <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 4 }}>
                     結晶が足りません（あと{selected.cost - dewBank}個）。
                   </div>
                 )}
@@ -2175,17 +2675,69 @@ function SkillTreeOverlay({ meta, onClose, onBuy, onDismissRefund }) {
       )}
 
       {/* ── フッター ── */}
-      <div style={{ flexShrink: 0, padding: "8px 18px 12px", display: "flex", justifyContent: "center", borderTop: "1px solid rgba(157,180,166,.08)" }}>
-        <button className="kw-btn ghost" style={{ padding: "9px 48px" }} onClick={onClose}>閉じる</button>
-      </div>
-      </div>
-    </div>
-  );
+      {!embedded && (
+        <div style={{ flexShrink: 0, padding: "8px 18px 12px", display: "flex", justifyContent: "center", borderTop: "1px solid rgba(157,180,166,.08)" }}>
+          <button className="kw-btn ghost" style={{ padding: "9px 48px" }} onClick={onClose}>閉じる</button>
+        </div>
+      )}
+  </>);
 }
 
 /* ------------------------------------------------------------
    図鑑 オーバーレイ
 ------------------------------------------------------------ */
+// ボスラッシュで休息のたびに選んだ強化の一覧。選んだものは強調、まだのものは薄く表示する。
+// rush.taken = { 強化ID: 選んだ回数 }。 atk/dr/hp は累計の割合(rush.atk など)も合わせて見せる。
+function RushBuffsOverlay({ rush, onClose }) {
+  const taken = rush?.taken || {};
+  const total = Object.values(taken).reduce((a, b) => a + b, 0);
+  const sums = [
+    { label: "火力", text: `+${Math.round((rush?.atk || 0) * 100)}%`, on: (rush?.atk || 0) > 0 },
+    { label: "被ダメージ", text: `-${Math.round((rush?.dr || 0) * 100)}%`, on: (rush?.dr || 0) > 0 },
+    { label: "最大HP", text: `+${Math.round((rush?.hp || 0) * 100)}%`, on: (rush?.hp || 0) > 0 },
+  ];
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <h2 style={{ textAlign: "center", color: "var(--hotaru)" }}>強 化 一 覧</h2>
+        <div className="kw-sub" style={{ textAlign: "center" }}>
+          休息で選んだ強化({total}回)。光っているものが選択済みです。
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {sums.map((x) => (
+            <div key={x.label} style={{ flex: 1, textAlign: "center", padding: "6px 4px", borderRadius: 6,
+              border: `1px solid ${x.on ? "var(--hotaru)" : "var(--moss-lt)"}`, opacity: x.on ? 1 : .55 }}>
+              <div style={{ fontSize: 11.5, color: "var(--mist)" }}>{x.label}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: x.on ? "var(--hotaru)" : "var(--paper-dim)" }}>{x.text}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Object.keys(RUSH_BUFFS).map((id) => {
+            const n = taken[id] || 0;
+            return (
+              <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8,
+                border: `1px solid ${n ? "var(--hotaru)" : "var(--moss-lt)"}`,
+                background: n ? "rgba(232,180,74,.10)" : "transparent", opacity: n ? 1 : .5 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: n ? "var(--hotaru)" : "var(--paper)" }}>{RUSH_BUFFS[id].label}</div>
+                  <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 2 }}>{RUSH_BUFFS[id].desc}</div>
+                </div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", color: n ? "var(--hotaru)" : "var(--paper-dim)" }}>
+                  {n ? `✓ ×${n}` : "未選択"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ textAlign: "center", marginTop: 14 }}>
+          <button className="kw-btn ghost" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BestiaryOverlay({ meta, onClose }) {
   const [chIdx, setChIdx] = useState(null); // null = 章選択, number = 敵グリッド
   const [selected, setSelected] = useState(null); // { bookId, isBoss }
@@ -2264,14 +2816,14 @@ function BestiaryOverlay({ meta, onClose }) {
               <IconC size={24} color={isBoss ? "var(--hotaru)" : "var(--paper)"} strokeWidth={1.5} />
             </div>
             <div>
-              {isBoss && <div style={{ fontSize: 9, letterSpacing: ".25em", color: "var(--hotaru)", marginBottom: 2 }}>ボス</div>}
+              {isBoss && <div style={{ fontSize: 11, letterSpacing: ".25em", color: "var(--hotaru)", marginBottom: 2 }}>ボス</div>}
               <div style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, letterSpacing: ".06em",
                 color: isBoss ? "var(--hotaru)" : "var(--paper)" }}>{b.name}</div>
             </div>
           </div>
-          {b.note && <div style={{ fontSize: 11, color: "var(--mist)", lineHeight: 1.7, marginBottom: 4 }}>{b.note}</div>}
+          {b.note && <div style={{ fontSize: 12, color: "var(--mist)", lineHeight: 1.7, marginBottom: 4 }}>{b.note}</div>}
           <AffinityChips bookId={bookId} weak={b.weak} resist={b.resist} />
-          <button className="kw-btn ghost" style={{ marginTop: 14, padding: "4px 14px", fontSize: 11, width: "100%" }}
+          <button className="kw-btn ghost" style={{ marginTop: 14, padding: "4px 14px", fontSize: 12, width: "100%" }}
             onClick={() => setSelected(null)}>閉じる</button>
         </div>
       </div>
@@ -2291,7 +2843,7 @@ function BestiaryOverlay({ meta, onClose }) {
             <h2 style={{ letterSpacing: ".2em" }}>図 鑑</h2>
             {chIdx !== null
               ? <div className="kw-sub">
-                  <button style={{ background: "none", border: "none", color: "var(--mist)", fontSize: 11, cursor: "pointer", padding: 0, letterSpacing: ".05em" }}
+                  <button style={{ background: "none", border: "none", color: "var(--mist)", fontSize: 12, cursor: "pointer", padding: 0, letterSpacing: ".05em" }}
                     onClick={() => { setChIdx(null); setSelected(null); }}>
                     ← 章一覧へ
                   </button>
@@ -2299,14 +2851,14 @@ function BestiaryOverlay({ meta, onClose }) {
               : <div className="kw-sub">発見: {totalSeen} / {totalEnemies}</div>
             }
           </div>
-          <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 11 }} onClick={onClose}>閉じる</button>
+          <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 12 }} onClick={onClose}>閉じる</button>
         </div>
 
         {/* 章選択 */}
         {chIdx === null && (
           <div style={{ flex: 1, overflowY: "auto" }}>
             {clearedStages.length === 0 ? (
-              <div style={{ textAlign: "center", color: "var(--mist)", fontSize: 12, padding: "30px 0" }}>
+              <div style={{ textAlign: "center", color: "var(--mist)", fontSize: 13, padding: "30px 0" }}>
                 まだ図鑑に記録がありません。<br />章をクリアすると解放されます。
               </div>
             ) : (
@@ -2319,9 +2871,9 @@ function BestiaryOverlay({ meta, onClose }) {
                     <button key={i} className="kw-bestiary-ch-card" onClick={() => setChIdx(i)}>
                       <StageBackdrop floor={i * 10 + 1} preview={true} />
                       <div className="kw-bestiary-ch-info">
-                        <div style={{ fontSize: 9, color: "rgba(157,180,166,.7)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
+                        <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
                         <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)", lineHeight: 1.3 }}>{st.name}</div>
-                        <div style={{ fontSize: 9, color: "#8fd39a", marginTop: 2 }}>発見 {stSeen}/{stTotal}</div>
+                        <div style={{ fontSize: 11, color: "#8fd39a", marginTop: 2 }}>発見 {stSeen}/{stTotal}</div>
                       </div>
                     </button>
                   );
@@ -2337,7 +2889,7 @@ function BestiaryOverlay({ meta, onClose }) {
             <div className="kw-bestiary-grid">
               {uniqueEnemies(chIdx).map((bookId) => <EntryCell key={bookId} bookId={bookId} isBoss={false} />)}
             </div>
-            <div className="kw-bestiary-boss-sep">── ボス ──</div>
+            <div className="kw-bestiary-boss-sep"><Hash />ボス</div>
             <div style={{ display: "flex", justifyContent: "center" }}>
               <div style={{ width: "calc(20% - 3px)" }}>
                 <EntryCell isBoss={true} />
@@ -2388,7 +2940,7 @@ export default function KiriwatariNoMori() {
   const hasUncollectedReward = (phase) => phase === "clear" || phase === "reward";
   const saveRunTimerRef = useRef(null);
   const scheduleSaveRun = (s) => {
-    if (!s || !s.floor || s.phase === "dead") return;
+    if (!s || !s.floor || s.phase === "dead" || s.phase === "rushOver") return;
     if (saveRunTimerRef.current) clearTimeout(saveRunTimerRef.current);
     const snap = s;
     saveRunTimerRef.current = setTimeout(() => {
@@ -2403,7 +2955,7 @@ export default function KiriwatariNoMori() {
   };
   const flushSaveRun = (s) => {
     if (saveRunTimerRef.current) { clearTimeout(saveRunTimerRef.current); saveRunTimerRef.current = null; }
-    if (!s || !s.floor || s.phase === "dead") return;
+    if (!s || !s.floor || s.phase === "dead" || s.phase === "rushOver") return;
     saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv,
       s.cds, s.lastRareSeen, s.orbBagBonus, enemiesToSave(s),
       hasUncollectedReward(s.phase) ? s.phase : null,
@@ -2427,16 +2979,23 @@ export default function KiriwatariNoMori() {
     try { const v = localStorage.getItem("kw-se-v");  return v !== null ? Math.max(0, Math.min(100, parseInt(v))) : 80; } catch { return 80; }
   });
   const [savedRun, setSavedRun] = useState(null);
+  // 中断中のボスラッシュ(通常の冒険の中断データとは別枠)。
+  const [savedRush, setSavedRush] = useState(null);
   const [discardConfirm, setDiscardConfirm] = useState(null); // null or item to discard
   // 武器スロットの並び替え: スクロールと競合するドラッグをやめ、武器だけのポップアップで
   // 「入れ替えたい2枠を順にタップ」する方式にする。
   const [reorderPopup, setReorderPopup] = useState(false);
+  // 袋の中のタブ(null = 状況に応じた既定のタブ)。袋を閉じたら既定に戻す。
+  const [bagTab, setBagTab] = useState(null);
   const [reorderSel, setReorderSel] = useState(null);
   // ポップアップ内のドラッグ: タップ(ほぼ動かさない)なら選択、動かして別スロットの上で離せば入れ替え。
   const [popDrag, setPopDrag] = useState(null); // { idx, x0, y0, dx, dy, over }
   const popSlotRefs = useRef({});
   // 「遊び方」画面のタブ(章ごとにボタンで切り替え)。
   const [guideTab, setGuideTab] = useState("battle");
+  // タブを切り替えたら、本文のスクロールは先頭に戻す(前のタブの途中から始まらないように)。
+  const guideScrollRef = useRef(null);
+  useEffect(() => { if (guideScrollRef.current) guideScrollRef.current.scrollTop = 0; }, [guideTab]);
   // 不具合お詫び配布(精の結晶 x5)。meta 読み込み後、未受け取りなら true にする。
   const [showCompensation, setShowCompensation] = useState(false);
 
@@ -2448,10 +3007,13 @@ export default function KiriwatariNoMori() {
   // 設定画面に「広告の同意設定を管理」の項目自体を出さない。appReady 応答で確定するまでは false。
   const [consentApplicable, setConsentApplicable] = useState(false);
   // 起動後1回だけ表示するイベント告知バナー(イベント期間外は false で初期化)
+  const [rushBuffsOpen, setRushBuffsOpen] = useState(false); // ボスラッシュの強化一覧
+  const [weaponInfoId, setWeaponInfoId] = useState(null); // 武器の長押し詳細
+  const [itemInfoId, setItemInfoId] = useState(null); // 戦闘後の道具アイコンの長押し詳細(itemId)
   const [showEventBanner, setShowEventBanner] = useState(() => {
     if (!EVENT_ENABLED) return false;
-    const today = eventJstDay(Date.now());
-    return today >= EVENT_START && today <= EVENT_END;
+    const now = Date.now();
+    return now >= EVENT_START_MS && now <= EVENT_END_MS;
   });
 
   useEffect(() => { bgmVolRef.current = bgmVolume; }, [bgmVolume]);
@@ -2467,23 +3029,6 @@ export default function KiriwatariNoMori() {
     } catch {}
     return () => { delete window.__setConsentApplicable__; };
   }, []);
-
-  // デバッグ用: ネイティブ側が「デバッグ端末」と判定した端末でだけ、起動時に精の結晶を指定数まで引き上げる
-  // (Swift の DebugDeviceConfig.debugDewBank。nil なら呼ばれない)。meta の読み込み前に呼ばれても
-  // 取りこぼさないよう、いったん ref に預けて meta が揃ってから反映する。既に指定数以上なら何もしない。
-  const debugDewRef = useRef(null);
-  const applyDebugDew = () => {
-    const n = debugDewRef.current;
-    if (!n || !metaRef.current) return;
-    debugDewRef.current = null;
-    if ((metaRef.current.dewBank || 0) >= n) return;
-    updateMeta((m) => ({ ...m, dewBank: n }));
-  };
-  useEffect(() => {
-    window.__debugSetDewBank__ = (n) => { debugDewRef.current = Number(n) || null; applyDebugDew(); };
-    return () => { delete window.__debugSetDewBank__; };
-  }, []);
-  useEffect(() => { applyDebugDew(); }, [meta]);
 
   // 自己ベスト等を Firebase のユーザープロパティへ同期する(起動時・死亡時・章クリア時に発火)
   useEffect(() => {
@@ -2556,7 +3101,7 @@ export default function KiriwatariNoMori() {
       ? "通信状態をご確認のうえ、もう一度お試しください。"
       : "広告を読み込めませんでした。広告ブロック機能などをお使いの場合は、一時的にオフにしてお試しください。";
     return (
-      <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--danger)", marginTop: 8, lineHeight: 1.75, ...(style || {}) }}>
+      <div style={{ textAlign: "center", fontSize: 12, color: "var(--danger)", marginTop: 8, lineHeight: 1.75, ...(style || {}) }}>
         {text}
       </div>
     );
@@ -2619,10 +3164,34 @@ export default function KiriwatariNoMori() {
           const mx = maxHpOf(s0, metaRef.current);
           const revived = { ...s0.player, hp: mx, poison: 0, atkDown: 0 };
           const ns = pushLog({ ...s0, phase: "battle", busy: false, rewardAdPending: null, reviveUsed: true, player: revived },
-            "広告の加護で、満身の力で息を吹き返した!", true);
+            "広告の加護を受け、満身の力で息を吹き返した!", true);
           setG(ns);
           gRef.current = ns;
           flushSaveRun(ns); // 復活後の状態を即保存(再起動しても復活が反映される)
+        }
+      } else if (contextId === "rushRevive") {
+        // ボスラッシュ: 復活オファー画面のままのときだけ。HPを一部取り戻し、その戦いを続ける(1挑戦に1度)。
+        const s0 = gRef.current;
+        if (s0.rewardAdPending === "rushRevive" && s0.phase === "reviveOffer" && s0.rush && !s0.rush.reviveUsed) {
+          const mx = maxHpOf(s0, metaRef.current);
+          const pct = Math.min(1, RUSH.reviveHpPct + skillEffectTotal(metaRef.current?.skills, "rushReviveHp"));
+          const revived = { ...s0.player, hp: Math.max(1, Math.round(mx * pct)), poison: 0, weakT: 0, bagSealT: 0, guardSealT: 0 };
+          const ns = pushLog({ ...s0, phase: "battle", busy: false, rewardAdPending: null, player: revived, rush: { ...s0.rush, reviveUsed: true } },
+            "広告の加護で、息を吹き返した!", true);
+          setG(ns);
+          gRef.current = ns;
+          flushSaveRun(ns);
+        }
+      } else if (contextId === "rushCrystal") {
+        // ボスラッシュの結果: 精の結晶を追加で受け取る(1回)。
+        const s0 = gRef.current;
+        const rr = s0.rushResult;
+        if (s0.rewardAdPending === "rushCrystal" && s0.phase === "rushOver" && rr && !rr.adClaimed) {
+          const bonus = Math.max(1, Math.ceil(rr.crystals * RUSH.adCrystalPct));
+          updateMeta((mr) => ({ ...mr, dewBank: (mr.dewBank || 0) + bonus }));
+          const ns = { ...s0, rewardAdPending: null, rushResult: { ...rr, adClaimed: true, adBonus: bonus } };
+          setG(ns);
+          gRef.current = ns;
         }
       } else if (contextId === "eventDew") {
         const s0 = gRef.current;
@@ -2755,6 +3324,7 @@ export default function KiriwatariNoMori() {
 
   // タイトルへ戻ったら進行中の非同期シーケンスを無効化する(S2-2)
   useEffect(() => { if (g.screen === "title") bumpSeq(); }, [g.screen]);
+  useEffect(() => { if (!g.bag) setBagTab(null); }, [g.bag]);
 
   // busy 固着の保険: 戦闘中に状態変化が 3 秒途切れたら操作不能を解除する。
   // 攻撃・敵ターンの setG は最長でも 0.65 秒以内ごとに走るので、3 秒無変化 = 異常。
@@ -2766,6 +3336,13 @@ export default function KiriwatariNoMori() {
     }, 3000);
     return () => clearTimeout(id);
   }, [g]);
+
+  // 次の戦闘・次のノード・休息へ移ったら、敵エリアのスクロール位置を先頭に戻す(前の戦闘のスクロールを引き継がない)
+  const fieldRef = useRef(null);
+  const fieldKey = `${g.floor}|${g.node}|${g.phase}|${g.rush ? g.rush.idx : ""}`;
+  useEffect(() => {
+    if (fieldRef.current) fieldRef.current.scrollTop = 0;
+  }, [fieldKey]);
 
   // 新しいログが追加されたら自動で末尾へスクロール
   useEffect(() => {
@@ -2809,7 +3386,10 @@ export default function KiriwatariNoMori() {
       // 不具合お詫び配布のポップアップは終了した(新規インストールにも出てしまうため、もう出さない)。
       // 受け取り処理(claimCompensationDew)と meta.compensationDewClaimed は互換のため残している。
     });
-    loadRun().then((run) => { if (run && (run.floor || run.phase === "dead")) setSavedRun(run); });
+    loadRun().then((run) => {
+      if (run && (run.floor || run.phase === "dead")) setSavedRun(run);
+    });
+    loadRun(RUSH_SAVE_KEY).then((run) => { if (run && run.rush && Number.isInteger(run.rush.idx) && run.rush.idx >= 0 && run.rush.idx < RUSH_TOTAL) setSavedRush(run); });
   }, []);
 
   // 不具合お詫びの精の結晶を受け取る(1回きり)。
@@ -2820,6 +3400,7 @@ export default function KiriwatariNoMori() {
   }
 
   const invCap = invCapOf(meta, g?.orbBagBonus || 0);
+  const bagOverNow = g && g.screen === "run" ? bagOver(g, invCap) : 0; // 上限を超えて持ち込んでいる個数(0なら進める)
 
   async function buySkill(skillId) {
     const m0 = metaRef.current;
@@ -2863,9 +3444,13 @@ export default function KiriwatariNoMori() {
     const base = Object.values(st.armor).reduce((a, x) => a + (x ? x.def : 0), 0);
     return Math.round(base * (1 + skillEffectTotal(m?.skills, "defPct")));
   };
-  const maxHpOf = (st, m = meta) => BASE_HP + (m?.bonusHp || 0) +
-    skillEffectTotal(m?.skills, "maxHp") +
-    Object.values(st.armor).reduce((a, x) => a + (x ? x.hp : 0), 0);
+  const maxHpOf = (st, m = meta) => {
+    const base = BASE_HP + (m?.bonusHp || 0) +
+      skillEffectTotal(m?.skills, "maxHp") +
+      Object.values(st.armor).reduce((a, x) => a + (x ? x.hp : 0), 0);
+    // ボスラッシュ中だけ、踏破者のスキルと休息で選んだ強化による最大HPの上乗せ(通常の冒険では st.rush が無い)。
+    return st.rush ? Math.round(base * (1 + skillEffectTotal(m?.skills, "rushMaxHpPct") + (st.rush.hp || 0))) : base;
+  };
 
   const pushLog = (st, text, strong = false) =>
     ({ ...st, logs: [...st.logs.slice(-29), { text, strong, k: uid() }] });
@@ -2990,6 +3575,181 @@ export default function KiriwatariNoMori() {
     const padded = [...weapons];
     while (padded.length < want) padded.push(null);
     return padded;
+  }
+
+  /* ---------- ボスラッシュ ---------- */
+  // 百層踏破後に解放される挑戦。第1〜10章のボスを、固定装備のまま続けて倒す。
+  // 通常の冒険(g.floor / drops / 継承 / チェックポイント)とは独立して扱い、保存も別枠(RUSH_SAVE_KEY)。
+  // g.rush = { idx: 今のボスの番号(0〜9), atk/dr/hp: 休息で選んだ強化の累計, choices: 休息の選択肢, picked: 選択済みか }
+  function startBossRush() {
+    const m = metaRef.current;
+    if (!m || (m.clears || 0) < 1) return;
+    if (rushAttemptsLeft(m) <= 0) return; // 1日の挑戦回数を使い切った
+    if (gRef.current?.screen === "run") return; // 連打で2回始めて、挑戦回数を二重に使わない
+    bumpSeq(); // 進行中の非同期シーケンスを無効化(S2-2)
+    // 装備は、今持っている武器・防具をそのまま使う。中断中の冒険(生存中)があればその装備と袋、無ければ継承品(通常の
+    // 冒険を始めるときと同じ組み方)。どちらも減らさない(コピーを使う。通常の冒険・継承品には影響させない)。
+    const cur = savedRun && savedRun.phase !== "dead" && (savedRun.weapons || []).some(Boolean) ? savedRun : null;
+    const copy = (it) => (it ? { ...it, id: uid() } : it);
+    const eq = cur
+      ? {
+        weapons: padWeaponSlots(cur.weapons.map(copy), m),
+        armor: Object.fromEntries(["helm", "armor", "charm"].map((k) => [k, copy((cur.armor || {})[k] || null)])),
+        inv: (cur.inv || []).map(copy),
+      }
+      : starterState(m);
+    const base = {
+      screen: "run", floor: rushFloorOf(0), node: 0, nodes: ["boss"], phase: "battle",
+      player: { hp: 0, poison: 0, atkUp: 0, guard: false },
+      ...eq, inv: [...eq.inv, ...[...RUSH.startItems, ...Array.from({ length: skillEffectTotal(m.skills, "rushStartBerry") }, () => "berryBig")].map((id) => makeConsumable(id))],
+      cds: {}, enemies: [], drops: [], logs: [], floats: [],
+      // 最初の戦闘の前に、武器を付け替えられるようにする(章の頭の「戦闘準備」と同じ)
+      pending: null, busy: false, bag: true, gearPrep: true, hitId: null, eventDone: false,
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: true,
+      orbBagBonus: 0, orbSlotBonus: 0, orbChoice: false, coach: false, stageIntro: null,
+      rush: { idx: 0, atk: 0, dr: 0, hp: 0, choices: null, picked: false, pickedId: null, taken: {}, reviveUsed: false, wave: 1 },
+    };
+    base.player.hp = maxHpOf(base, m);
+    const loan0 = rushLoanWeapon(base, 0, m.skills);
+    if (loan0) base.inv = [...base.inv, loan0];
+    const first = enterNode(base);
+    saveRun(first.floor, first.node, first.player, first.weapons, first.armor, first.inv, first.cds, first.lastRareSeen, first.orbBagBonus, first.enemies, null, null, runExtraOf(first));
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "rush_start", clears: m.clears || 0, best: m.rushBest || 0 }); } catch (_) {}
+    updateMeta(consumeRushAttempt);
+    setSavedRush(null);
+    setG(first);
+    gRef.current = first;
+  }
+
+  // タスクキル・中断後の再開。休息中なら休息を、戦闘中なら保存した敵のまま戦闘を復元する。
+  function resumeRush(run) {
+    const rush = run?.rush;
+    if (!rush || !Number.isInteger(rush.idx) || rush.idx < 0 || rush.idx >= RUSH_TOTAL) {
+      clearRush(); setSavedRush(null); return;
+    }
+    bumpSeq();
+    const restPhase = run.rushPhase === "rushRest" && Array.isArray(rush.choices);
+    const base = {
+      screen: "run", floor: rushFloorOf(rush.idx), node: 0, nodes: ["boss"], phase: restPhase ? "rushRest" : "battle",
+      player: run.player || { hp: 0, poison: 0, atkUp: 0, guard: false },
+      weapons: run.weapons || [], armor: run.armor || { helm: null, armor: null, charm: null }, inv: run.inv || [],
+      cds: run.cds || {}, enemies: [], drops: [], logs: [], floats: [],
+      pending: null, busy: false, bag: false, hitId: null, eventDone: false,
+      confirm: null, full: false, lastRareSeen: 0, skillTree: false, reviveUsed: true,
+      orbBagBonus: 0, orbSlotBonus: 0, orbChoice: false, coach: false, stageIntro: null,
+      rush: { idx: rush.idx, atk: rush.atk || 0, dr: rush.dr || 0, hp: rush.hp || 0, choices: restPhase ? rush.choices : null, picked: !!rush.picked,
+        pickedId: restPhase && rush.picked ? (rush.pickedId || null) : null, taken: rush.taken && typeof rush.taken === "object" ? rush.taken : {},
+        reviveUsed: !!rush.reviveUsed, wave: rush.wave || 1 },
+    };
+    setSavedRush(null);
+    // 倒した取り巻きは、一定のターンで立ち上がるので、中断をはさんでも消さずに残す(再開で立ち上がりを逃れられないように)。
+    const savedAll = (run.enemies || []).filter((e) => e.hp > 0 || e.respawn);
+    const savedEnemies = savedAll.filter((e) => e.hp > 0);
+    if (run.reviveOffer && savedEnemies.length > 0) {
+      // 復活オファーの最中に閉じられた: HP0 のまま再開させず、オファー画面へ戻す(視聴できなければ、そのまま終了)。
+      const offer = { ...base, enemies: savedAll, phase: "reviveOffer", player: { ...base.player, hp: 0 }, turn: run.turn || 1 };
+      if (!base.rush.reviveUsed && rewardAdUsesLeft(metaRef.current) > 0) {
+        saveRun(offer.floor, offer.node, offer.player, offer.weapons, offer.armor, offer.inv, offer.cds, offer.lastRareSeen, offer.orbBagBonus, enemiesToSave(offer), null, null, runExtraOf(offer));
+        setG(offer);
+      } else finishRush(offer, false);
+      return;
+    }
+    let restored = base;
+    if (!restPhase) restored = savedEnemies.length > 0 ? { ...base, enemies: savedAll, turn: run.turn || 1 } : enterNode(base);
+    saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, enemiesToSave(restored), null, null, runExtraOf(restored));
+    setG(restored);
+  }
+
+  // ボスを倒した。最後のボスなら踏破、そうでなければ休息(回復+強化を1つ選ぶ)へ。
+  function rushBossDefeated(st) {
+    const idx = st.rush.idx;
+    const bossName = rushBossName(idx);
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "rush_boss_kill", stage: idx + 1 }); } catch (_) {}
+    if (idx + 1 >= RUSH_TOTAL) { finishRush({ ...st, busy: false }, true); return; }
+    const m = metaRef.current;
+    const mx = maxHpOf(st, m);
+    const healPct = RUSH.restHealPct + skillEffectTotal(m?.skills, "rushRestHeal");
+    const heal = Math.max(0, Math.min(mx - st.player.hp, Math.round(mx * healPct)));
+    let s = {
+      ...st, busy: false, phase: "rushRest", enemies: [], cds: {}, pending: null,
+      player: { ...st.player, hp: st.player.hp + heal, poison: 0, atkUp: 0, regen: 0, guard: false, weakT: 0, bagSealT: 0, guardSealT: 0 },
+      rush: { ...st.rush, choices: rushBuffChoices(RUSH.choices + skillEffectTotal(m?.skills, "rushChoice")), picked: false, pickedId: null },
+    };
+    s = pushLog(s, `${bossName}を倒した!(${Math.min(idx + 1, RUSH.bosses)}/${RUSH.bosses})`, true);
+    s = pushLog(s, `束の間の休息。HPを${heal}回復した。`);
+    setG(s);
+    gRef.current = s;
+    flushSaveRun(s);
+  }
+
+  // 休息で強化を1つ選ぶ(1回だけ)。
+  function rushPickBuff(id) {
+    const s0 = gRef.current;
+    if (!s0.rush || s0.phase !== "rushRest" || s0.rush.picked || !RUSH_BUFFS[id] || !(s0.rush.choices || []).includes(id)) return;
+    let s = { ...s0, rush: { ...s0.rush, picked: true, pickedId: id, taken: { ...(s0.rush.taken || {}), [id]: ((s0.rush.taken || {})[id] || 0) + 1 } } };
+    const mxBefore = maxHpOf(s0);
+    if (id === "atk") s.rush.atk = (s0.rush.atk || 0) + RUSH.buffAtk;
+    else if (id === "dr") s.rush.dr = (s0.rush.dr || 0) + RUSH.buffDr;
+    else if (id === "hp") {
+      s.rush.hp = (s0.rush.hp || 0) + RUSH.buffHp;
+      s.player = { ...s.player, hp: s.player.hp + Math.max(0, maxHpOf(s) - mxBefore) };
+    } else if (id === "heal") {
+      const mx = maxHpOf(s);
+      s.player = { ...s.player, hp: Math.min(mx, s.player.hp + Math.round(mx * RUSH.buffHeal)) };
+    } else if (id === "berry") s.inv = [...s.inv, makeConsumable("berryBig")];
+    else if (id === "bomb") s.inv = [...s.inv, makeConsumable("bomb")];
+    s = pushLog(s, `「${RUSH_BUFFS[id].label}」を選んだ。`, true);
+    setG(s);
+    gRef.current = s; // 同一ティック内の連打でも、2つ目が選べないようにする
+    flushSaveRun(s);
+  }
+
+  // 次のボスへ。装備はそのまま持ち越す。
+  function rushNext() {
+    const s0 = gRef.current;
+    if (!s0.rush || s0.phase !== "rushRest" || !s0.rush.picked) return;
+    const idx = s0.rush.idx + 1;
+    if (idx >= RUSH_TOTAL) return;
+    if (bagOver(s0, invCapOf(metaRef.current, s0.orbBagBonus || 0)) > 0) return; // 袋が上限を超えている間は進めない
+    bumpSeq();
+    let s = {
+      ...s0, rush: { ...s0.rush, idx, choices: null, picked: false, pickedId: null, wave: 1 },
+      floor: rushFloorOf(idx), node: 0, nodes: ["boss"], cds: {}, enemies: [], drops: [], pending: null, bag: false, confirm: null,
+    };
+    // 次のボスの核の武器を持っていなければ、借りる(袋に入る)
+    const loan = rushLoanWeapon(s, idx, metaRef.current?.skills);
+    if (loan) { s = { ...s, inv: [...s.inv, loan] }; s = pushLog(s, `旅の仲間から、${loan.name}を借りた(袋に入った)。`); }
+    s = enterNode(s);
+    setG(s);
+    gRef.current = s;
+    saveRun(s.floor, s.node, s.player, s.weapons, s.armor, s.inv, s.cds, s.lastRareSeen, s.orbBagBonus, s.enemies, null, null, runExtraOf(s));
+  }
+
+  // ボスラッシュの終了(全ボス撃破 or 力尽きた)。倒した数に応じた精の結晶を受け取り、中断データを消す。
+  function finishRush(st, cleared) {
+    bumpSeq();
+    // 保存待ちの古い状態が、消したあとに書き戻されないようにする
+    if (saveRunTimerRef.current) { clearTimeout(saveRunTimerRef.current); saveRunTimerRef.current = null; }
+    const m0 = metaRef.current;
+    const defeated = cleared ? RUSH_TOTAL : st.rush.idx;
+    const crystals = rushRewardOf(defeated);
+    const newBest = defeated > (m0?.rushBest || 0);
+    updateMeta((m) => ({
+      ...m, dewBank: (m.dewBank || 0) + crystals,
+      rushBest: Math.max(m.rushBest || 0, defeated),
+      rushClears: (m.rushClears || 0) + (cleared ? 1 : 0), // 全ボス撃破の記録は、11体目(最後の戦い)を倒したときだけ増える
+      rushSecretClears: (m.rushSecretClears || 0) + (cleared ? 1 : 0),
+    }));
+    clearRush();
+    setSavedRush(null);
+    try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "rush_end", defeated, cleared, crystals }); } catch (_) {}
+    const s = {
+      ...st, busy: false, phase: "rushOver", pending: null, bag: false,
+      player: cleared ? st.player : { ...st.player, hp: 0 },
+      rushResult: { defeated, cleared, crystals, newBest, secret: defeated >= RUSH.bosses, adClaimed: false },
+    };
+    setG(s);
+    gRef.current = s;
   }
 
   // タスクキル後の再開: 保存済みフロア状態を復元する
@@ -3125,7 +3885,8 @@ export default function KiriwatariNoMori() {
       s.phase = "battle";
       const lastRare = s.lastRareSeen || 0;
       const rareChance = meta ? rareChanceOf(meta, s.floor) : 0.04 + stageOf(s.floor) * 0.02;
-      s.enemies = kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor, lastRare, rareChance);
+      s.enemies = s.rush ? makeRushEncounter(s.rush.idx, meta?.skills, s.rush.wave || 1)
+        : kind === "boss" ? [makeBoss(s.floor)] : enemiesForEncounter(s.floor, lastRare, rareChance);
       if (kind !== "boss" && s.enemies.some((e) => e.rare)) s = { ...s, lastRareSeen: s.floor };
       // 遭遇した敵を図鑑に記録(S-1: 必ず metaRef.current を土台にする。ここで stale な
       // meta クロージャを土台にすると、直前に startFromChapter が確定させた inherited:[] 等の
@@ -3136,7 +3897,7 @@ export default function KiriwatariNoMori() {
       s.cds = {};
       s.turn = 1;
       s = pushLog(s, "【戦闘開始】", true);
-      s = pushLog(s, `── ターン${s.turn} ──`, true);
+      s = pushLog(s, `## ターン${s.turn}`, true);
       // 呼吸法・再生の心得: 戦闘開始時にHPを回復
       const battleStartHealPct = skillEffectTotal(meta?.skills, "battleStartHealPct");
       if (battleStartHealPct > 0 && s.player.hp > 0) {
@@ -3147,7 +3908,10 @@ export default function KiriwatariNoMori() {
           s = pushLog(s, `呼吸を整え、HPを${heal}回復した`);
         }
       }
-      s = pushLog(s, kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss");
+      s = pushLog(s, s.rush
+        ? (rushIsSecret(s.rush.idx) ? "──最後の戦い。写し身の旅人が、武器の影を連れて立ちはだかる。"
+          : `──ボスラッシュ ${s.rush.idx + 1}/${RUSH.bosses}:${rushBossName(s.rush.idx)}が、取り巻きを連れて立ちはだかる。`)
+        : kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss" || !!s.rush);
       if (s.enemies.some((e) => e.rare)) s = pushLog(s, "……金色の光。金枝の精が紛れている!", true);
     } else {
       s.phase = kind; // chest / spring
@@ -3179,19 +3943,27 @@ export default function KiriwatariNoMori() {
   }
 
   /* ---------- ダメージ計算 ---------- */
-  function hitEnemy(st, enemy, rawAtk, dmgType, mult, discovered) {
+  function hitEnemy(st, enemy, rawAtk, dmgType, mult, discovered, weaponType) {
     let aff = 1, tag = null;
     if (enemy.weak.includes(dmgType)) { aff = AFF_WEAK; tag = "weak"; }
     else if (enemy.resist.includes(dmgType)) { aff = AFF_RES; tag = "res"; }
-    const dmg = Math.max(1, Math.round(rawAtk * mult * aff * rnd(0.9, 1.1)) - enemy.def);
+    // ボスラッシュの「核」: 指定の武器種で突くと露出し、閉じている間は他の武器のダメージが大きく減る。
+    let coreMul = 1, core = null;
+    if (enemy.core && weaponType) {
+      if (weaponType === enemy.core) { core = "open"; coreMul = RUSH.coreHit; }
+      else if (!(enemy.coreOpen > 0)) { core = "shield"; coreMul = Math.min(1, RUSH.coreShield + skillEffectTotal(metaRef.current?.skills, "rushCoreLeak")); }
+    }
+    const dmg = Math.max(1, Math.round(rawAtk * mult * aff * coreMul * rnd(0.9, 1.1)) - enemy.def);
     enemy.hp = Math.max(0, enemy.hp - dmg);
+    // +1 は、この行動のターン終了時に1減るぶん(露出は「次のターンから coreOpen ターン」続く)
+    if (core === "open") enemy.coreOpen = RUSH.coreOpen + skillEffectTotal(metaRef.current?.skills, "rushCoreOpen") + 1;
     // 弱点・耐性の発見を記録
     if (tag && enemy.bookId) {
       const d = discovered[enemy.bookId] || (discovered[enemy.bookId] = { w: [], r: [] });
       const list = tag === "weak" ? d.w : d.r;
       if (!list.includes(dmgType)) list.push(dmgType);
     }
-    return { dmg, tag };
+    return { dmg, tag, core };
   }
 
   /* ---------- プレイヤーの攻撃 ---------- */
@@ -3203,11 +3975,15 @@ export default function KiriwatariNoMori() {
     let s = { ...st0, pending: null, busy: true };
     const enemies = s.enemies.map((e) => ({ ...e }));
     const discovered = JSON.parse(JSON.stringify(meta.discovered || {}));
-    const atkMul = (s.player.atkUp > 0 ? 1.4 + skillEffectTotal(meta?.skills, "sporeAtkBonus") : 1);
+    const atkMul = (s.player.atkUp > 0 ? 1.4 + skillEffectTotal(meta?.skills, "sporeAtkBonus") : 1) * (s.player.weakT > 0 ? 0.8 : 1);
     // 属性ごとの心得・極意・真髄が積み上がる(この属性のものだけ合計)。
     const masteryMult = 1 + skillEffectTotal(meta?.skills, "elementDmgPct", (e) => e.element === t.dmgType);
     const powerSealMult = 1 + skillEffectTotal(meta?.skills, "allDmgPct");
-    const raw = weapon.atk * atkMul * masteryMult * powerSealMult;
+    // ボスラッシュ中だけ、踏破者のスキルと休息で選んだ強化による火力の上乗せ(通常の冒険では st0.rush が無い)。
+    const rushMult = st0.rush
+      ? 1 + skillEffectTotal(meta?.skills, "rushAtkPct") + (st0.rush.atk || 0) + skillEffectTotal(meta?.skills, "rushWeaponPct", (e) => e.weaponType === weapon.type)
+      : 1;
+    const raw = weapon.atk * atkMul * masteryMult * powerSealMult * rushMult;
     // A-1: elementDmgPct と同じく、この武器の属性の余韻だけを合計する(フィルタ漏れで
     // 以前は全属性の余韻(5種合計20%)が常に乗ってしまっていた)。
     const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct", (e) => e.element === t.dmgType);
@@ -3235,10 +4011,14 @@ export default function KiriwatariNoMori() {
     const extraLogs = [];
     const nameOf = (eid) => enemies.find((x) => x.id === eid)?.name || "敵";
     const F = (eid, r) => {
-      const label = r.tag === "weak" ? `弱点 ${r.dmg}` : r.tag === "res" ? `耐性 ${r.dmg}` : `${r.dmg}`;
+      const label = (r.tag === "weak" ? `弱点 ${r.dmg}` : r.tag === "res" ? `耐性 ${r.dmg}` : `${r.dmg}`) + (r.core === "shield" ? "(守り)" : "");
       const color = r.tag === "weak" ? "var(--hotaru)" : r.tag === "res" ? "var(--paper-dim)" : "var(--paper)";
       floats.push({ key: uid(), targetId: eid, text: label, color, size: r.tag === "weak" ? 24 : 19, t: Date.now() });
-      hitLogs.push(`${nameOf(eid)}に${r.dmg}ダメージを与えた${r.tag === "weak" ? "(弱点)" : r.tag === "res" ? "(耐性)" : ""}`);
+      hitLogs.push(`${nameOf(eid)}に${r.dmg}ダメージを与えた${r.tag === "weak" ? "(弱点)" : r.tag === "res" ? "(耐性)" : ""}${r.core === "shield" ? "(守りが固く、通りにくい)" : ""}`);
+      if (r.core === "open") {
+        floats.push({ key: uid(), targetId: eid, text: "守りが崩れた!", color: "var(--hotaru)", size: 15, t: Date.now() });
+        hitLogs.push(`${nameOf(eid)}の守りが崩れた!`);
+      }
     };
 
     if (weapon.type === "dagger") {
@@ -3246,7 +4026,7 @@ export default function KiriwatariNoMori() {
       for (let i = 0; i < 2; i++) {
         if (target.hp <= 0) break;
         const crit = Math.random() < critChance;
-        const r = hitEnemy(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered);
+        const r = hitEnemy(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered, weapon.type);
         dmgDealtThisAction += r.dmg;
         if (crit) {
           const label = `会心 ${r.dmg}`;
@@ -3258,28 +4038,28 @@ export default function KiriwatariNoMori() {
       }
       s = pushLog(s, `${weapon.name}の二連撃。`);
     } else if (weapon.type === "greatsword") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 2.2, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hitEnemy(s, target, raw, t.dmgType, 2.2, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
       s = pushLog(s, `${weapon.name}を振り抜いた!`);
     } else if (weapon.type === "bow") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hitEnemy(s, target, raw, t.dmgType, 1, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
       const others = enemies.filter((e) => e.hp > 0 && e.id !== target.id);
-      if (others.length) { const o = pick(others); const r2 = hitEnemy(s, o, raw, t.dmgType, 0.5, discovered); F(o.id, r2); dmgDealtThisAction += r2.dmg; }
+      if (others.length) { const o = pick(others); const r2 = hitEnemy(s, o, raw, t.dmgType, 0.5, discovered, weapon.type); F(o.id, r2); dmgDealtThisAction += r2.dmg; }
       s = pushLog(s, `${weapon.name}で射抜き、流れ矢が走る。`);
     } else if (weapon.type === "axe") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.6, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.6, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
       target.def = Math.max(0, target.def - 2);
       floats.push({ key: uid(), targetId: target.id, text: "防御破壊", color: "var(--mist)", size: 13, t: Date.now() });
       s = pushLog(s, `${weapon.name}が守りを砕く。`);
     } else if (weapon.type === "spear") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
       poisonEnemy(target);
       s = pushLog(s, `${weapon.name}の穂先が深く刺さる。`);
       if (poisonPct && target.hp > 0) extraLogs.push(`${target.name}は毒に侵された(${poisonTurns}ターン${target.boss ? "・ボスには効きにくい" : ""})`);
     } else if (weapon.type === "book") {
-      for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg; }
+      for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered, weapon.type); F(e.id, r); dmgDealtThisAction += r.dmg; }
       s = pushLog(s, `${weapon.name}の一節が森を薙ぐ。`);
     } else if (weapon.type === "staff") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
       const heal = Math.round(maxHpOf(s) * 0.1);
       s.player = { ...s.player, hp: Math.min(maxHpOf(s), s.player.hp + heal) };
       floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
@@ -3287,10 +4067,10 @@ export default function KiriwatariNoMori() {
       extraLogs.push(`HPを${heal}回復した`);
     } else if (weapon.type === "instrument") {
       for (const e of enemies) if (e.hp > 0) {
-        const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered); F(e.id, r); dmgDealtThisAction += r.dmg;
+        const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered, weapon.type); F(e.id, r); dmgDealtThisAction += r.dmg;
         e.atkDown = 2 + skillEffectTotal(meta?.skills, "instrumentDebuffTurns");
       }
-      s = pushLog(s, `${weapon.name}の旋律が敵を怯ませる(攻撃弱体)。`);
+      s = pushLog(s, `${weapon.name}の旋律が敵を怯ませ、攻撃力を下げた。`);
     }
 
     for (const t of [...hitLogs, ...extraLogs]) s = pushLog(s, t);
@@ -3346,6 +4126,8 @@ export default function KiriwatariNoMori() {
     const c = CONSUMABLES[item.itemId];
     if (!c) return;
     if (c.kind === "bomb" && !inBattle) return; // 森火の実は戦闘中のみ
+    if (c.kind === "buff" && sporeBlocked(st0.player, metaRef.current?.skills)) return; // 力の胞子の連続使用は不可
+    if (inBattle && st0.player.bagSealT > 0) return; // 鞄封じの間は、戦闘中に袋の道具を使えない
     // 二重適用・多重タップ防止: すでに袋から消えているアイテムは無視する
     if (!st0.inv.some((x) => x.id === item.id)) return;
 
@@ -3440,6 +4222,7 @@ export default function KiriwatariNoMori() {
   async function guard() {
     const st0 = gRef.current;
     if (st0.busy || st0.phase !== "battle") return;
+    if (st0.player.guardSealT > 0) return; // 防御封じの間は構えられない
     const mySeq = ++seqRef.current;
     let s = { ...st0, busy: true, pending: null };
     s.player = { ...s.player, guard: true, hp: Math.min(maxHpOf(s), s.player.hp + Math.round(maxHpOf(s) * 0.05)) };
@@ -3454,6 +4237,38 @@ export default function KiriwatariNoMori() {
   async function afterPlayerAction(seq) {
     if (seq != null && seqRef.current !== seq) return;
     let st = gRef.current;
+    // シークレット戦: 写し身の旅人のHPが60%を割ると少し回復して武器が変わり(組2)、30%を割ると全回復して8種の影が現れる(組3)。
+    // 一撃で境目を越えても(倒しきる一撃でも)、最後の組より前なら倒れずに次の組へ進む。
+    if (st.rush && rushIsSecret(st.rush.idx)) {
+      const sec = st.enemies.find((e) => e.secret);
+      const ph = st.rush.wave || 1;
+      if (sec && ph < 3) {
+        const frac = Math.max(0, sec.hp) / sec.maxHp;
+        const to = frac <= RUSH.secretPhase3 ? 3 : ph === 1 && frac <= RUSH.secretPhase2 ? 2 : 0;
+        if (to > ph) {
+          const fresh = makeSecretWave(to, metaRef.current?.skills);
+          const hp = to >= 3 ? sec.maxHp : Math.min(sec.maxHp, Math.max(0, sec.hp) + Math.round(sec.maxHp * RUSH.secretHeal));
+          const traveler = { ...sec, hp, atk: fresh[0].atk, coreOpen: 0, counted: false };
+          let ns = { ...st, enemies: [traveler, ...fresh.slice(1)], busy: true, pending: null, rush: { ...st.rush, wave: to } };
+          ns = pushLog(ns, to >= 3
+            ? `${RUSH_SECRET_NAME}は、傷を負いながら全ての力を解き放った。HPが全回復し、八つの武器の影が力を得て立ち上がる!`
+            : `${RUSH_SECRET_NAME}は、${RUSH.secretHeal * 100}%ほど傷を癒やし、武器を持ち替えた。新たに4つの影が立ち上がる!`, true);
+          setG(ns);
+          gRef.current = ns;
+          flushSaveRun(ns);
+          st = ns;
+          await sleep(500);
+          if (seq != null && seqRef.current !== seq) return;
+          st = gRef.current;
+        }
+      } else if (sec && sec.hp <= 0) {
+        // 最後の組で旅人を倒すと、分身も一緒に消える
+        const ns0 = { ...st, enemies: st.enemies.map((e) => (e.secret ? e : { ...e, hp: 0, counted: true, fled: true })) };
+        st = pushLog(ns0, "旅人が膝を折ると、武器の影もすべて消えていった……。", true);
+        setG(st);
+        gRef.current = st;
+      }
+    }
     // 撃破判定
     const killed = st.enemies.filter((e) => e.hp <= 0 && !e.counted);
     if (killed.length) {
@@ -3511,6 +4326,7 @@ export default function KiriwatariNoMori() {
   async function battleWon(enemies, seq) {
     // 勝利は必ず完遂させる(途中の await は localStorage 保存のみ)。seq は経緯確認用。
     const st = gRef.current;
+    if (st.rush) return rushBossDefeated(st); // ボスラッシュ: 戦利品も章クリアも無く、休息→次のボスへ
     const isBoss = enemies.some((e) => e.boss);
     const drops = rollDrops(enemies.filter((e) => e.hp <= 0 && !e.fled), st.floor, st.inv);
     const dewAdOffer = drops.some((d) => d.itemId === "dew") && rewardAdUsesLeft(meta) > 0 && !st.dewAdClaimed;
@@ -3623,6 +4439,7 @@ export default function KiriwatariNoMori() {
 
     // 踏みとどまる意志: 敵のターン開始時にHPが50%以上なら、このターン1回だけ致死ダメージをHP1で耐える。
     let endureReady = skillEffectTotal(meta?.skills, "endure") > 0 && player.hp >= mx * 0.5;
+    let rushActs = 0, rushPhaseTaken = 0; // ボスラッシュ: このターンに攻撃した敵の数と、受けたダメージの合計
     const n0 = enemies.length; // このターン開始時にいた敵だけ行動(召喚された敵は次ターンから)
     for (let i = 0; i < n0; i++) {
       const e = enemies[i];
@@ -3637,8 +4454,26 @@ export default function KiriwatariNoMori() {
       }
       const weaken = e.atkDown > 0 ? 0.8 : 1;
       let dmg = Math.max(1, Math.round(e.atk * weaken * rnd(0.9, 1.1)) - def);
-      // ボスの行動パターン(章ごとに眷属とセリフが変わる)
-      if (e.boss) {
+      // 武器の分身・写し身の旅人(ボスラッシュのシークレット戦): 武器ごとの攻撃を使ってくる。
+      const pat = e.pattern ? (e.pattern === "mimic" ? rushMimicOrder(s.rush?.wave)[((s.turn || 1) - 1) % rushMimicOrder(s.rush?.wave).length] : e.pattern) : null;
+      let hitMults = [1], ignoreDef = false, ignoreGuard = false, noDodge = false, afterHit = null;
+      if (pat) {
+        const mimic = e.pattern === "mimic";
+        if (mimic) s = pushLog(s, `${e.name}は${WEAPON_TYPES[pat].label}を構えた。`, true);
+        // 写し身の旅人(本体)は、武器ごとの攻撃に妨害を添える: 全種(武器封じ・鞄封じ・防御封じ・火力低下・毒)を使ってくる
+        if (pat === "dagger") { hitMults = [0.6, 0.6]; if (mimic) afterHit = "bag"; }
+        else if (pat === "greatsword") {
+          if (mimic) { hitMults = [1.8]; afterHit = "guard"; }
+          else if (!e.charge) { e.charge = true; s = pushLog(s, `${e.name}が大剣を振りかぶった(次は大技)`, true); continue; }
+          else { e.charge = false; hitMults = [2.4]; }
+        } else if (pat === "axe") { hitMults = [1.1]; ignoreDef = true; }
+        else if (pat === "spear") { hitMults = [1.0]; afterHit = "poison"; }
+        else if (pat === "bow") { hitMults = [1.0]; ignoreGuard = true; noDodge = true; if (mimic) afterHit = "seal"; }
+        else if (pat === "book") { hitMults = [0.9]; afterHit = "seal"; }
+        else if (pat === "staff") { hitMults = [0.8]; afterHit = "mend"; }
+        else if (pat === "instrument") { hitMults = [0.7]; afterHit = "weak"; }
+      } else if (e.boss) {
+        // ボスの行動パターン(章ごとに眷属とセリフが変わる)
         const maxSummons = e.final ? 2 : 1;
         const done = e.summoned || 0;
         if (e.hp < e.maxHp * (done === 0 ? 0.55 : 0.25) && done < maxSummons && enemies.filter((x) => x.hp > 0).length < 3) {
@@ -3650,31 +4485,56 @@ export default function KiriwatariNoMori() {
         }
         if (e.charge) { dmg = Math.max(1, dmg * 2); e.charge = false; s = pushLog(s, e.bigLine, true); }
         else if (Math.random() < 0.28) { e.charge = true; s = pushLog(s, `${e.chargeLine}(次は大技)`, true); continue; }
+        // ボスラッシュのボスは、数ターンごとに妨害技を添えてくる(通常の冒険のボスは使わない)
+        if (s.rush && !e.secret) {
+          const list = e.debuffs;
+          const t = s.turn || 1;
+          if (list && list.length && t % RUSH.debuffEvery === 0) {
+            const kind = list[(Math.floor(t / RUSH.debuffEvery) - 1) % list.length];
+            afterHit = kind === "poison" ? "poisonB" : kind;
+          }
+        }
       }
-      if (player.guard) dmg = Math.max(1, Math.round(dmg / 2));
-      // 健脚/疾風の心得: 完全回避
-      const dodged = dodgeChance > 0 && Math.random() < dodgeChance;
-      if (dodged) {
-        dmg = 0;
-        s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: "回避!", color: "#8fd39a", size: 18, t: Date.now() }] };
-        s = pushLog(s, `${e.name}の攻撃。回避!`);
-      } else {
-        // 不屈の心得: 残りHPが最大値の25%以下のとき被ダメージ軽減
-        const lowHpCut = skillEffectTotal(meta?.skills, "lowHpDmgReduction", (eff) => player.hp <= mx * (eff.threshold ?? 0.25));
-        if (lowHpCut > 0) dmg = Math.max(1, Math.round(dmg * (1 - lowHpCut)));
-        s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `${dmg}`, color: "var(--danger)", size: 20, t: Date.now() }] };
-        // 敵ごとのダメージをログに残す(フロートは1.1秒で消えるため)。
-        s = pushLog(s, `${e.name}から${dmg}ダメージを受けた`);
+      let dealt = 0;
+      for (let hi = 0; hi < hitMults.length; hi++) {
+        if (player.hp <= 0) break;
+        let hd = pat ? Math.max(1, Math.round(e.atk * weaken * hitMults[hi] * rnd(0.9, 1.1)) - (ignoreDef ? 0 : def)) : dmg;
+        if (player.guard && !ignoreGuard) hd = Math.max(1, Math.round(hd / 2));
+        // 健脚/疾風の心得: 完全回避
+        const dodged = !noDodge && dodgeChance > 0 && Math.random() < dodgeChance;
+        if (dodged) {
+          hd = 0;
+          s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: "回避!", color: "#8fd39a", size: 18, t: Date.now() }] };
+          s = pushLog(s, `${e.name}の攻撃。回避!`);
+        } else {
+          // 不屈の心得: 残りHPが最大値の25%以下のとき被ダメージ軽減
+          const lowHpCut = skillEffectTotal(meta?.skills, "lowHpDmgReduction", (eff) => player.hp <= mx * (eff.threshold ?? 0.25));
+          if (lowHpCut > 0) hd = Math.max(1, Math.round(hd * (1 - lowHpCut)));
+          // ボスラッシュ中の被ダメージ軽減(休息の「鉄壁」+スキル)。上限あり。
+          if (s.rush) {
+            const rushCut = Math.min(RUSH.drMax, (s.rush.dr || 0) + skillEffectTotal(meta?.skills, "rushDrPct") + (s.turn === 1 ? skillEffectTotal(meta?.skills, "rushFirstTurnCut") : 0));
+            if (rushCut > 0) hd = Math.max(1, Math.round(hd * (1 - rushCut)));
+            // 重なる攻撃の減衰と、1ターンの被ダメージ上限
+            hd = Math.max(1, Math.round(hd * Math.max(RUSH.multiHitMin, 1 - RUSH.multiHitDecay * rushActs)));
+            hd = Math.max(1, Math.min(hd, Math.round(mx * RUSH.phaseCapPct) - rushPhaseTaken));
+            rushPhaseTaken += hd;
+          }
+          s = { ...s, floats: [...s.floats, { key: uid(), targetId: "player", text: `${hd}`, color: "var(--danger)", size: 20, t: Date.now() }] };
+          // 敵ごとのダメージをログに残す(フロートは1.1秒で消えるため)。
+          s = pushLog(s, `${e.name}から${hd}ダメージを受けた`);
+        }
+        player.hp = Math.max(0, player.hp - hd);
+        dealt += hd;
+        if (player.hp <= 0 && endureReady) {
+          endureReady = false;
+          player.hp = 1;
+          s = pushLog(s, "踏みとどまった! HPが1残った。", true);
+        }
       }
-      player.hp = Math.max(0, player.hp - dmg);
-      if (player.hp <= 0 && endureReady) {
-        endureReady = false;
-        player.hp = 1;
-        s = pushLog(s, "踏みとどまった! HPが1残った。", true);
-      }
+      if (s.rush && dealt > 0) rushActs++;
       // 吸収(与ダメの半分を回復)
-      if (e.drain && dmg > 0) {
-        const rec = Math.round(dmg / 2);
+      if (e.drain && dealt > 0) {
+        const rec = Math.round(dealt / 2);
         e.hp = Math.min(e.maxHp, e.hp + rec);
         s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `回復 ${rec}`, color: "#8fd39a", size: 15, t: Date.now() }] };
         s = pushLog(s, `${e.name}が傷を吸収し、HPを${rec}回復した`);
@@ -3683,6 +4543,38 @@ export default function KiriwatariNoMori() {
       if (e.poison && !poisonImmune && Math.random() < 0.4 && player.poison <= 0) {
         player.poison = 3;
         s = pushLog(s, `${e.name}の毒! 身体が痺れていく。`);
+      }
+      // 武器の分身・写し身の旅人の追加効果
+      if (afterHit === "poison" && !poisonImmune && player.poison <= 0) {
+        player.poison = 3;
+        s = pushLog(s, `${e.name}の穂先の毒! 身体が痺れていく。`);
+      } else if (afterHit === "poisonB") {
+        if (!poisonImmune && player.poison <= 0) { player.poison = 3; s = pushLog(s, `${e.name}の毒! 身体が痺れていく。`); }
+      } else if (afterHit === "seal") {
+        // 敵ターンの終わりにクールダウンが1減るので、3を入れて「次の2ターン」使えなくする
+        const ready = s.weapons.filter((w) => w && !(s.cds[w.id] > 0));
+        if (ready.length) {
+          const w = pick(ready);
+          s = { ...s, cds: { ...s.cds, [w.id]: 3 } };
+          s = pushLog(s, `${e.name}の武器封じ。${w.name}が2ターンの間、使えない。`);
+        }
+      } else if (afterHit === "bag") {
+        player.bagSealT = 3; // 敵ターンの終わりに1減るので、プレイヤーの次の2ターンの間、袋が開けない
+        s = pushLog(s, `${e.name}の鞄封じ。2ターンの間、袋が開けない。`);
+      } else if (afterHit === "guard") {
+        player.guardSealT = 3;
+        s = pushLog(s, `${e.name}の構え崩し。2ターンの間、防御できない。`);
+      } else if (afterHit === "mend") {
+        const ally = enemies.filter((x) => x.hp > 0).sort((x, y) => x.hp / x.maxHp - y.hp / y.maxHp)[0];
+        if (ally) {
+          const rec = Math.max(1, Math.round(ally.maxHp * (ally.secret ? 0.02 : 0.1))); // 写し身の旅人は体力が多いので、杖の影の癒しは小さめ(終わらない戦いにしない)
+          ally.hp = Math.min(ally.maxHp, ally.hp + rec);
+          s = { ...s, floats: [...s.floats, { key: uid(), targetId: ally.id, text: `回復 ${rec}`, color: "#8fd39a", size: 15, t: Date.now() }] };
+          s = pushLog(s, `${e.name}の癒し。${ally.name}のHPが${rec}回復した`);
+        }
+      } else if (afterHit === "weak") {
+        player.weakT = 3;
+        s = pushLog(s, e.boss && !e.secret ? `${e.name}の威圧。2ターンの間、こちらの火力が下がる。` : `${e.name}の不協和音。2ターンの間、こちらの火力が下がる。`);
       }
       if (e.atkDown > 0) e.atkDown -= 1;
       setG({ ...s, enemies, player });
@@ -3727,6 +4619,10 @@ export default function KiriwatariNoMori() {
       if (player.hp <= 0 && endureReady) { endureReady = false; player.hp = 1; s = pushLog(s, "踏みとどまった! HPが1残った。", true); }
     }
     if (player.atkUp > 0) player.atkUp -= 1;
+    if (player.weakT > 0) player.weakT -= 1;
+    if (player.bagSealT > 0) player.bagSealT -= 1;
+    if (player.guardSealT > 0) player.guardSealT -= 1;
+    for (const e of enemies) if (e.coreOpen > 0) e.coreOpen -= 1; // 核の露出は1ターンずつ閉じていく
     player.guard = false;
     // クールダウン減少
     const cds = {};
@@ -3734,6 +4630,19 @@ export default function KiriwatariNoMori() {
 
     if (player.hp <= 0) {
       const stFainted = { ...s, enemies, player, cds, busy: false };
+      // ボスラッシュ: 継承は無く、ここで挑戦が終わる(倒した数に応じた結晶を受け取る)。広告視聴の残りがあれば、
+      // 1挑戦に1度だけ、HPを半分取り戻して踏みとどまれる。
+      if (s.rush) {
+        if (!s.rush.reviveUsed && rewardAdUsesLeft(metaRef.current) > 0) {
+          const offer = { ...stFainted, phase: "reviveOffer" };
+          setG(offer);
+          gRef.current = offer;
+          flushSaveRun(offer);
+          return;
+        }
+        finishRush(stFainted, false);
+        return;
+      }
       // 広告視聴の残り回数があれば、死亡確定前に復活オファーを挟む
       if (rewardAdUsesLeft(meta) > 0 && !stFainted.reviveUsed && !meta.reviveUsedThisRun) {
         const offer = { ...stFainted, phase: "reviveOffer" };
@@ -3759,7 +4668,20 @@ export default function KiriwatariNoMori() {
     }
     // 戦闘が続く場合のみターンを進め、ログに区切りを残す(勝敗が決まる時は不要)。
     const nextTurn = (finalState.turn || 1) + 1;
-    const turnState = pushLog({ ...finalState, turn: nextTurn }, `── ターン${nextTurn} ──`, true);
+    let carried = finalState;
+    // ボスラッシュ: 一定のターンごとに、倒した取り巻きが傷ついたまま立ち上がる(ボスは立ち上がらない)。
+    if (carried.rush && (carried.turn || 1) % rushRespawnEvery(metaRef.current?.skills) === 0) {
+      const fallen = carried.enemies.filter((e) => e.respawn && e.hp <= 0 && !e.fled);
+      if (fallen.length > 0) {
+        carried = {
+          ...carried,
+          enemies: carried.enemies.map((e) => (e.respawn && e.hp <= 0 && !e.fled
+            ? { ...e, hp: Math.max(1, Math.round(e.maxHp * RUSH.respawnHpPct)), counted: false, coreOpen: 0 } : e)),
+        };
+        carried = pushLog(carried, `倒した取り巻きが、傷ついたまま立ち上がった!(${fallen.length}体)`, true);
+      }
+    }
+    const turnState = pushLog({ ...carried, turn: nextTurn }, `## ターン${nextTurn}`, true);
     setG(turnState);
     saveRun(turnState.floor, turnState.node, turnState.player, turnState.weapons, turnState.armor, turnState.inv, turnState.cds, turnState.lastRareSeen, turnState.orbBagBonus, turnState.enemies, null, null, runExtraOf(turnState));
   }
@@ -3788,6 +4710,32 @@ export default function KiriwatariNoMori() {
     };
     setG(ns);
     scheduleSaveRun(ns);
+  }
+
+  // 道具(消耗品)は種類ごとにまとめて表示するので、ロックも種類単位で切り替える。
+  // 1つでもロックされていないものがあれば全部ロック、全部ロック済みなら全部解除。
+  function toggleLockGroup(itemId) {
+    const s0 = gRef.current;
+    const same = (x) => x.kind === "item" && x.itemId === itemId;
+    const group = s0.inv.filter(same);
+    if (group.length === 0) return;
+    const lock = !group.every((x) => x.locked);
+    const ns = { ...s0, inv: s0.inv.map((x) => (same(x) ? { ...x, locked: lock } : x)) };
+    setG(ns);
+    scheduleSaveRun(ns);
+  }
+  // まとめ表示の「使う」。押した瞬間の最新の袋から1個を選ぶ(同じ瞬間に2回押されても別々の個体を使う)。
+  // ロックされていないものを先に使い、ロック中のものは残す。
+  function useOneOf(itemId) {
+    const items = gRef.current.inv.filter((x) => x.kind === "item" && x.itemId === itemId);
+    const it = items.find((x) => !x.locked) || items[0];
+    if (it) return useItem(it);
+  }
+  // まとめ表示の「捨てる」は1個だけ。ロックされていない1個を選んで捨てる(レア以上は確認ダイアログ)。
+  function discardOneOf(itemId) {
+    const it = gRef.current.inv.find((x) => x.kind === "item" && x.itemId === itemId && !isItemProtected(x));
+    if (!it) return;
+    if (isRareItem(it)) setDiscardConfirm(it); else discardItem(it);
   }
 
   /* ---------- 装備・袋 ---------- */
@@ -3821,7 +4769,7 @@ export default function KiriwatariNoMori() {
       // 付け替えで HP が 1 未満になる場合は付け替えない。HP を 1 に丸めたまま付け直すと、丸めで
       // 失った分まで「防具を付けた回復」として戻ってきてしまう(HP5 → 61 のような回復の抜け道)。
       if (ns.player.hp + ((item.hp || 0) - (old ? (old.hp || 0) : 0)) < 1) {
-        setG({ ...s0, bagActionError: "HPが足りないため付け替えられません。(防具のHP分を失うと倒れてしまいます)" });
+        setG({ ...s0, bagActionError: "HPが足りないため付け替えられません(防具のHP分を失うと倒れてしまいます)。" });
         return;
       }
       // 防具もロックは「捨てる」操作のみをブロックし、装備の入れ替えは妨げない(武器と同じ方針)。
@@ -3880,7 +4828,7 @@ export default function KiriwatariNoMori() {
     if (!a) return;
     if (s0.inv.length >= invCap) { setG({ ...s0, bagActionError: "袋がいっぱいです。何か捨てるか使ってから外してください。" }); return; }
     // 外すと HP が 1 未満になる場合は外せない(equipItem と同じ理由。丸めで失った分が付け直しで回復になる)。
-    if (s0.player.hp - (a.hp || 0) < 1) { setG({ ...s0, bagActionError: "HPが足りないため外せません。(防具のHP分を失うと倒れてしまいます)" }); return; }
+    if (s0.player.hp - (a.hp || 0) < 1) { setG({ ...s0, bagActionError: "HPが足りないため外せません(防具のHP分を失うと倒れてしまいます)。" }); return; }
     let ns = { ...s0, armor: { ...s0.armor, [slot]: null }, inv: [...s0.inv, a], bagActionError: null };
     // 装備解除は「新しい防具の付け替え」の片側(旧防具を外すだけ)と同じ収支にする
     // (equipItem のHP差分反映と対称にする。上げ幅だけ加算して下げ幅を無視する経路を
@@ -3937,6 +4885,11 @@ export default function KiriwatariNoMori() {
     setReorderPopup(false);
     setReorderSel(null);
     const s0 = gRef.current;
+    // 戦闘準備: 袋が上限を超えている間は、閉じて戦闘を始められない
+    if (s0.gearPrep) {
+      const over = bagOver(s0, invCapOf(metaRef.current, s0.orbBagBonus || 0));
+      if (over > 0) { setG({ ...s0, bagActionError: bagOverText(over) }); return; }
+    }
     let ns = { ...s0, bag: false, bagActionError: null, gearPrep: false };
     if (s0.phase === "battle") ns = ensureWeapon(ns);
     setG(ns);
@@ -3946,7 +4899,7 @@ export default function KiriwatariNoMori() {
     // ロック中のアイテムは捨てられない(保護設定は拾った瞬間の自動ロックとして反映済み)
     if (isItemProtected(item)) return;
     const s0 = gRef.current;
-    const ns = { ...s0, inv: s0.inv.filter((x) => x.id !== item.id) };
+    const ns = { ...s0, inv: s0.inv.filter((x) => x.id !== item.id), bagActionError: null }; // 空きができたので、「いっぱいです」の案内は消す
     setG(ns);
     scheduleSaveRun(ns);
   }
@@ -3990,6 +4943,7 @@ export default function KiriwatariNoMori() {
   };
   // 確認画面用: 全部拾えたらそのまま進む
   const takeAllAndGo = () => {
+    if (bagOver(gRef.current, invCapOf(metaRef.current, gRef.current.orbBagBonus || 0)) > 0) return;
     const ns = takeAllPure(gRef.current);
     if (ns.drops.length === 0) {
       setG(nextNode({ ...ns, confirm: null })); // nextNode 自体が保存まで行う
@@ -4006,6 +4960,7 @@ export default function KiriwatariNoMori() {
   // 「保存された敵」がずれる恐れがある。gRef.current から同期的に一度だけ計算する。
   function tryProceed() {
     const s = gRef.current;
+    if (bagOver(s, invCapOf(metaRef.current, s.orbBagBonus || 0)) > 0) return; // 袋が上限を超えている間は、次の戦いへ進めない
     if (s.rewardAdPending) return; // 広告の読み込み/視聴中は先へ進めない(結果が別の画面に適用されるのを防ぐ)
     if (s.drops.length > 0) {
       // 設定で確認を OFF にしている場合は確認を挟まず、そのまま置いて進む(proceedLeaving と同じ)。
@@ -4017,6 +4972,7 @@ export default function KiriwatariNoMori() {
   }
   const proceedLeaving = () => {
     if (gRef.current.rewardAdPending) return;
+    if (bagOver(gRef.current, invCapOf(metaRef.current, gRef.current.orbBagBonus || 0)) > 0) return;
     setG(nextNode({ ...gRef.current, drops: [], confirm: null, full: false }));
   };
 
@@ -4257,7 +5213,7 @@ export default function KiriwatariNoMori() {
       <div className="kw-root" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{CSS}</style>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontFamily: "var(--font-display)", fontSize: 10, letterSpacing: ".55em", color: "rgba(157,180,166,.45)", marginBottom: 14 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 11.5, letterSpacing: ".55em", color: "rgba(157,180,166,.45)", marginBottom: 14 }}>
             now loading
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
@@ -4292,7 +5248,7 @@ export default function KiriwatariNoMori() {
           </div>
           {!meta.everHadWeapon && (
             <div style={{ width: "100%", maxWidth: 480, marginTop: 6 }}>
-              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".3em", marginBottom: 8, textAlign: "center" }}>はじめの武器を選ぶ</div>
+              <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".3em", marginBottom: 8, textAlign: "center" }}>はじめの武器を選ぶ</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
                 {["dagger", "axe", "bow", "staff"].map((type) => {
                   const t = WEAPON_TYPES[type];
@@ -4306,8 +5262,8 @@ export default function KiriwatariNoMori() {
                         <AssetIcon assetId={t.asset} size={16} color={sel ? "var(--hotaru)" : "var(--mist)"} />
                         <span className="kw-typechip" style={{ color: sel ? "var(--hotaru)" : undefined }}>{t.dmgType}</span>
                       </div>
-                      <div className="kw-wname" style={{ fontSize: 12 }}>{t.label}</div>
-                      <div style={{ fontSize: 9.5, color: "var(--mist)", lineHeight: 1.5, marginTop: 2 }}>{t.tags[0]}</div>
+                      <div className="kw-wname" style={{ fontSize: 13 }}>{t.label}</div>
+                      <div style={{ fontSize: 11, color: "var(--mist)", lineHeight: 1.5, marginTop: 2 }}>{t.tags[0]}</div>
                     </button>
                   );
                 })}
@@ -4352,13 +5308,33 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, chapterSelect: true }))}>章を選ぶ</button>
             </div>
           )}
+          {/* ボスラッシュ: 百層を踏破した人にだけ表示する。中断データは通常の冒険とは別枠。 */}
+          {meta.clears > 0 && (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
+              {savedRush ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                  <button className="kw-btn" style={{ padding: "11px 28px", fontSize: 13, borderColor: "var(--hotaru)", color: "var(--hotaru)" }}
+                    onClick={() => resumeRush(savedRush)}>
+                    ボスラッシュ 再開（{rushIsSecret(savedRush.rush.idx) ? "最終戦" : `${savedRush.rush.idx + 1}/${RUSH.bosses}`}）
+                  </button>
+                  <button className="kw-btn ghost" style={{ padding: "4px 14px", fontSize: 12, opacity: .8 }}
+                    onClick={() => setG((s) => ({ ...s, rushRestart: true }))}>最初からやり直す</button>
+                </div>
+              ) : (
+                <button className="kw-btn ghost" style={{ padding: "11px 28px", fontSize: 13, borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)", letterSpacing: ".2em" }}
+                  onClick={() => setG((s) => ({ ...s, rushIntro: true }))}>
+                  <Crown size={13} style={{ display: "inline", marginRight: 6, verticalAlign: "-1px" }} />ボ ス ラ ッ シ ュ
+                </button>
+              )}
+            </div>
+          )}
           {(eventStatus(meta).withinPeriod || meta.eventReward) && (
             <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
               <button className="kw-btn ghost" style={{ padding: "10px 28px", position: "relative",
                 borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)",
                 textAlign: "center", lineHeight: 1.5 }}
                 onClick={() => { setShowEventBanner(false); setG({ screen: "event", event: { phase: "intro" } }); }}>
-                <div style={{ fontSize: 10, opacity: 0.75, letterSpacing: ".1em" }}>🎉 期間限定イベント</div>
+                <div style={{ fontSize: 11.5, opacity: 0.75, letterSpacing: ".1em" }}>🎉 期間限定イベント</div>
                 <div style={{ fontSize: 14, letterSpacing: ".2em" }}>宝 樹 の 祠</div>
                 {eventStatus(meta).available && (
                   <span style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%",
@@ -4368,26 +5344,26 @@ export default function KiriwatariNoMori() {
             </div>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
-            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 13 }}
               onClick={() => setG((s) => ({ ...s, howToPlay: true }))}>遊び方</button>
-            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 13 }}
               onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
               スキルツリー{(meta.dewBank || 0) > 0 ? ` ✦${meta.dewBank}` : ""}
             </button>
-            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 12 }}
+            <button className="kw-btn ghost" style={{ padding: "8px 16px", fontSize: 13 }}
               onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図鑑</button>
           </div>
-          <div className="kw-tmeta" style={{ marginTop: 10, fontSize: 11.5 }}>
+          <div className="kw-tmeta" style={{ marginTop: 10, fontSize: 12.5 }}>
             転生 {meta.deaths} 回 ／ 最深 {floorLabel(meta.bestFloor)} ／ 継承枠 {meta.slots}
             {meta.inherited?.length > 0 && <> ／ 継承品 {meta.inherited.length} 点</>}
             {meta.clears > 0 && <> ／ 百層踏破 {meta.clears} 回</>}
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
-            <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
+            <button className="kw-btn ghost" style={{ fontSize: 12, padding: "6px 16px", opacity: .65 }}
               onClick={writeReview}>
               ★ レビューする
             </button>
-            <button className="kw-btn ghost" style={{ fontSize: 11, padding: "6px 16px", opacity: .65 }}
+            <button className="kw-btn ghost" style={{ fontSize: 12, padding: "6px 16px", opacity: .65 }}
               onClick={() => openURL(DEVELOPER_URL)}>
               他のアプリも見る
             </button>
@@ -4403,7 +5379,7 @@ export default function KiriwatariNoMori() {
                 ボスを倒した章の頭から再挑戦できます。継承品はそのまま持ち込まれます。
                 {savedRun && savedRun.phase !== "dead" && <>
                   中断中の冒険がある場合は、所持品とHPを保ったまま章の頭へ移動します。<br />
-                  <span style={{ fontSize: 10.5 }}>移動すると「今の1回の冒険」の現在地が変わります。その後「中断してタイトルへ」で戻ると、次の「再開」は移動先の章から始まります(踏破記録・継承枠などの記録自体は減りません)。</span>
+                  <span style={{ fontSize: 12 }}>移動すると、今の冒険の現在地が移動先の章に変わります。「中断してタイトルへ」で戻ったあとの「再開」は、その章から始まります。踏破記録や継承枠などの記録は減りません。</span>
                 </>}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 12 }}>
@@ -4442,9 +5418,9 @@ export default function KiriwatariNoMori() {
                       <StageBackdrop floor={i * 10 + 1} preview={true} />
                       {/* テキスト */}
                       <div style={{ position: "absolute", inset: 0, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-                        <div style={{ fontSize: 9, color: "var(--mist)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
+                        <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".25em", marginBottom: 2 }}>第{ch}章</div>
                         <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)", lineHeight: 1.3 }}>{st.name}</div>
-                        <div style={{ fontSize: 9.5, marginTop: 3, color: isHereNow ? "var(--mist)" : cleared ? "#8fd39a" : "var(--hotaru)" }}>
+                        <div style={{ fontSize: 11, marginTop: 3, color: isHereNow ? "var(--mist)" : cleared ? "#8fd39a" : "var(--hotaru)" }}>
                           {isHereNow ? "◆ 今いる章" : cleared ? "✓ クリア済み" : "▶ 現在の到達地点"}
                         </div>
                       </div>
@@ -4454,11 +5430,55 @@ export default function KiriwatariNoMori() {
               </div>
               <div className="kw-divider" />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <button className="kw-btn ghost" style={{ fontSize: 11, color: "var(--mist)", padding: "6px 12px" }}
+                <button className="kw-btn ghost" style={{ fontSize: 12, color: "var(--mist)", padding: "6px 12px" }}
                   onClick={() => setG((s) => ({ ...s, chapterSelect: false, confirmReset: true }))}>
                   やり直す
                 </button>
-                <button className="kw-btn ghost" style={{ padding: "6px 16px", fontSize: 12 }} onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>閉じる</button>
+                <button className="kw-btn ghost" style={{ padding: "6px 16px", fontSize: 13 }} onClick={() => setG((s) => ({ ...s, chapterSelect: false }))}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {g.rushIntro && (
+          <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, rushIntro: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 420, textAlign: "left" }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ letterSpacing: ".2em", textAlign: "center", color: "var(--hotaru)" }}>ボスラッシュ</h2>
+              <div style={{ fontSize: 14, lineHeight: 1.9, color: "var(--paper)", marginTop: 10, textAlign: "center" }}>
+                第1章〜第10章のボスと、続けて戦います。<br />
+                <span style={{ fontSize: 12.5, color: "var(--mist)" }}>くわしくは「遊び方」の⑥をご覧ください。</span>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 10, textAlign: "center" }}>
+                最高記録 {Math.min(meta.rushBest || 0, RUSH.bosses)} / {RUSH.bosses} ／ 全ボス撃破 {meta.rushClears || 0} 回
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--paper)", marginTop: 10, textAlign: "center", lineHeight: 1.8 }}>
+                挑戦すると、<br />倒した数に応じて<b style={{ color: "var(--hotaru)" }}>精の結晶</b>が1〜{RUSH.rewardTiers[0].crystals}個もらえます。<br />
+                {rushAttemptsLeft(meta) > 0
+                  ? <>本日あと<b style={{ color: "var(--hotaru)" }}>{rushAttemptsLeft(meta)}</b>/{RUSH.dailyLimit}回(日本時間の0時にリセット)</>
+                  : <span style={{ color: "var(--danger)" }}>本日の挑戦は終わりました。また明日(日本時間の0時から)。</span>}
+              </div>
+              <div className="kw-actions" style={{ marginTop: 14 }}>
+                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                  onClick={() => setG((s) => ({ ...s, rushIntro: false }))}>閉じる</button>
+                <button className="kw-btn primary" disabled={rushAttemptsLeft(meta) <= 0} onClick={() => startBossRush()}>挑戦する</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {g.rushRestart && savedRush && (
+          <div className="kw-overlay top" onClick={() => setG((s) => ({ ...s, rushRestart: false }))}>
+            <div className="kw-panel kw-sheet" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ color: "var(--danger)" }}>ボスラッシュをやり直す</h2>
+              <div className="kw-sub">
+                中断中の挑戦({rushIsSecret(savedRush.rush.idx) ? "最終戦" : `${savedRush.rush.idx + 1}/${RUSH.bosses}`})を破棄して、今の装備で最初から始めます。<br />
+                冒険を中断中ならその装備と袋、なければ継承品を使います。<br />
+                破棄した挑戦の分の精の結晶は受け取れません。元に戻せません。<br />
+                新しく始めると、本日の挑戦を1回使います(あと{rushAttemptsLeft(meta)}/{RUSH.dailyLimit}回)。
+              </div>
+              <div className="kw-actions">
+                <button className="kw-btn ghost" style={{ marginRight: "auto" }}
+                  onClick={() => setG((s) => ({ ...s, rushRestart: false }))}>← キャンセル</button>
+                <button className="kw-btn" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+                  disabled={rushAttemptsLeft(meta) <= 0} onClick={() => startBossRush()}>やり直す</button>
               </div>
             </div>
           </div>
@@ -4494,10 +5514,16 @@ export default function KiriwatariNoMori() {
             { id: "gear", label: "③ 装備" },
             { id: "item", label: "④ アイテム" },
             { id: "death", label: "⑤ 死と継承" },
+            ...((meta.clears || 0) >= 1 ? [{ id: "rush", label: "⑥ ボスラッシュ" }] : []),
           ];
           const heading = (text) => (
-            <div style={{ fontSize: 11, color: "var(--hotaru)", letterSpacing: ".2em", margin: "4px 0 8px" }}>── {text} ──</div>
+            <div style={{ fontSize: 12, color: "var(--hotaru)", letterSpacing: ".2em", margin: "4px 0 8px" }}><Hash />{text}</div>
           );
+          // 読みやすさ: 13.5px・行間広め。見出し(b)で段落を区切り、箇条書きは「・」+改行で並べる。
+          const guideText = { fontSize: 13.5, lineHeight: 1.9, color: "var(--paper)" };
+          const hl = { color: "var(--hotaru)" };
+          const pp = { color: "var(--paper)" };
+          const b = (text) => <div style={{ fontSize: 13, fontWeight: 700, color: "var(--hotaru)", margin: "14px 0 4px" }}>{text}</div>;
           const ITEM_KIND_LABEL = { heal: "回復", cure: "解毒", buff: "バフ", bomb: "攻撃", orb: "特殊", metaHp: "特殊" };
           return (
           <div className="kw-overlay" onClick={() => setG((s) => ({ ...s, howToPlay: false }))}>
@@ -4508,16 +5534,29 @@ export default function KiriwatariNoMori() {
                 <button className="kw-btn ghost" style={{ padding: "6px 12px" }}
                   onClick={() => setG((s) => ({ ...s, howToPlay: false }))}><X size={14} /></button>
               </div>
-              <div style={{ overflowY: "auto", flex: 1, padding: "14px 20px 4px" }}>
+              <div ref={guideScrollRef} style={{ overflowY: "auto", flex: 1, padding: "14px 20px 4px" }}>
 
                 {guideTab === "battle" && (
                   <>
                     {heading("戦闘の進め方")}
-                    <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)" }}>
-                      下の<b style={{ color: "var(--hotaru)" }}>武器カード</b>をタップすると攻撃します。単体攻撃の武器は続けて狙う敵をタップ、全体攻撃の武器(本・楽器)はタップした瞬間に発動します。敵は複数体いる時があり、タップで狙いを選べます。<br /><br />
-                      自分が1回行動すると、必ず敵にも1手番が返ってきます。<b style={{ color: "var(--hotaru)" }}>防御</b>ボタンで構えると、次に受けるダメージが半分になります。HPが減ってきたら防御か回復アイテムで立て直しましょう。<br /><br />
-                      ダメージ欄に「<b style={{ color: "var(--hotaru)" }}>弱点</b>」と出たら<b style={{ color: "var(--paper)" }}>1.6倍</b>、「<b style={{ color: "var(--paper-dim)" }}>耐性</b>」と出たら<b style={{ color: "var(--paper)" }}>0.5倍</b>のダメージになっています。一度見た弱点・耐性は図鑑に記録され、次に同じ敵と会った時の目印になります。<br /><br />
-                      <b style={{ color: "var(--hotaru)" }}>再使用までのターン数(CT)</b>: 武器を使うと、その武器の再使用までのターン数がわかっている場合はロックされます。表示されているCTの数だけ、自分のターンが来るたびに1ずつ減っていき、0になると再び使えます。CT表示が無い武器(短剣・弓)は毎ターン使えます。
+                    <div style={guideText}>
+                      {b("攻撃のしかた")}
+                      ・下の<b style={hl}>武器</b>アイコンをタップすると攻撃します。<br />
+                      ・単体攻撃の武器は、続けて狙う敵をタップします。<br />
+                      ・全体攻撃の武器(本・楽器)は、タップするとすぐ発動します。<br />
+                      ・武器アイコンを長押しすると、詳しい説明が出ます。
+                      {b("敵の反撃と防御")}
+                      ・自分が1回行動すると、敵も1回行動します。<br />
+                      ・<b style={hl}>防御</b>を押すと、次に受けるダメージが半分になります。<br />
+                      ・HPが減ったら、防御か回復アイテムで立て直しましょう。
+                      {b("弱点と耐性")}
+                      ・「<b style={hl}>弱点</b>」と出たら、ダメージは<b style={pp}>1.6倍</b>です。<br />
+                      ・「<b style={{ color: "var(--paper-dim)" }}>耐性</b>」と出たら、<b style={pp}>0.5倍</b>です。<br />
+                      ・一度見た弱点・耐性は図鑑に残ります。次に同じ敵と会うときの目印になります。
+                      {b("再使用までのターン数(CT)")}
+                      ・武器を使うと、再使用までのターン数が表示され、使えなくなります。<br />
+                      ・自分のターンが来るたびに1ずつ減り、0になると、また使えます。<br />
+                      ・短剣と弓は、毎ターン使えます。
                     </div>
                   </>
                 )}
@@ -4525,8 +5564,11 @@ export default function KiriwatariNoMori() {
                 {guideTab === "weapon" && (
                   <>
                     {heading("武器の効果(属性と特徴)")}
-                    <div style={{ fontSize: 12.5, lineHeight: 1.8, color: "var(--mist)", marginBottom: 10 }}>
-                      武器には <b style={{ color: "var(--paper)" }}>斬・打・突・魔・音</b> の5属性があり、敵ごとに効きやすい/効きにくい属性が決まっています。手こずったら別属性の武器を試しましょう。ダメージ倍率は基礎攻撃力に対する倍率です。
+                    <div style={{ ...guideText, color: "var(--mist)", marginBottom: 10 }}>
+                      武器には <b style={pp}>斬・打・突・魔・音</b> の5つの属性があります。<br />
+                      敵ごとに、効きやすい属性と効きにくい属性が決まっています。<br />
+                      手こずったら、別の属性の武器を試しましょう。<br />
+                      ダメージの倍率は、武器の基礎攻撃力が基準です。
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {GUIDE_WEAPON_ORDER.map((type) => {
@@ -4536,10 +5578,10 @@ export default function KiriwatariNoMori() {
                             <AssetIcon assetId={t.asset} size={18} color="var(--hotaru)" style={{ flexShrink: 0, marginTop: 2 }} />
                             <div style={{ flex: 1 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <span style={{ fontSize: 12, color: "var(--paper)", fontFamily: "var(--font-display)", fontWeight: 700 }}>{t.label}</span>
+                                <span style={{ fontSize: 14, color: "var(--paper)", fontFamily: "var(--font-display)", fontWeight: 700 }}>{t.label}</span>
                                 <span className="kw-typechip">{t.dmgType}</span>
                               </div>
-                              <div style={{ fontSize: 11, color: "var(--mist)", marginTop: 3, lineHeight: 1.7 }}>{GUIDE_WEAPON_MECHANICS[type]}</div>
+                              <div style={{ fontSize: 13, color: "var(--mist)", marginTop: 3, lineHeight: 1.75, whiteSpace: "pre-line" }}>{GUIDE_WEAPON_MECHANICS[type]}</div>
                             </div>
                           </div>
                         );
@@ -4551,10 +5593,18 @@ export default function KiriwatariNoMori() {
                 {guideTab === "gear" && (
                   <>
                     {heading("装備を整えるタイミング")}
-                    <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)" }}>
-                      <b style={{ color: "var(--hotaru)" }}>装備の変更(武器・防具の付け替え)は戦闘中はできません。</b>新しい章に入ると「戦闘準備」の画面が自動で開くので、そこで武具を整えてから最初の戦闘に臨みましょう。<br /><br />
-                      それ以外の場面では、サブバーの<b style={{ color: "var(--paper)" }}>「袋」</b>ボタンから武具の付け替え・回復アイテムの使用・不要品を「捨てる」で手放す、が行なえます。手放されたくない装備は鍵アイコンで<b style={{ color: "var(--paper)" }}>ロック</b>しておくと誤って「捨てる」ことがなくなります(ロック中でも新しい武具への交換は可能です。ロックが防ぐのは「捨てる」操作だけです)。<br /><br />
-                      武器スロットが空きなく新しい武器を装備しようとすると、どの武器と交代するかを選ぶ画面が出ます。装備中の武器欄の「並び替え」ボタンからは、ドラッグで武器の並び順(左右)だけを入れ替えられます。
+                    <div style={guideText}>
+                      <b style={hl}>武器・防具の付け替えは、戦闘中はできません。</b>
+                      {b("章のはじめ")}
+                      ・新しい章に入ると、「戦闘準備」の画面が開きます。<br />
+                      ・ここで装備を整えてから、最初の戦闘に入りましょう。
+                      {b("それ以外のとき")}
+                      ・「<b style={pp}>袋</b>」ボタンから、付け替え・回復アイテムの使用・「捨てる」ができます。<br />
+                      ・手放したくない装備は、鍵アイコンで<b style={pp}>ロック</b>しておきましょう。誤って捨てるのを防げます。<br />
+                      ・ロックしていても、新しい装備への交換はできます。防げるのは「捨てる」だけです。
+                      {b("武器の枠がいっぱいのとき")}
+                      ・新しい武器を装備しようとすると、入れ替える武器を選ぶ画面が出ます。<br />
+                      ・装備中の武器欄の「並び替え」では、ドラッグで武器の並び順(左右)を変えられます。
                     </div>
                   </>
                 )}
@@ -4562,21 +5612,24 @@ export default function KiriwatariNoMori() {
                 {guideTab === "item" && (
                   <>
                     {heading("アイテムの分類")}
-                    <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", marginBottom: 10 }}>
-                      戦闘に勝つ・宝箱を開ける・泉に立ち寄る、といった行動で武器・防具・消耗品のいずれかが手に入ります。消耗品は主に5種類です。
+                    <div style={{ ...guideText, marginBottom: 10 }}>
+                      戦闘に勝つ、宝箱を開ける、泉に立ち寄る、などで、武器・防具・消耗品が手に入ります。<br />
+                      消耗品は主に5種類です。
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {Object.entries(CONSUMABLES).map(([id, c]) => (
                         <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "rgba(0,0,0,.2)", borderRadius: 8 }}>
                           <AssetIcon assetId={c.asset} size={18} color="var(--hotaru)" />
-                          <div style={{ minWidth: 66, fontSize: 11, color: "var(--paper)" }}>{c.label}</div>
+                          <div style={{ minWidth: 66, fontSize: 13, color: "var(--paper)" }}>{c.label}</div>
                           <span className="kw-typechip">{ITEM_KIND_LABEL[c.kind] || c.kind}</span>
-                          <div style={{ fontSize: 11, color: "var(--mist)", flex: 1 }}>{c.desc}</div>
+                          <div style={{ fontSize: 13, color: "var(--mist)", flex: 1 }}>{c.desc}</div>
                         </div>
                       ))}
                     </div>
-                    <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", marginTop: 14 }}>
-                      武器・防具には<b style={{ color: "var(--hotaru)" }}>レア度</b>があります({RARITIES.map((r) => r.label).join("・")}の{RARITIES.length}段階)。レア度が高いほど性能が良く、より奥の階層で見つかりやすくなります。
+                    <div style={{ ...guideText, marginTop: 14 }}>
+                      武器と防具には<b style={hl}>レア度</b>があります。<br />
+                      {RARITIES.map((r) => r.label).join("・")}の{RARITIES.length}段階です。<br />
+                      レア度が高いほど性能がよく、奥の階層ほど見つかりやすくなります。
                     </div>
                   </>
                 )}
@@ -4584,9 +5637,40 @@ export default function KiriwatariNoMori() {
                 {guideTab === "death" && (
                   <>
                     {heading("死と継承")}
-                    <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)" }}>
-                      倒れても、そこで選んだ装備は次の旅へ持ち越せます(継承)。ロック中のアイテムは継承候補として優先的に選ばれます。<br /><br />
-                      章のボスを倒しておくと、以後は死んでもその章の頭から再開できるようになります。行き詰まったら深追いせず引き返すのも手です。
+                    <div style={guideText}>
+                      {b("継承")}
+                      ・倒れても、選んだ装備は次の旅へ持ち越せます。<br />
+                      ・ロックしたアイテムは、継承の候補として優先されます。
+                      {b("再開")}
+                      ・章のボスを倒しておくと、死んでも、その章の頭から再開できます。<br />
+                      ・行き詰まったら、深追いせずに引き返すのも手です。
+                    </div>
+                  </>
+                )}
+
+                {guideTab === "rush" && (
+                  <>
+                    {heading("ボスラッシュ")}
+                    <div style={guideText}>
+                      第1章〜第10章のボスと、続けて戦う挑戦です。
+                      {b("装備")}
+                      ・今持っている武器・防具で戦います。<br />
+                      ・冒険の途中なら、その装備と袋を使います。そうでなければ、継承品を使います。<br />
+                      ・使っても、減りません。始める前に付け替えられます。
+                      {b("ボス")}
+                      ・ボスは通常より強く、倒すごとに<b style={hl}>取り巻きが増えて</b>いきます。<br />
+                      ・ボスは、特定の武器で突くと守りが崩れます。どの武器かは、戦って探しましょう。<br />
+                      ・ボスは数ターンごとに、武器封じ・鞄封じ・防御封じなどの技を使います。奥のボスほど、種類が増えます。<br />
+                      ・その武器を持っていないときは、挑戦の間だけ借りられます。
+                      {b("休息")}
+                      ・ボスを倒すと休息があり、HPが回復して、強化を1つ選べます。
+                      {b("力尽きたとき")}
+                      ・動画を見ると、1度だけ立て直せます。
+                      {b("ごほうび")}
+                      ・挑戦すると、倒した数に応じて<b style={hl}>精の結晶</b>が1〜{RUSH.rewardTiers[0].crystals}個もらえます。<br />
+                      ・結果の画面で動画を見ると、結晶が2倍になります。<br />
+                      ・挑戦できるのは、1日{RUSH.dailyLimit}回までです(日本時間の0時にリセット)。<br />
+                      ・通常の冒険の継承品と、到達した章には、影響しません。
                     </div>
                   </>
                 )}
@@ -4598,7 +5682,7 @@ export default function KiriwatariNoMori() {
                 <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", width: "max-content" }}>
                   {GUIDE_TABS.map((tb) => (
                     <button key={tb.id} className={`kw-btn ${guideTab === tb.id ? "primary" : "ghost"}`}
-                      style={{ padding: "6px 12px", fontSize: 11, flexShrink: 0 }}
+                      style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
                       onClick={() => setGuideTab(tb.id)}>
                       {tb.label}
                     </button>
@@ -4637,9 +5721,9 @@ export default function KiriwatariNoMori() {
             <div className="kw-panel kw-sheet" style={{ maxWidth: 320, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
               <div style={{ fontSize: 28 }}>🎉</div>
               <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 17 }}>宝 樹 の 祠</h3>
-              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".1em", marginBottom: 14 }}>期間限定イベント開催中</div>
-              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", marginBottom: 16 }}>
-                {EVENT_START.replaceAll("-", ".")}〜{EVENT_END.replaceAll("-", ".")}<br />
+              <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".1em", marginBottom: 14 }}>期間限定イベント開催中</div>
+              <div style={{ fontSize: 13, lineHeight: 1.9, color: "var(--paper)", marginBottom: 16 }}>
+                {EVENT_START_LABEL} 0:00〜{EVENT_END_LABEL}<br />
                 毎日1回、金枝の古精に会いに行こう。<br />
                 報酬は継承枠か精の結晶に変えられるよ。
               </div>
@@ -4664,7 +5748,7 @@ export default function KiriwatariNoMori() {
                 <Sparkles size={28} color="var(--hotaru)" strokeWidth={1.5} />
               </div>
               <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 16 }}>お詫びと感謝の印</h3>
-              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--paper)", margin: "10px 0 18px" }}>
+              <div style={{ fontSize: 13, lineHeight: 1.9, color: "var(--paper)", margin: "10px 0 18px" }}>
                 以前のバージョンで、宝樹の雫を使っても継承枠・精の結晶が増えない不具合がありました。<br />
                 お詫びとして、<b style={{ color: "var(--hotaru)" }}>精の結晶を{COMPENSATION_DEW_AMOUNT}個</b>を配布いたします。不具合が生じてしまい申し訳ございません。
               </div>
@@ -4706,10 +5790,10 @@ export default function KiriwatariNoMori() {
           <X size={16} />
         </button>
         <div className="kw-title">
-          <div className="kw-tsub">10,000 ダウンロード記念</div>
+          <div className="kw-tsub">カテゴリ別ランキング 50位突破記念</div>
           <h2 style={{ fontSize: 26 }}>宝 樹 の 祠</h2>
-          <div style={{ fontSize: 10.5, letterSpacing: ".2em", color: "var(--paper-dim)", marginTop: -2 }}>
-            {EVENT_START.replaceAll("-", ".")} 〜 {EVENT_END.replaceAll("-", ".")} 期間限定
+          <div style={{ fontSize: 12, letterSpacing: ".2em", color: "var(--paper-dim)", marginTop: -2 }}>
+            {EVENT_START_LABEL} 0:00 〜 {EVENT_END_LABEL} 期間限定
           </div>
 
           {ev.phase === "intro" && (
@@ -4719,26 +5803,26 @@ export default function KiriwatariNoMori() {
                 display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <AssetIcon assetId="goldSprite" size={40} color="var(--hotaru)" />
               </div>
-              <div style={{ fontSize: 12.5, lineHeight: 1.9, color: "var(--mist)" }}>
+              <div style={{ fontSize: 13, lineHeight: 1.9, color: "var(--mist)" }}>
                 記念の祠には、期間中の日ごとに一度だけ金枝の古精が姿を見せる。<br />
                 捕まえれば宝樹の雫を授かり、精の結晶か継承枠に変えられる。
               </div>
               {est.clockBack ? (
-                <div style={{ marginTop: 14, fontSize: 11.5, color: "var(--danger)", lineHeight: 1.8 }}>
+                <div style={{ marginTop: 14, fontSize: 12.5, color: "var(--danger)", lineHeight: 1.8 }}>
                   端末の時刻が実際より前に設定されています。<br />正しい時刻に戻すと挑戦できます。
                 </div>
               ) : est.afterPeriod ? (
-                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>記念イベントは終了しました。ご参加ありがとう。</div>
+                <div style={{ marginTop: 14, fontSize: 13, color: "var(--hotaru)" }}>記念イベントは終了しました。ご参加ありがとう。</div>
               ) : est.beforePeriod ? (
-                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>{EVENT_START.replaceAll("-", ".")} から開催します。</div>
+                <div style={{ marginTop: 14, fontSize: 13, color: "var(--hotaru)" }}>{EVENT_START_LABEL} 0:00 から開催します。</div>
               ) : est.available ? (
                 <>
-                  <div style={{ marginTop: 16, fontSize: 10.5, color: "var(--paper-dim)" }}>挑戦すると本日分を消費します</div>
+                  <div style={{ marginTop: 16, fontSize: 12, color: "var(--paper-dim)" }}>挑戦すると本日分を消費します</div>
                   <button className="kw-btn primary" style={{ marginTop: 8, padding: "12px 32px", fontSize: 13 }}
                     onClick={eventStart}>挑 戦 す る</button>
                 </>
               ) : (
-                <div style={{ marginTop: 14, fontSize: 12, color: "var(--hotaru)" }}>本日は挑戦済み。また明日、姿を見せるだろう。</div>
+                <div style={{ marginTop: 14, fontSize: 13, color: "var(--hotaru)" }}>本日は挑戦済み。また明日、姿を見せるだろう。</div>
               )}
             </div>
           )}
@@ -4753,7 +5837,7 @@ export default function KiriwatariNoMori() {
                   animation: "kw-dot-fade 2s ease-in-out infinite" }}>
                   <AssetIcon assetId="goldSprite" size={48} color="var(--hotaru)" />
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--hotaru)", letterSpacing: ".1em", marginBottom: 8 }}>金枝の古精</div>
+                <div style={{ fontSize: 12.5, color: "var(--hotaru)", letterSpacing: ".1em", marginBottom: 8 }}>金枝の古精</div>
                 {/* 気配バー — ターンが進むほど消えていく */}
                 <div style={{ display: "flex", gap: 4, justifyContent: "center", maxWidth: 140, margin: "0 auto" }}>
                   {[1, 2, 3].map((i) => {
@@ -4766,11 +5850,11 @@ export default function KiriwatariNoMori() {
                     );
                   })}
                 </div>
-                <div style={{ fontSize: 9, color: "var(--mist)", letterSpacing: ".1em", marginTop: 4 }}>気 配</div>
+                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".1em", marginTop: 4 }}>気 配</div>
               </div>
 
               {/* ターン進行テキスト */}
-              <div style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.9, color: "var(--mist)", minHeight: 46, textAlign: "center" }}>
+              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.9, color: "var(--mist)", minHeight: 46, textAlign: "center" }}>
                 {turn === 1 && "古精は枝から枝へ、金色の尾を引いて渡っていく。"}
                 {turn === 2 && "そっと手を伸ばす。光の粒が指先をかすめた。"}
                 {turn >= 3 && "いま――。こぼれる光ごと、両手で包み込む。"}
@@ -4792,7 +5876,7 @@ export default function KiriwatariNoMori() {
                   宝樹の雫 ×{rewardTotal}
                 </div>
               </div>
-              <div style={{ textAlign: "center", fontSize: 11, color: "var(--mist)", marginBottom: 12 }}>
+              <div style={{ textAlign: "center", fontSize: 12, color: "var(--mist)", marginBottom: 12 }}>
                 古精を捕まえた。{remaining > 0 ? "使いみちを選んでください" : "また明日、祠へ。"}
               </div>
 
@@ -4801,15 +5885,15 @@ export default function KiriwatariNoMori() {
                   <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
                     onClick={() => eventConvert("slot")}>
                     <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>継承枠 +1</div>
-                    <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
+                    <div style={{ fontSize: 11.5, color: "var(--mist)", marginTop: 3, whiteSpace: "normal" }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
                   </button>
                   <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
                     onClick={() => eventConvert("crystal")}>
                     <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>精の結晶 +1</div>
-                    <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>スキルツリーの習得に使える結晶に変換する。現在 {meta.dewBank || 0} 個。</div>
+                    <div style={{ fontSize: 11.5, color: "var(--mist)", marginTop: 3, whiteSpace: "normal" }}>スキルの習得に使う。現在 {meta.dewBank || 0} 個。</div>
                   </button>
                   {remaining > 1 && (
-                    <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--paper-dim)" }}>あと {remaining} つ選べます</div>
+                    <div style={{ textAlign: "center", fontSize: 12, color: "var(--paper-dim)" }}>あと {remaining} つ選べます</div>
                   )}
                 </div>
               ) : (
@@ -4818,7 +5902,7 @@ export default function KiriwatariNoMori() {
               )}
 
               {canAd && (
-                <button className="kw-btn ghost" style={{ width: "100%", marginTop: 10, padding: "10px", fontSize: 11.5,
+                <button className="kw-btn ghost" style={{ width: "100%", marginTop: 10, padding: "10px", fontSize: 12.5,
                   color: "var(--hotaru)", borderColor: "rgba(232,180,74,.35)", opacity: adPending ? .6 : 1 }}
                   disabled={adPending}
                   onClick={() => requestRewardAd("eventDew")}>
@@ -4835,8 +5919,22 @@ export default function KiriwatariNoMori() {
 
   const mx = maxHpOf(g);
   const def = armorDef(g);
+  // 袋のタブ: 装備(戦闘中は出さない。章の頭の戦闘準備だけ例外)/ 袋の中身 / スキルツリー(結晶か習得済みがあるときだけ)。
+  const bagTabs = [
+    ...((g.phase !== "battle" || g.gearPrep) ? [["equip", "装備"]] : []),
+    ["items", `袋の中身 ${g.inv.length}/${invCap}`],
+    ...(((meta.dewBank || 0) > 0 || Object.keys(meta.skills || {}).some((id) => SKILL_BY_ID[id])) ? [["skill", "スキルツリー"]] : []),
+  ];
+  const bagTabNow = bagTabs.some(([id]) => id === bagTab) ? bagTab : (g.gearPrep ? "equip" : "items");
   const disc = meta.discovered || {};
   const floatsFor = (tid) => g.floats.filter((f) => f.targetId === tid);
+  // ボスラッシュ: 倒した取り巻きがいるあいだ、立ち上がるまでのターン数を知らせる。
+  const rushRespawnLine = (() => {
+    if (!g.rush || g.phase !== "battle" || !g.enemies.some((e) => e.respawn && e.hp <= 0 && !e.fled)) return null;
+    const every = rushRespawnEvery(meta?.skills);
+    const left = ((every - ((g.turn || 1) % every)) % every) + 1; // 今のターンを含めて、あと何ターンか
+    return <span className="kw-respawn-note">{left <= 1 ? "このターンの終わりに、倒した取り巻きが立ち上がる" : `あと${left}ターンで、倒した取り巻きが立ち上がる`}</span>;
+  })();
 
   /* ---------- ラン画面 ---------- */
   const nodeLabel = { battle: "戦闘", chest: "宝箱", spring: "泉", boss: "主" };
@@ -4855,7 +5953,12 @@ export default function KiriwatariNoMori() {
         <div className="kw-head">
           <div className="kw-floor">
             <small>{STAGES[stageOf(g.floor)].read}</small>
-            {floorLabel(g.floor)}<span style={{ fontSize: 14, color: "var(--mist)", marginLeft: 8 }}>層</span>
+            {g.rush
+              ? <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "baseline", columnGap: 8, fontSize: 20, letterSpacing: ".04em" }}>
+                  <span style={{ whiteSpace: "nowrap" }}>ボスラッシュ</span>
+                  <span style={{ fontSize: 14, color: "var(--mist)", whiteSpace: "nowrap" }}>{rushIsSecret(g.rush.idx) ? "最終戦" : `${g.rush.idx + 1} / ${RUSH.bosses}`}</span>
+                </span>
+              : <>{floorLabel(g.floor)}<span style={{ fontSize: 14, color: "var(--mist)", marginLeft: 8 }}>層</span></>}
           </div>
           <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
             <div style={{ display: "flex", gap: 6 }}>
@@ -4863,32 +5966,110 @@ export default function KiriwatariNoMori() {
                 onClick={() => setG((s) => ({ ...s, settingsOpen: true }))}>
                 <Settings size={14} />
               </button>
-              <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 10, letterSpacing: ".1em" }}
+              <button className="kw-btn ghost" style={{ padding: "4px 10px", fontSize: 11.5, letterSpacing: ".1em" }}
                 onClick={() => setG((s) => ({ ...s, bestiary: true }))}>図鑑</button>
-              <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 10, letterSpacing: ".1em" }}
+              <button className="kw-btn ghost" style={{ padding: "4px 12px", fontSize: 11.5, letterSpacing: ".1em" }}
                 disabled={g.busy}
                 onClick={() => setG((s) => ({ ...s, confirm: "title" }))}>タイトルへ</button>
             </div>
             <div className="kw-progress" style={{ justifyContent: "flex-end" }}>
-              {g.nodes.map((n, i) => (
-                <span key={i} className={`kw-node ${i < g.node ? "done" : i === g.node ? "now" : ""}`} title={nodeLabel[n]} />
-              ))}
+              {g.rush
+                ? Array.from({ length: rushIsSecret(g.rush.idx) ? RUSH_TOTAL : RUSH.bosses }, (_, i) => (
+                    <span key={i} className={`kw-node ${i < g.rush.idx ? "done" : i === g.rush.idx ? "now" : ""}`} title={rushIsSecret(i) ? "？？？" : STAGES[i].boss.name} />
+                  ))
+                : g.nodes.map((n, i) => (
+                    <span key={i} className={`kw-node ${i < g.node ? "done" : i === g.node ? "now" : ""}`} title={nodeLabel[n]} />
+                  ))}
             </div>
           </div>
         </div>
 
         {/* フィールド */}
-        <div className="kw-field">
-          {g.phase === "battle" && (
-            // 通常戦闘で敵が3体以上のときだけ、3体が1行に収まるよう小さく表示し、残数も出す(ボス戦は従来どおり)
-            <div className={`kw-field-inner ${g.enemies.length >= 3 && !g.enemies.some((e) => e.boss) ? "compact" : ""}`}>
-              {g.enemies.map((e) => (
-                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith}
-                  compact={g.enemies.length >= 3 && !g.enemies.some((x) => x.boss)} />
-              ))}
-              {g.enemies.length >= 3 && !g.enemies.some((e) => e.boss) && (
-                <div className="kw-enemy-count">敵 のこり <b>{g.enemies.filter((e) => e.hp > 0).length}</b> 体</div>
-              )}
+        <div className="kw-field" ref={fieldRef}>
+          {g.phase === "battle" && (() => {
+            // 通常戦闘で敵が3体以上のときだけ、3体が1行に収まるよう小さく表示し、残数も出す(通常のボス戦は従来どおり)。
+            // ボスラッシュは取り巻きが多いので、ボスは通常の大きさのまま、取り巻きだけを小さくする。
+            const compactField = g.enemies.length >= 3 && (!!g.rush || !g.enemies.some((e) => e.boss));
+            // ボス戦で取り巻きがいるときは、ボスを中央に、取り巻きを左右に並べる(ボスラッシュも通常のボス戦も同じ)。
+            const bossE = g.enemies.find((e) => e.boss);
+            const sideEs = g.enemies.filter((e) => e !== bossE);
+            if (bossE && sideEs.length >= 1) {
+              const half = Math.ceil(sideEs.length / 2);
+              const sideCard = (e) => (
+                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} compact />
+              );
+              return (
+                <div className="kw-field-inner bosscenter">
+                  <div className="kw-bc-side">{sideEs.slice(0, half).map(sideCard)}</div>
+                  <div className="kw-bc-boss">
+                    <EnemyCard e={bossE} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} />
+                  </div>
+                  <div className="kw-bc-side">{sideEs.slice(half).map(sideCard)}</div>
+                  {g.rush && <div className="kw-enemy-count">敵 のこり <b>{g.enemies.filter((e) => e.hp > 0).length}</b> 体{rushRespawnLine}</div>}
+                </div>
+              );
+            }
+            return (
+              <div className={`kw-field-inner ${compactField ? "compact" : ""}`}>
+                {g.enemies.map((e, i) => (
+                  <React.Fragment key={e.id}>
+                    <EnemyCard e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith}
+                      compact={compactField && !e.boss} />
+                  </React.Fragment>
+                ))}
+                {compactField && (
+                  <div className="kw-enemy-count">敵 のこり <b>{g.enemies.filter((e) => e.hp > 0).length}</b> 体{rushRespawnLine}</div>
+                )}
+              </div>
+            );
+          })()}
+
+          {g.phase === "rushRest" && g.rush && (
+            <div className="kw-field-panel">
+              <div className="kw-panel" style={{ padding: "20px 18px", textAlign: "center", maxWidth: 560, width: "100%" }}>
+                <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>束 の 間 の 休 息</div>
+                <div style={{ fontSize: 13, color: "var(--mist)", margin: "8px 0 14px", lineHeight: 1.8 }}>
+                  {rushBossName(g.rush.idx)}を倒した。({Math.min(g.rush.idx + 1, RUSH.bosses)}/{RUSH.bosses})<br />
+                  {rushIsSecret(g.rush.idx + 1)
+                    ? <>……森の奥に、何かの気配がある。最後の戦いだ。<br /></>
+                    : <>次は{rushBossName(g.rush.idx + 1)}。取り巻きがさらに増える。<br /></>}
+                  {g.rush.picked ? "強化を選びました。準備ができたら進みましょう。" : "強化を1つ選んでください。"}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(g.rush.choices || []).map((id) => {
+                    const chosen = g.rush.picked && g.rush.pickedId === id;
+                    return (
+                      <button key={id} className="kw-btn ghost" disabled={g.rush.picked}
+                        style={{ textAlign: "left", padding: "10px 14px", opacity: g.rush.picked && !chosen ? .4 : 1,
+                          ...(chosen ? { borderColor: "var(--hotaru)", background: "rgba(232,180,74,.14)", boxShadow: "0 0 10px var(--hotaru-dim)" } : null) }}
+                        onClick={() => rushPickBuff(id)}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: chosen ? "var(--hotaru)" : "var(--paper)" }}>{RUSH_BUFFS[id].label}</div>
+                          {chosen && <div style={{ fontSize: 12, fontWeight: 700, color: "var(--hotaru)", whiteSpace: "nowrap" }}>✓ 選択済み</div>}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 2 }}>{RUSH_BUFFS[id].desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {g.rush.picked && g.rush.pickedId && RUSH_BUFFS[g.rush.pickedId] && (
+                  <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--hotaru)", lineHeight: 1.7 }}>
+                    得たもの:{RUSH_BUFFS[g.rush.pickedId].label}
+                    {{ atk: `(火力 累計 +${Math.round((g.rush.atk || 0) * 100)}%)`,
+                       dr: `(軽減 累計 -${Math.round((g.rush.dr || 0) * 100)}%)`,
+                       hp: `(最大HP 累計 +${Math.round((g.rush.hp || 0) * 100)}%)` }[g.rush.pickedId] || ""}
+                  </div>
+                )}
+                <div style={{ marginTop: 10 }}>
+                  <button className="kw-btn ghost" style={{ fontSize: 12, padding: "5px 14px" }} onClick={() => setRushBuffsOpen(true)}>これまでの強化を見る</button>
+                </div>
+                {g.rush.picked && bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
+                <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
+                  <button className="kw-btn primary" disabled={!g.rush.picked || bagOverNow > 0} onClick={rushNext}>
+                    {rushIsSecret(g.rush.idx + 1) ? "最後の戦いへ →" : "次のボスへ →"}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -4897,7 +6078,7 @@ export default function KiriwatariNoMori() {
               <div className="kw-panel" style={{ padding: "22px 20px", textAlign: "center", maxWidth: 420, width: "100%" }}>
                 <Package size={44} color="var(--hotaru)" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>苔むした宝箱</div>
-                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
+                <div style={{ fontSize: 13, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
                   森の誰かが遺していった。良いものが眠っていることが多い。
                 </div>
                 {!g.eventDone
@@ -4905,8 +6086,9 @@ export default function KiriwatariNoMori() {
                   : <div className="kw-grid" style={{ justifyItems: "center" }}>
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
                     </div>}
+                {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
-                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={tryProceed}>先へ進む →</button>
+                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending || bagOverNow > 0} onClick={tryProceed}>先へ進む →</button>
                 </div>
               </div>
             </div>
@@ -4920,7 +6102,7 @@ export default function KiriwatariNoMori() {
                 ))}
                 <Moon size={44} color="#9fd4c9" strokeWidth={1.4} style={{ margin: "0 auto 10px" }} />
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, letterSpacing: ".1em" }}>月映しの泉</div>
-                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
+                <div style={{ fontSize: 13, color: "var(--mist)", margin: "8px 0 16px", lineHeight: 1.8 }}>
                   水面に月が揺れている。飲めば傷も毒も流れていく。
                 </div>
                 {!g.eventDone
@@ -4929,8 +6111,9 @@ export default function KiriwatariNoMori() {
                     <div className="kw-grid" style={{ justifyItems: "center" }}>
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
                     </div>)}
+                {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
-                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending} onClick={tryProceed}>先へ進む →</button>
+                  <button className="kw-btn ghost" disabled={!!g.rewardAdPending || bagOverNow > 0} onClick={tryProceed}>先へ進む →</button>
                 </div>
               </div>
             </div>
@@ -4940,7 +6123,7 @@ export default function KiriwatariNoMori() {
             <div className="kw-field-panel">
               <div className="kw-panel" style={{ padding: "20px 18px", textAlign: "center", maxWidth: 560, width: "100%" }}>
                 <div style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, letterSpacing: ".2em", color: "var(--hotaru)" }}>勝 利</div>
-                <div style={{ fontSize: 12, color: "var(--mist)", margin: "8px 0 14px" }}>
+                <div style={{ fontSize: 13, color: "var(--mist)", margin: "8px 0 14px" }}>
                   {g.drops.length > 0 ? <>森が戦利品を落としていった。<span style={{ marginLeft: 8, color: "var(--paper-dim)" }}>袋 {g.inv.length}/{invCap}</span></> : "今回は何も落ちていないようだ。"}
                 </div>
                 {g.drops.length > 0 && (
@@ -4951,7 +6134,7 @@ export default function KiriwatariNoMori() {
                 {g.full && g.inv.length >= invCap && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
                 {g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && g.rewardAdFailedAt && (
                   <div style={{ marginTop: 4, marginBottom: 6 }}>
-                    <button className="kw-btn ghost" style={{ fontSize: 11 }} disabled={!!g.rewardAdPending}
+                    <button className="kw-btn ghost" style={{ fontSize: 12 }} disabled={!!g.rewardAdPending}
                       onClick={() => { setG((s) => ({ ...s, rewardAdFailedAt: null })); requestRewardAd("dew"); }}>
                       <Sparkles size={10} style={{ display: "inline", marginRight: 4 }} />
                       {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほどかかります）" : "広告を再試行して雫を2倍にする"}
@@ -4959,9 +6142,10 @@ export default function KiriwatariNoMori() {
                     {rewardAdFailNote({ marginTop: 4 })}
                   </div>
                 )}
+                {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
                   {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
-                  <button className="kw-btn primary" disabled={!!g.rewardAdPending} onClick={tryProceed}>
+                  <button className="kw-btn primary" disabled={!!g.rewardAdPending || bagOverNow > 0} onClick={tryProceed}>
                     {g.node + 1 < g.nodes.length ? "先へ進む →" : `${floorLabel(g.floor + 1)} 層へ降りる ↓`}
                   </button>
                 </div>
@@ -4983,16 +6167,26 @@ export default function KiriwatariNoMori() {
             {g.player.poison > 0 && <span className="kw-tag bad">毒 {g.player.poison}T</span>}
             {g.player.regen > 0 && <span className="kw-tag buff">再生 {g.player.regen}T</span>}
             {g.player.guard && <span className="kw-tag buff">防御中</span>}
+            {g.player.weakT > 0 && <span className="kw-tag bad">火力低下 {g.player.weakT}T</span>}
+            {g.player.bagSealT > 0 && <span className="kw-tag bad">鞄封じ {g.player.bagSealT}T</span>}
+            {g.player.guardSealT > 0 && <span className="kw-tag bad">防御封じ {g.player.guardSealT}T</span>}
+            {g.rush && (
+              <button className="kw-tag buff" style={{ background: "transparent", cursor: "pointer" }} onClick={() => setRushBuffsOpen(true)}>
+                強化一覧{Object.values(g.rush.taken || {}).reduce((a, b) => a + b, 0) > 0 ? `(${Object.values(g.rush.taken || {}).reduce((a, b) => a + b, 0)})` : ""}
+              </button>
+            )}
           </div>
         </div>
 
         {/* 武器の手札 */}
-        <div className="kw-hand">
-          {g.weapons.map((w, i) => (
-            <WeaponCard key={w ? w.id : `slot${i}`} w={w} g={g} onAttack={attackWith}
-              onSelect={(wp) => setG((s) => ({ ...s, pending: s.pending?.id === wp.id ? null : wp }))} />
-          ))}
-        </div>
+        {g.phase === "battle" && (
+          <div className="kw-hand" style={{ gridTemplateColumns: `repeat(${Math.max(1, g.weapons.length)}, minmax(0, 1fr))` }}>
+            {g.weapons.map((w, i) => (
+              <WeaponCard key={w ? w.id : `slot${i}`} w={w} g={g} onAttack={attackWith} onInfo={(wp) => setWeaponInfoId(wp.id)}
+                onSelect={(wp) => setG((s) => ({ ...s, pending: s.pending?.id === wp.id ? null : wp }))} />
+            ))}
+          </div>
+        )}
 
         {/* 武器スロットが全空 + 袋に武器あり → 装備を促すバナー */}
         {g.phase === "battle" && !g.weapons.some(Boolean) && g.inv.some((x) => x.kind === "weapon") && (
@@ -5001,24 +6195,47 @@ export default function KiriwatariNoMori() {
           </div>
         )}
 
+        {/* 戦闘後の回復・バフアイテム(アイコンをタップで使用、長押しで詳細。戦闘中は武器だけにするので出さない) */}
+        {(g.phase === "reward" || g.phase === "clear" || g.phase === "rushRest") && (() => {
+          const hpFull = g.player.hp >= maxHpOf(g);
+          const poisoned = g.player.poison > 0;
+          const quick = ["berryBig", "berrySmall", "antidote", "spore"]
+            .map((id) => ({ id, c: CONSUMABLES[id], items: g.inv.filter((x) => x.kind === "item" && x.itemId === id) }))
+            .filter((q) => q.items.length > 0);
+          if (quick.length === 0) return null;
+          return (
+            <div className="kw-quick">
+              {quick.map(({ id, c, items }) => (
+                <QuickTile key={id} c={c} count={items.length}
+                  disabled={id === "antidote" ? hpFull && !poisoned : id === "spore" ? sporeBlocked(g.player, meta?.skills) : hpFull}
+                  onUse={() => useOneOf(id)} onInfo={() => setItemInfoId(id)} />
+              ))}
+            </div>
+          );
+        })()}
+
         {/* 行動サブバー */}
         <div className="kw-subbar">
           {g.phase === "battle" && (
             <>
               {!g.pending && (
                 <>
-                  <button className="kw-btn ghost" disabled={g.busy} onClick={guard}>防御<span style={{ fontSize: 9, color: "var(--mist)", marginLeft: 3 }}>被ダメ半減</span></button>
-                  <button className="kw-btn ghost" disabled={g.busy} onClick={() => setG((s) => ({ ...s, bag: true }))}>
-                    袋 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}
+                  <button className="kw-btn ghost" disabled={g.busy || g.player.guardSealT > 0} onClick={guard}>
+                    防御<span style={{ fontSize: 11, color: g.player.guardSealT > 0 ? "var(--danger)" : "var(--mist)", marginLeft: 3 }}>{g.player.guardSealT > 0 ? `封印中 ${g.player.guardSealT}T` : "被ダメ半減"}</span>
+                  </button>
+                  <button className="kw-btn ghost" disabled={g.busy || g.player.bagSealT > 0} onClick={() => setG((s) => ({ ...s, bag: true }))}>
+                    {g.player.bagSealT > 0
+                      ? <>袋<span style={{ fontSize: 11, color: "var(--danger)", marginLeft: 3 }}>封印中 {g.player.bagSealT}T</span></>
+                      : <>袋 ({g.inv.length}/{invCap}){g.inv.length >= invCap ? " 満杯" : ""}</>}
                   </button>
                 </>
               )}
               {g.pending && (
                 <>
-                  <span className="kw-panel kw-hint" style={{ fontSize: 12, color: "var(--hotaru)", letterSpacing: ".05em", padding: "5px 10px", border: "1px solid var(--hotaru-dim)", animation: "kwFade .3s ease" }}>
+                  <span className="kw-panel kw-hint" style={{ fontSize: 13, color: "var(--hotaru)", letterSpacing: ".05em", padding: "5px 10px", border: "1px solid var(--hotaru-dim)", animation: "kwFade .3s ease" }}>
                     ↑ 狙う敵を選んでください
                   </span>
-                  <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10, flexShrink: 0 }}
+                  <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 11.5, flexShrink: 0 }}
                     onClick={() => setG((s) => ({ ...s, pending: null }))}>やめる</button>
                 </>
               )}
@@ -5042,6 +6259,31 @@ export default function KiriwatariNoMori() {
           ))}
         </div>
       </div>
+
+      {/* ---------- 武器の詳細(長押し) ---------- */}
+      {weaponInfoId && (() => {
+        const wi = g.weapons.find((x) => x && x.id === weaponInfoId);
+        return wi ? <WeaponInfoSheet w={wi} cd={g.cds[wi.id] || 0} onClose={() => setWeaponInfoId(null)} /> : null;
+      })()}
+
+      {/* ---------- 道具の詳細(長押し) ---------- */}
+      {itemInfoId && (() => {
+        const c = CONSUMABLES[itemInfoId];
+        const n = g.inv.filter((x) => x.kind === "item" && x.itemId === itemInfoId).length;
+        if (!c || n === 0) return null;
+        const lines = [c.desc];
+        if (itemInfoId === "spore") {
+          const pct = 40 + Math.round(skillEffectTotal(meta?.skills, "sporeAtkBonus") * 100);
+          const turns = c.turns + skillEffectTotal(meta?.skills, "sporeTurnsBonus");
+          lines[0] = `${turns}ターンの間、攻撃力+${pct}%。`;
+          if (sporeBlocked(g.player, meta?.skills)) lines.push("効果が続いている間は、続けて使えません。1ターン進むと、また使えます。");
+        }
+        if (itemInfoId === "berryBig") {
+          const rg = skillEffectTotal(meta?.skills, "fruitRegen");
+          if (rg > 0) lines.push(`さらに${rg}ターンの間、毎ターン最大HPの10%を回復する。`);
+        }
+        return <ItemInfoSheet c={c} count={n} lines={lines} onClose={() => setItemInfoId(null)} />;
+      })()}
 
       {/* ---------- ログの拡大ポップアップ ---------- */}
       {g.logPopup && (
@@ -5072,7 +6314,7 @@ export default function KiriwatariNoMori() {
       {/* ---------- 袋オーバーレイ ---------- */}
       {g.bag && (
         <div className="kw-overlay top" onClick={closeBag}>
-          <div className="kw-panel kw-sheet" onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }}>
+          <div className="kw-panel kw-sheet" onClick={(e) => e.stopPropagation()} style={{ display: "flex", flexDirection: "column", overflow: "hidden", padding: 0, height: "min(84vh, 680px)" }}>
             {/* スクロールしても常に表示される固定ヘッダー */}
             <div style={{ padding: "16px 18px 10px", flexShrink: 0, borderBottom: "1px solid rgba(157,180,166,.12)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -5091,7 +6333,7 @@ export default function KiriwatariNoMori() {
               {g.bagActionError && <div className="kw-notice" style={{ marginTop: 8 }}>{g.bagActionError}</div>}
               <div style={{ background: "rgba(0,0,0,.28)", borderRadius: 8, padding: "8px 12px", marginTop: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".1em", minWidth: 18 }}>HP</span>
+                  <span style={{ fontSize: 11.5, color: "var(--mist)", letterSpacing: ".1em", minWidth: 18 }}>HP</span>
                   <div className={`kw-mybar${g.player.hp / mx < 0.25 ? " low" : ""}`} style={{ flex: 1 }}>
                     <i style={{ width: `${(g.player.hp / mx) * 100}%` }} />
                   </div>
@@ -5109,74 +6351,132 @@ export default function KiriwatariNoMori() {
                 )}
               </div>
             </div>
-            {/* スクロール可能なアイテム一覧 */}
-            <div style={{ overflowY: "auto", flex: 1, padding: "0 18px 16px" }}>
+            {/* タブ(装備 / 袋の中身 / スキルツリー)。切り替えても上のHP表示と下の「戦闘を始める」は動かない */}
+            {bagTabs.length > 1 && (
+              <div role="tablist" style={{ flexShrink: 0, display: "flex", gap: 6, padding: "8px 18px 0" }}>
+                {bagTabs.map(([id, label]) => (
+                  <button key={id} role="tab" aria-selected={bagTabNow === id}
+                    className={`kw-btn ${bagTabNow === id ? "primary" : "ghost"}`}
+                    style={{ padding: "6px 4px", fontSize: 12.5, flex: 1, minWidth: 0, whiteSpace: "nowrap" }}
+                    onClick={() => setBagTab(id)}>{label}</button>
+                ))}
+              </div>
+            )}
+            {bagTabNow === "skill" ? (
+              <SkillTreeOverlay embedded meta={meta} onClose={closeBag} onBuy={buySkill} onDismissRefund={dismissRefundNotice} />
+            ) : (
+            /* スクロール可能なアイテム一覧(タブとの間の余白もスクロール領域の中に持つ) */
+            <div style={{ overflowY: "auto", flex: 1, padding: "10px 18px 16px" }}>
+
+            {/* 道具(回復・バフ・攻撃・特殊)は種類ごとにまとめて、開いてすぐ見える位置に出す */}
+            {bagTabNow === "items" && (() => {
+              const inBattle = g.phase === "battle" && !g.gearPrep;
+              const hpFull = g.player.hp >= maxHpOf(g);
+              const poisoned = g.player.poison > 0;
+              const stacks = Object.keys(CONSUMABLES)
+                .map((id) => ({ id, c: CONSUMABLES[id], items: g.inv.filter((x) => x.kind === "item" && x.itemId === id) }))
+                .filter((s) => s.items.length > 0);
+              if (stacks.length === 0) return null;
+              return (
+                <>
+                  <div style={{ fontSize: 11.5, color: "var(--mist)", letterSpacing: ".2em", margin: "0 0 5px", opacity: .75 }}><Hash />道具</div>
+                  {stacks.map(({ id, c, items }) => {
+                    let canUse = inBattle ? c.kind !== "orb" && c.kind !== "metaHp" : c.kind !== "bomb";
+                    let note = canUse ? "" : inBattle ? "戦闘後のみ使えます" : "戦闘中のみ使えます";
+                    if (c.kind === "heal" && hpFull) { canUse = false; note = "HPが満タンです"; }
+                    else if (c.kind === "cure" && hpFull && !poisoned) { canUse = false; note = "HPが満タンで、毒もありません"; }
+                    else if (c.kind === "buff" && canUse && sporeBlocked(g.player, meta?.skills)) { canUse = false; note = "効果が続いています。1ターン進むと、また使えます"; }
+                    const lockedN = items.filter((x) => x.locked).length;
+                    const canDiscard = items.some((x) => !isItemProtected(x));
+                    const r = rarityOf(items[0].rarity) || RARITIES[0];
+                    return (
+                      <div key={id} className="kw-panel kw-stack" style={{ boxShadow: r.glow === "none" ? undefined : r.glow }}>
+                        <AssetIcon assetId={c.asset} size={24} color={r.color} />
+                        <div className="kw-stack-main">
+                          <div className="kw-stack-name">{c.label}<b>×{items.length}</b></div>
+                          <div className="kw-stack-desc">
+                            {c.desc}{c.kind === "bomb" ? `(現在の威力: 敵全体に${bombPowerAt(g.floor)})` : ""}
+                            {note && <span style={{ color: "var(--hotaru)" }}> {note}</span>}
+                          </div>
+                        </div>
+                        <div className="kw-stack-actions">
+                          <button className="kw-btn ghost" disabled={!canUse}
+                            onClick={() => useOneOf(id)}>使う</button>
+                          <button className={`kw-btn ${lockedN === items.length ? "primary" : "ghost"}`}
+                            aria-label={lockedN === items.length ? "ロックを解除" : "ロックする"}
+                            title={lockedN > 0 && lockedN < items.length ? `${lockedN}個ロック中` : undefined}
+                            onClick={() => toggleLockGroup(id)}>
+                            {lockedN === 0 ? <LockOpen size={13} /> : <Lock size={13} />}
+                          </button>
+                          <button className="kw-btn ghost" disabled={!canDiscard}
+                            aria-label={`${c.label}を1個捨てる`}
+                            onClick={() => discardOneOf(id)}>捨てる</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
 
             {/* 装備の変更(外す・組み替え)は戦闘中には出さない方針。戦闘中に装備を
                 変える必要が生じないようにし、組み替えは戦闘の合間に行ってもらう。
                 ただし章に入った直後の戦闘準備(gearPrep)は例外的に許可する
                 (phase は既に "battle" だが、まだ何も行動していない最初の1戦なので、
                 ここで整えてから始めれば「戦闘中に変える」ことにはならない)。 */}
-            {(g.phase !== "battle" || g.gearPrep) && (
+            {bagTabNow === "equip" && (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 8px" }}>
-                  <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em" }}>
-                    ── 装備中の武器(タップで外す)
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "0 0 8px" }}>
+                  <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".15em" }}>
+                    <Hash />装備中の武器(タップで外す)
                   </div>
                   <button className="kw-btn ghost"
-                    style={{ padding: "3px 10px", fontSize: 10, flexShrink: 0 }}
+                    style={{ padding: "3px 10px", fontSize: 11.5, flexShrink: 0 }}
                     onClick={() => { setReorderSel(null); setReorderPopup(true); }}>
                     並び替え
                   </button>
                 </div>
                 <div className="kw-grid">
                   {g.weapons.map((w, i) => w
-                    ? <div key={w.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    ? <div key={w.id} className="kw-eqwrap">
                         <ItemCell item={w} equipped onClick={() => unequipWeapon(i)} />
-                        <button className={`kw-btn ${w.locked ? "primary" : "ghost"}`}
-                          style={{ padding: "4px 0", fontSize: 10, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+                        <button className={`kw-btn kw-eqlock ${w.locked ? "primary" : "ghost"}`}
+                          aria-label={w.locked ? "ロックを解除" : "ロックする"}
                           onClick={(e) => { e.stopPropagation(); toggleLock(w); }}>
-                          {w.locked ? <><Lock size={11} />ロック中</> : <><LockOpen size={11} />ロック</>}
+                          {w.locked ? <Lock size={14} /> : <LockOpen size={14} />}
                         </button>
                       </div>
-                    : <div key={i} className="kw-panel kw-cell" style={{ opacity: .3, cursor: "default" }}>
+                    : <div key={i} className="kw-panel kw-cell" style={{ opacity: .6, cursor: "default", alignSelf: "start", borderStyle: "dashed" }}>
                         <div className="kw-cmeta">空きスロット</div>
                       </div>)}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em", margin: "12px 0 8px" }}>── 防具(タップで外す)</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".15em", margin: "12px 0 8px" }}><Hash />防具(タップで外す)</div>
                 <div className="kw-grid">
                   {Object.entries(ARMOR_TYPES).map(([slot, a]) => g.armor[slot]
-                    ? <div key={slot} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    ? <div key={slot} className="kw-eqwrap">
                         <ItemCell item={g.armor[slot]} equipped onClick={() => unequipArmor(slot)} />
-                        <button className={`kw-btn ${g.armor[slot].locked ? "primary" : "ghost"}`}
-                          style={{ padding: "4px 0", fontSize: 10, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}
+                        <button className={`kw-btn kw-eqlock ${g.armor[slot].locked ? "primary" : "ghost"}`}
+                          aria-label={g.armor[slot].locked ? "ロックを解除" : "ロックする"}
                           onClick={(e) => { e.stopPropagation(); toggleLock(g.armor[slot]); }}>
-                          {g.armor[slot].locked ? <><Lock size={11} />ロック中</> : <><LockOpen size={11} />ロック</>}
+                          {g.armor[slot].locked ? <Lock size={14} /> : <LockOpen size={14} />}
                         </button>
                       </div>
-                    : <div key={slot} className="kw-panel kw-cell" style={{ opacity: .3, cursor: "default" }}><div className="kw-cmeta">{a.label}: なし</div></div>)}
+                    : <div key={slot} className="kw-panel kw-cell" style={{ opacity: .6, cursor: "default", alignSelf: "start", borderStyle: "dashed" }}><div className="kw-cmeta">{a.label}: なし</div></div>)}
                 </div>
               </>
             )}
-            <div className="kw-divider" />
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, margin: "4px 0 8px" }}>
-              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".15em" }}>── 袋の中身 ({g.inv.length}/{invCap})</div>
+            {bagTabNow === "items" && (<>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, margin: "6px 0 8px" }}>
+              <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".15em" }}><Hash />袋の中身 ({g.inv.length}/{invCap})</div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 3 }}>
                   <button className={`kw-btn ${(meta.bagSortMode || "type") === "type" ? "primary" : "ghost"}`}
-                    style={{ padding: "3px 9px", fontSize: 10 }}
+                    style={{ padding: "3px 9px", fontSize: 11.5 }}
                     onClick={() => setBagSortMode("type")}>種類順</button>
                   <button className={`kw-btn ${meta.bagSortMode === "acquired" ? "primary" : "ghost"}`}
-                    style={{ padding: "3px 9px", fontSize: 10 }}
+                    style={{ padding: "3px 9px", fontSize: 11.5 }}
                     onClick={() => setBagSortMode("acquired")}>入手順</button>
                 </div>
-                {(meta.dewBank || 0) > 0 && (
-                  <button className="kw-btn ghost" style={{ padding: "3px 10px", fontSize: 10 }}
-                    onClick={() => setG((s) => ({ ...s, skillTree: true }))}>
-                    <Sparkles size={10} style={{ display: "inline", marginRight: 3 }} />スキルツリー {meta.dewBank}個
-                  </button>
-                )}
               </div>
             </div>
             {g.inv.length === 0 && <div className="kw-sub">袋は空です。森で拾い集めましょう。</div>}
@@ -5184,7 +6484,7 @@ export default function KiriwatariNoMori() {
               const inBattle = g.phase === "battle" && !g.gearPrep;
               const sortForDisplay = (arr) => (meta.bagSortMode || "type") === "acquired" ? arr : [...arr].sort(bagSortByType);
               const catLabel = (label) => (
-                <div style={{ fontSize: 10, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}>── {label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--mist)", letterSpacing: ".2em", margin: "8px 0 5px", opacity: .75 }}><Hash />{label}</div>
               );
               const handleDiscard = (e, it) => {
                 e.stopPropagation();
@@ -5197,12 +6497,12 @@ export default function KiriwatariNoMori() {
                 return (
                   <div style={{ display: "flex", gap: 4 }}>
                     <button className={`kw-btn ${locked ? "primary" : "ghost"}`}
-                      style={{ padding: "5px 8px", fontSize: 11, flexShrink: 0, display: "inline-flex", alignItems: "center" }}
+                      style={{ padding: "5px 8px", fontSize: 12, flexShrink: 0, display: "inline-flex", alignItems: "center" }}
                       onClick={(e) => { e.stopPropagation(); toggleLock(it); }}>
                       {locked ? <Lock size={12} /> : <LockOpen size={12} />}
                     </button>
                     <button className="kw-btn ghost" disabled={locked}
-                      style={{ padding: "5px 0", fontSize: 11, flex: 1, letterSpacing: ".12em",
+                      style={{ padding: "5px 0", fontSize: 12, flex: 1, letterSpacing: ".12em",
                                opacity: locked ? 0.45 : 1 }}
                       onClick={(e) => handleDiscard(e, it)}>
                       {locked ? "ロック中" : "捨てる"}
@@ -5220,53 +6520,24 @@ export default function KiriwatariNoMori() {
                   </div>
                 );
               };
-              const renderConsumable = (it) => {
-                const c = CONSUMABLES[it.itemId];
-                const mx = maxHpOf(g);
-                const hpFull = g.player.hp >= mx;
-                const poisoned = g.player.poison > 0;
-                let canUseNow = inBattle ? c?.kind !== "orb" && c?.kind !== "metaHp" : c?.kind !== "bomb";
-                let disabledLabel = inBattle ? "戦闘後のみ" : "戦闘中のみ";
-                if (c?.kind === "heal" && hpFull) { canUseNow = false; disabledLabel = "HP満タン"; }
-                else if (c?.kind === "cure" && hpFull && !poisoned) { canUseNow = false; disabledLabel = "HP満タン・毒なし"; }
-                return (
-                  <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {canUseNow
-                      ? <ItemCell item={it} actionLabel="使う" onClick={() => useItem(it)} />
-                      : <ItemCell item={it} actionLabel={disabledLabel} onClick={() => {}} />
-                    }
-                    {c?.kind === "bomb" && (
-                      <div style={{ fontSize: 10, color: "var(--hotaru)", textAlign: "center", letterSpacing: ".05em" }}>
-                        現在の威力: 敵全体に{bombPowerAt(g.floor)}
-                      </div>
-                    )}
-                    {itemActions(it)}
-                  </div>
-                );
-              };
               const weapons  = sortForDisplay(g.inv.filter(it => it.kind === "weapon"));
               const armors   = sortForDisplay(g.inv.filter(it => it.kind === "armor"));
-              const heals    = sortForDisplay(g.inv.filter(it => it.kind === "item" && ["heal","cure"].includes(CONSUMABLES[it.itemId]?.kind)));
-              const buffs    = sortForDisplay(g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "buff"));
-              const attacks  = sortForDisplay(g.inv.filter(it => it.kind === "item" && CONSUMABLES[it.itemId]?.kind === "bomb"));
-              const specials = sortForDisplay(g.inv.filter(it => it.kind === "item" && ["orb","metaHp"].includes(CONSUMABLES[it.itemId]?.kind)));
               return (
                 <>
                   {weapons.length  > 0 && <>{catLabel("武器")}<div className="kw-grid">{weapons.map(renderEquip)}</div></>}
                   {armors.length   > 0 && <>{catLabel("防具")}<div className="kw-grid">{armors.map(renderEquip)}</div></>}
-                  {heals.length    > 0 && <>{catLabel("回復")}<div className="kw-grid">{heals.map(renderConsumable)}</div></>}
-                  {buffs.length    > 0 && <>{catLabel("バフ")}<div className="kw-grid">{buffs.map(renderConsumable)}</div></>}
-                  {attacks.length  > 0 && <>{catLabel("攻撃")}<div className="kw-grid">{attacks.map(renderConsumable)}</div></>}
-                  {specials.length > 0 && <>{catLabel("特殊")}<div className="kw-grid">{specials.map(renderConsumable)}</div></>}
                 </>
               );
             })()}
+            </>)}
             </div>
+            )}
             {/* 画面下部に固定するフッター(スクロールと無関係に常に見える)。 */}
             {g.gearPrep && (
               <div style={{ flexShrink: 0, padding: "18px 18px", borderTop: "1px solid rgba(157,180,166,.12)" }}>
+                {bagOverNow > 0 && <div className="kw-notice" style={{ marginBottom: 10 }}>{bagOverText(bagOverNow)}</div>}
                 <button className="kw-btn primary" style={{ width: "100%", padding: "12px 0" }}
-                  onClick={closeBag}>
+                  disabled={bagOverNow > 0} onClick={closeBag}>
                   戦闘を始める →
                 </button>
               </div>
@@ -5312,23 +6583,67 @@ export default function KiriwatariNoMori() {
         </div>
       )}
 
+      {/* ---------- ボスラッシュの結果 ---------- */}
+      {g.phase === "rushOver" && g.rushResult && (
+        <div className="kw-overlay">
+          <div className="kw-panel kw-sheet" style={{ textAlign: "center", maxWidth: 380 }}>
+            <div style={{ margin: "6px 0 4px" }}>
+              {g.rushResult.cleared ? <Crown size={30} color="var(--hotaru)" strokeWidth={1.4} /> : <Skull size={30} color="var(--danger)" strokeWidth={1.4} />}
+            </div>
+            <h2 style={{ letterSpacing: ".3em", color: g.rushResult.cleared ? "var(--hotaru)" : "var(--danger)" }}>
+              {g.rushResult.cleared ? "完 全 踏 破" : "力 尽 き た"}
+            </h2>
+            <div className="kw-sub" style={{ marginTop: 10, lineHeight: 2 }}>
+              {g.rushResult.cleared
+                ? "八つの武器の影を越え、写し身の旅人をも退けた。"
+                : g.rushResult.secret
+                  ? "十の主を倒した先で、写し身の旅人に敗れた。"
+                  : `${g.rushResult.defeated}体目まで倒したところで力尽きた。`}<br />
+              倒したボス: <b style={{ color: "var(--hotaru)" }}>{Math.min(g.rushResult.defeated, RUSH.bosses)} / {RUSH.bosses}</b>
+              {g.rushResult.secret && <span style={{ marginLeft: 6, color: "var(--hotaru)", fontSize: 12 }}>+ 最後の戦い{g.rushResult.cleared ? "(勝利)" : ""}</span>}
+              {g.rushResult.newBest && <span style={{ marginLeft: 8, color: "var(--hotaru)", fontSize: 12 }}>自己ベスト更新!</span>}<br />
+              精の結晶: <b style={{ color: "var(--hotaru)" }}>+{g.rushResult.crystals}{g.rushResult.adClaimed ? `(+${g.rushResult.adBonus})` : ""}</b>(所持 {meta.dewBank || 0}個)
+            </div>
+            {!g.rushResult.adClaimed && rewardAdUsesLeft(meta) > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <button className="kw-btn ghost" style={{ fontSize: 12.5, padding: "7px 16px", borderColor: "rgba(232,180,74,.5)", color: "var(--hotaru)" }}
+                  disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("rushCrystal")}>
+                  {g.rewardAdPending === "rushCrystal" ? "広告を読み込み中…" : `動画を見て、結晶を2倍にする(+${Math.max(1, Math.ceil(g.rushResult.crystals * RUSH.adCrystalPct))}個)`}
+                </button>
+                <div style={{ fontSize: 11.5, color: "var(--paper-dim)", marginTop: 4 }}>本日あと{rewardAdUsesLeft(meta)}回</div>
+                {rewardAdFailNote({ marginTop: 6 })}
+              </div>
+            )}
+            <div className="kw-actions" style={{ justifyContent: "center", marginTop: 14 }}>
+              <button className="kw-btn primary" style={{ padding: "10px 32px" }}
+                onClick={() => setG({ screen: "title" })}>タイトルへ戻る</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---------- 力尽きた直後: 広告視聴で復活するか選ぶ ---------- */}
       {g.phase === "reviveOffer" && (
         <div className="kw-overlay">
           <div className="kw-panel kw-sheet" style={{ textAlign: "center", maxWidth: 340 }}>
             <h2 style={{ color: "var(--danger)" }}>力尽きかけている……</h2>
             <div className="kw-sub" style={{ marginTop: 10 }}>
-              広告を見ると、HP満タンでこの場に踏みとどまれる。<br />
-              この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。<br />
-              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回(復活・雫2倍・祠2倍で共通)</span>
+              {g.rush ? (
+                <>広告を見ると、HPを{Math.round(Math.min(1, RUSH.reviveHpPct + skillEffectTotal(meta?.skills, "rushReviveHp")) * 100)}%取り戻して、この戦いを続けられる。<br />
+                  この挑戦で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。</>
+              ) : (
+                <>広告を見ると、HP満タンでこの場に踏みとどまれる。<br />
+                  この転生で<b style={{ color: "var(--hotaru)" }}>1度だけ</b>使えます。</>
+              )}<br />
+              <span style={{ fontSize: 12, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-              <button className="kw-btn primary" style={{ fontSize: 12 }}
-                disabled={!!g.rewardAdPending} onClick={() => requestRewardAd("revive")}>
-                {g.rewardAdPending === "revive" ? "広告を読み込み中…（15秒ほどかかります）" : "広告を見て復活する"}
+              <button className="kw-btn primary" style={{ fontSize: 13 }}
+                disabled={!!g.rewardAdPending} onClick={() => requestRewardAd(g.rush ? "rushRevive" : "revive")}>
+                {g.rewardAdPending === "revive" || g.rewardAdPending === "rushRevive" ? "広告を読み込み中…（15秒ほどかかります）" : "広告を見て復活する"}
               </button>
-              <button className="kw-btn ghost" style={{ fontSize: 12 }}
-                disabled={!!g.rewardAdPending} onClick={() => finalizeDeath(g)}>あきらめる</button>
+              <button className="kw-btn ghost" style={{ fontSize: 13 }}
+                disabled={!!g.rewardAdPending} onClick={() => (g.rush ? finishRush(g, false) : finalizeDeath(g))}>あきらめる</button>
             </div>
             {rewardAdFailNote({ marginTop: 10 })}
           </div>
@@ -5345,18 +6660,18 @@ export default function KiriwatariNoMori() {
             <h2 style={{ color: "var(--danger)" }}>旅人は倒れた</h2>
             <div className="kw-sub">
               しかし魂は森を巡り、また灯りの下へ還る。<br />
-              <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。ロック中のアイテムは優先的に選ばれますが、枠を超えた分は他と同様に持ち越せません。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 10 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
-              精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個 — スキルツリーで永続スキルを習得できます。<br />
-              <span style={{ fontSize: 10.5 }}>宝樹の雫は持ち越せません。選ぶとその場で精の結晶に変わります。</span>
+              <b style={{ color: "var(--hotaru)" }}>継承枠 {g.effSlots ?? meta.slots} つ</b>まで、次の生へ持ち越す品を選べます。ロック中のアイテムは優先して選ばれますが、枠を超えた分は、ほかのアイテムと同じく持ち越せません。{(g.effSlots ?? meta.slots) > meta.slots ? <span style={{ color: "var(--hotaru)", fontSize: 11.5 }}>（宝珠+{(g.effSlots ?? meta.slots) - meta.slots}）</span> : ""}<br />
+              精の結晶: <b style={{ color: "var(--hotaru)" }}>{meta.dewBank || 0}</b> 個。スキルツリーで永続スキルを習得できます。<br />
+              <span style={{ fontSize: 12 }}>宝樹の雫は持ち越せません。選ぶとその場で精の結晶に変わります。</span>
             </div>
             {stageOptions.length > 1 && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 10.5, color: "var(--mist)", letterSpacing: ".15em", marginBottom: 6 }}>── 再開する章を選ぶ ──</div>
+                <div style={{ fontSize: 12, color: "var(--mist)", letterSpacing: ".15em", marginBottom: 6 }}><Hash />再開する章を選ぶ</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
                   {stageOptions.map((i) => (
                     <button key={i}
                       className={`kw-btn ${chosenStage === i ? "primary" : "ghost"}`}
-                      style={{ padding: "6px 12px", fontSize: 11.5 }}
+                      style={{ padding: "6px 12px", fontSize: 12.5 }}
                       onClick={() => setG((s) => ({ ...s, rebirthStage: i }))}>
                       第{i + 1}章 {STAGES[i].name}
                     </button>
@@ -5384,7 +6699,7 @@ export default function KiriwatariNoMori() {
               </div>
             )}
             <div className="kw-actions sticky">
-              <div style={{ alignSelf: "center", fontSize: 12, color: g.pick.length >= (g.effSlots ?? meta.slots) ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
+              <div style={{ alignSelf: "center", fontSize: 13, color: g.pick.length >= (g.effSlots ?? meta.slots) ? "var(--hotaru)" : "var(--mist)", marginRight: "auto" }}>
                 選択 {g.pick.length} / {g.effSlots ?? meta.slots}
               </div>
               {(meta.dewBank || 0) > 0 && (
@@ -5475,11 +6790,22 @@ export default function KiriwatariNoMori() {
         <div className="kw-overlay">
           <div className="kw-panel kw-sheet" style={{ maxWidth: 520, textAlign: "left" }}>
             <h2 style={{ letterSpacing: ".2em" }}>森へようこそ</h2>
-            <div className="kw-sub" style={{ fontSize: 13, lineHeight: 2, marginTop: 8 }}>
-              下の<b style={{ color: "var(--paper)" }}>武器カード</b>をタップして攻撃します。全体攻撃(本・楽器)はすぐ発動、単体攻撃は続けて狙う敵をタップします。<br /><br />
-              武器には <b style={{ color: "var(--paper)" }}>斬・突・打・魔・音</b> の属性があります。<b style={{ color: "var(--hotaru)" }}>「弱点をつける!」</b> が光る敵には1.6倍のダメージ、耐性持ちには0.5倍になります。手こずる敵が出たら、別の属性の武器を探しましょう。<br /><br />
-              <b style={{ color: "var(--paper)" }}>防御</b>ボタンで構えると次の敵の攻撃ダメージが半減します。<b style={{ color: "var(--paper)" }}>袋</b>から回復アイテムも使えます(1ターン消費)。<br /><br />
-              倒れても選んだ装備は次の生へ受け継がれ、到達済みの章から再開できます。恐れず挑みましょう。
+            <div className="kw-sub" style={{ fontSize: 14, lineHeight: 1.95, marginTop: 8, color: "var(--paper)" }}>
+              <b style={{ color: "var(--hotaru)" }}>■ 攻撃</b><br />
+              下の<b>武器</b>アイコンをタップします。<br />
+              単体攻撃は、続けて敵をタップします。<br />
+              全体攻撃(本・楽器)は、すぐ発動します。<br />
+              長押しすると、武器の詳細が出ます。<br />
+              <b style={{ color: "var(--hotaru)" }}>■ 弱点</b><br />
+              武器には <b>斬・突・打・魔・音</b> の属性があります。<br />
+              「<b style={{ color: "var(--hotaru)" }}>弱点をつける!</b>」と出た敵には、ダメージが1.6倍になります。<br />
+              耐性のある敵には、0.5倍です。<br />
+              <b style={{ color: "var(--hotaru)" }}>■ 守りと回復</b><br />
+              <b>防御</b>を押すと、次に受けるダメージが半分になります。<br />
+              <b>袋</b>から、回復アイテムも使えます(1ターン使います)。<br />
+              <b style={{ color: "var(--hotaru)" }}>■ 倒れても</b><br />
+              選んだ装備は、次の旅に引き継げます。<br />
+              到達した章から、やり直せます。
             </div>
             <div className="kw-actions" style={{ justifyContent: "center" }}>
               <button className="kw-btn primary" style={{ padding: "10px 30px" }} onClick={() => setG((s) => ({ ...s, coach: false }))}>はじめる</button>
@@ -5496,7 +6822,7 @@ export default function KiriwatariNoMori() {
             <h2 style={{ letterSpacing: ".3em" }}>霧 は 晴 れ た</h2>
             <div className="kw-credits">
               <div className="kw-credits-inner">
-                <h3>─ 終章 ─</h3>
+                <h3><Hash />終章</h3>
                 常夜の根王が崩れ落ちたとき、<br />
                 百層の底に、はじめて朝の光が差した。<br /><br />
                 森も、湿原も、遺跡も、花の谷も。<br />
@@ -5505,7 +6831,7 @@ export default function KiriwatariNoMori() {
                 すべては一本の大樹の、長い長い根だった。<br /><br />
                 旅人は幾度も倒れ、幾度も生まれ変わった。<br />
                 手に馴染んだ武器だけが、その旅の記憶である。<br /><br />
-                <h3>─ 旅の記録 ─</h3>
+                <h3><Hash />旅の記録</h3>
                 転生した回数 …… {meta.deaths} 回<br />
                 魂の継承枠 …… {meta.slots}<br />
                 百層踏破 …… {meta.clears} 回<br /><br />
@@ -5514,6 +6840,12 @@ export default function KiriwatariNoMori() {
                 ──蛍はまだ、森のどこかで灯っている。<br />
                 (継承品を携えて、もう一度最初から旅ができます)
               </div>
+            </div>
+            {/* 百層を踏破すると、タイトル画面にボスラッシュが現れる。そのことを、ここで知らせる。 */}
+            <div className="kw-rush-invite" style={{ margin: "12px 0 4px", padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.8,
+              border: "1px solid rgba(232,180,74,.35)", background: "rgba(232,180,74,.06)" }}>
+              <b style={{ color: "var(--hotaru)" }}>次は、ボスラッシュに挑んでみましょう。</b><br />
+              タイトル画面の「ボスラッシュ」から、<br />十体のボスと続けて戦えます。
             </div>
             <div className="kw-actions" style={{ justifyContent: "center" }}>
               <button className="kw-btn primary" onClick={() => {
@@ -5536,7 +6868,7 @@ export default function KiriwatariNoMori() {
             <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 800, fontSize: "clamp(34px, 8vw, 60px)", letterSpacing: ".28em", textIndent: ".28em", lineHeight: 1.3, textShadow: "0 0 40px rgba(232,180,74,.28)" }}>
               {STAGES[g.stageIntro].name}
             </h1>
-            <div style={{ color: "var(--paper-dim)", fontSize: 12.5, lineHeight: 2, marginTop: 14 }}>
+            <div style={{ color: "var(--paper-dim)", fontSize: 13, lineHeight: 2, marginTop: 14 }}>
               第{g.stageIntro + 1}章<br />
               {g.stageIntro === 0
                 ? "旅の始まり。灯りを頼りに、霧の奥へ。"
@@ -5570,7 +6902,8 @@ export default function KiriwatariNoMori() {
                 const drops = hasUncollectedReward(g.phase) ? g.drops : null;
                 const rd = { floor: g.floor, node: g.node || 0, player: g.player, weapons: g.weapons, armor: g.armor, inv: g.inv, cds: g.cds || {}, lastRareSeen: g.lastRareSeen || 0, orbBagBonus: g.orbBagBonus || 0, enemies: aliveEnemies, rewardPhase, drops, ...runExtraOf(g) };
                 saveRun(g.floor, g.node || 0, g.player, g.weapons, g.armor, g.inv, g.cds, g.lastRareSeen, g.orbBagBonus || 0, aliveEnemies, rewardPhase, drops, runExtraOf(g));
-                setSavedRun(rd);
+                // ボスラッシュは通常の冒険とは別枠の中断データとして扱う(タイトルの「再開」が取り違えない)
+                if (g.rush) setSavedRush(rd); else setSavedRun(rd);
                 setG({ screen: "title" });
               }}>中断してタイトルへ</button>
             </div>
@@ -5583,18 +6916,18 @@ export default function KiriwatariNoMori() {
           <div className="kw-panel kw-sheet" style={{ maxWidth: 300, textAlign: "center" }}>
             <div style={{ fontSize: 26 }}>✨</div>
             <h3 style={{ color: "var(--hotaru)", letterSpacing: ".2em", margin: "8px 0 4px", fontSize: 16 }}>宝 樹 の 雫</h3>
-            <div style={{ fontSize: 12.5, color: "var(--mist)", lineHeight: 1.9, marginBottom: 16 }}>
-              広告を視聴すると、雫をもう1個もらえます。<br />
-              <span style={{ fontSize: 10.5, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回(復活・雫2倍・祠2倍で共通)</span>
+            <div style={{ fontSize: 13, color: "var(--mist)", lineHeight: 1.9, marginBottom: 16 }}>
+              広告を視聴すると、<br />雫をもう1個もらえます。<br />
+              <span style={{ fontSize: 12, color: "var(--paper-dim)" }}>本日あと{rewardAdUsesLeft(meta)}回</span>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
               {/* 押してもこの画面は閉じない: 読み込み中の表示を出し続け、結果(成功/失敗)が届いてから閉じる */}
-              <button className="kw-btn primary" style={{ padding: "10px 20px", fontSize: 12.5 }}
+              <button className="kw-btn primary" style={{ padding: "10px 20px", fontSize: 13 }}
                 disabled={!!g.rewardAdPending}
                 onClick={() => requestRewardAd("dew")}>
                 {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほど）" : "広 告 を 見 る"}
               </button>
-              <button className="kw-btn ghost" style={{ fontSize: 12 }}
+              <button className="kw-btn ghost" style={{ fontSize: 13 }}
                 disabled={!!g.rewardAdPending}
                 onClick={() => setG((s) => ({ ...s, dewAdOffer: false }))}>
                 いいえ
@@ -5612,7 +6945,7 @@ export default function KiriwatariNoMori() {
             <div style={{ margin: "6px 0 14px" }}>
               <RarityName item={g.pendingWeaponSwap} small />
               <div style={{ fontSize: 14, color: "var(--paper)", marginTop: 4, letterSpacing: ".05em" }}>{g.pendingWeaponSwap.name}</div>
-              <div style={{ fontSize: 11, color: "var(--mist)", marginTop: 6 }}>武器スロットに空きがありません。手放す武器を選んでください。</div>
+              <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 6 }}>武器スロットに空きがありません。手放す武器を選んでください。</div>
             </div>
             <div className="kw-grid">
               {/* ロックは「捨てる」操作だけをブロックするためのもので、装備の交代までは
@@ -5639,7 +6972,7 @@ export default function KiriwatariNoMori() {
               <RarityName item={discardConfirm} />
               <div style={{ fontSize: 14, color: "var(--paper)", marginTop: 4, letterSpacing: ".05em" }}>{discardConfirm.name}</div>
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--mist)", margin: "10px 0 18px", lineHeight: 1.7 }}>
+            <div style={{ fontSize: 12.5, color: "var(--mist)", margin: "10px 0 18px", lineHeight: 1.7 }}>
               捨てたアイテムは取り戻せません。
             </div>
             <div className="kw-actions" style={{ justifyContent: "center" }}>
@@ -5672,6 +7005,7 @@ export default function KiriwatariNoMori() {
       {g.bestiary && (
         <BestiaryOverlay meta={meta} onClose={() => setG((s) => ({ ...s, bestiary: false }))} />
       )}
+      {rushBuffsOpen && g.rush && <RushBuffsOverlay rush={g.rush} onClose={() => setRushBuffsOpen(false)} />}
       {g.orbChoice && (
         <div className="kw-overlay top">
           <div className="kw-panel kw-sheet" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
@@ -5682,19 +7016,19 @@ export default function KiriwatariNoMori() {
               </div>
               <div>
                 <div style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, color: "var(--hotaru)" }}>宝樹の雫</div>
-                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 2 }}>使いみちを選んでください</div>
+                <div style={{ fontSize: 11.5, color: "var(--mist)", marginTop: 2 }}>使いみちを選んでください</div>
               </div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
                 onClick={() => resolveOrbChoice("slot")}>
                 <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>継承枠 +1</div>
-                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
+                <div style={{ fontSize: 11.5, color: "var(--mist)", marginTop: 3, whiteSpace: "normal" }}>転生時に引き継げるアイテム数が増える。現在 {meta.slots || 0} 枠。</div>
               </button>
               <button className="kw-btn ghost" style={{ textAlign: "left", padding: "12px 14px" }}
                 onClick={() => resolveOrbChoice("crystal")}>
                 <div style={{ fontFamily: "var(--font-display)", fontSize: 13, fontWeight: 700, color: "var(--paper)" }}>精の結晶 +1</div>
-                <div style={{ fontSize: 10, color: "var(--mist)", marginTop: 3 }}>スキルツリーの習得に使える結晶に変換する。現在 {meta.dewBank || 0} 個。</div>
+                <div style={{ fontSize: 11.5, color: "var(--mist)", marginTop: 3, whiteSpace: "normal" }}>スキルの習得に使う。現在 {meta.dewBank || 0} 個。</div>
               </button>
             </div>
           </div>

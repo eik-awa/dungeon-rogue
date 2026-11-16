@@ -135,11 +135,6 @@ struct GameWebView: UIViewRepresentable {
                     // フォアグラウンド復帰のたびに送り直す。
                     self.pushConsentApplicable()
                     self.startObservingConsent()
-                    // デバッグ端末だけ、精の結晶を指定数まで引き上げる(DebugDeviceConfig.debugDewBank が nil なら何もしない)
-                    if DebugDeviceConfig.isDebugDevice, let dew = DebugDeviceConfig.debugDewBank {
-                        let debugJS = "window.__debugSetDewBank__ && window.__debugSetDewBank__(\(dew))"
-                        webView?.evaluateJavaScript(debugJS, completionHandler: nil)
-                    }
                 }
             case "settings":
                 guard let body = message.body as? [String: Any],
@@ -163,7 +158,7 @@ struct GameWebView: UIViewRepresentable {
             case "rewardAd":
                 guard let body = message.body as? [String: Any],
                       let context = body["context"] as? String,
-                      ["dew", "revive", "eventDew"].contains(context) else { return }
+                      ["dew", "revive", "eventDew", "rushRevive", "rushCrystal"].contains(context) else { return }
                 let webView = message.webView
                 DispatchQueue.main.async {
                     RewardedAdController.shared.show { result in
@@ -250,6 +245,23 @@ struct GameWebView: UIViewRepresentable {
                 Analytics.logEvent("skill_unlock", parameters: [
                     "skill_id": str("skillId"),
                     "dew_left": (body["dewLeft"] as? Int) ?? 0,  // 合計する数値なので Int のまま
+                ])
+            case "rush_start":
+                // ボスラッシュの開始(挑戦者数と、これまでの最高記録の分布を見る)
+                Analytics.logEvent("rush_start", parameters: [
+                    "clears": num("clears", 2),
+                    "best": num("best", 2),
+                ])
+            case "rush_boss_kill":
+                // 何体目のボスまで倒されているか(難易度の調整用)。章ごとに別名で送り、GA4 のイベント一覧だけで見られるようにする
+                let stage = (body["stage"] as? Int) ?? 0
+                guard (1...11).contains(stage) else { break }
+                Analytics.logEvent("rush_boss_kill_\(stage)", parameters: [:])
+            case "rush_end":
+                Analytics.logEvent("rush_end", parameters: [
+                    "defeated": num("defeated", 2),
+                    "cleared": flag("cleared"),
+                    "crystals": (body["crystals"] as? Int) ?? 0,  // 合計する数値なので Int のまま
                 ])
             case "user_props":
                 // 自己ベスト等をユーザープロパティへ(全期間の到達分布を見る用)

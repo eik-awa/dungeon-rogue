@@ -37,9 +37,11 @@ async function main() {
   await d.click('袋を整理');
   await d.flush();
 
-  const cells = d.findAllButtonsContaining('苔の心臓');
-  if (cells.length < 2) throw new Error('expected 2 mossHeart cells, found ' + cells.length);
-  await d.raceClicks(cells[0], cells[1]);
+  // 同じ道具は1行にまとめて出る(×2)。その「使う」を同じ瞬間に2回押しても、2個とも効く。
+  const row = Array.from(d.container.querySelectorAll('.kw-stack')).find((r) => r.textContent.includes('苔の心臓'));
+  if (!row || !row.textContent.includes('×2')) throw new Error('expected one stacked row with x2 mossHeart');
+  const useBtn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent.includes('使う'));
+  await d.raceClicks(useBtn, useBtn);
   await d.flush(500);
 
   const meta = d.readJSON(SAVE_KEY);

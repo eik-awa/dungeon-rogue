@@ -31,7 +31,8 @@ async function main() {
   const orig = d.env.window.storage.set;
   d.env.window.storage.set = async (k, v) => { setCalls.push(k); return orig(k, v); };
 
-  const lockBtn = d.findButtonContaining('ロック');
+  await d.bagTab('装備'); // 装備中の武器のロックボタンは「装備」タブ
+  const lockBtn = d.container.querySelector('.kw-eqlock'); // 装備中カードの右上の鍵
   await d.click(lockBtn);
   await d.flush(500); // no other action taken — this alone must persist
 

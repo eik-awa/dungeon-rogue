@@ -54,6 +54,7 @@ async function main() {
   await d.flush();
   await d.click('袋');
   await d.flush();
+  await d.bagTab('装備'); // 並び替えは「装備」タブ
 
   const before = d.readJSON(RUN_SAVE_KEY);
   await d.click('並び替え');

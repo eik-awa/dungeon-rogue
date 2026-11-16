@@ -27,6 +27,13 @@ function makeDriver() {
       (b) => b.textContent && b.textContent.includes(substr)
     );
   }
+  // 袋のタブ(装備 / 袋の中身 / スキルツリー)を切り替える。
+  async function bagTab(label) {
+    const tab = Array.from(container.querySelectorAll('[role="tab"]')).find((b) => b.textContent.includes(label));
+    if (!tab) throw new Error('bag tab not found: ' + label);
+    await click(tab);
+    await flush();
+  }
   async function flush(ms = 20) {
     await act(async () => {
       await new Promise((r) => setTimeout(r, ms));
@@ -105,7 +112,7 @@ function makeDriver() {
 
   return {
     env, container, root, findButtonContaining, findAllButtonsContaining,
-    flush, flushUntil, mount, click, doubleClickRace, raceClicks, text, seed, readJSON,
+    flush, flushUntil, mount, click, bagTab, doubleClickRace, raceClicks, text, seed, readJSON,
     SAVE_KEY, RUN_SAVE_KEY,
   };
 }

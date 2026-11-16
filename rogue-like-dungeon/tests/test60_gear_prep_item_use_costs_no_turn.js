@@ -15,6 +15,7 @@ async function main() {
   await d.click('踏 み 入 れ る');
   await d.flush();
 
+  await d.bagTab('袋の中身'); // 戦闘準備は「装備」タブから始まる。道具は「袋の中身」タブ
   const hpBefore = d.readJSON(RUN_SAVE_KEY).player.hp;
   const useBtn = d.findButtonContaining('使う');
   console.log('[1] buff item usable during gear prep:', !!useBtn);

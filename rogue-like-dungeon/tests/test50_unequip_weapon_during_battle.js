@@ -34,7 +34,7 @@ async function main() {
   await d.click('袋');
   await d.flush();
   console.log('[1] equipped-weapon management section hidden during battle:', !d.text().includes('装備中の武器'));
-  console.log('[2] armor management section hidden during battle:', !d.text().includes('── 防具'));
+  console.log('[2] armor management section hidden during battle:', !d.text().includes('## 防具'));
 
   // The equipped weapon's card should NOT be tappable-to-unequip while in battle — it only
   // appears in the attack hand now (kw-wcard), never as a bag kw-cell.
@@ -42,7 +42,7 @@ async function main() {
     .find((b) => b.textContent.includes('試験の短剣'));
   console.log('[3] no bag "kw-cell" card for the equipped weapon in battle (nothing to unequip from):', !equippedCardInBag);
 
-  const pass = !d.text().includes('装備中の武器') && !d.text().includes('── 防具') && !equippedCardInBag;
+  const pass = !d.text().includes('装備中の武器') && !d.text().includes('## 防具') && !equippedCardInBag;
   console.log(pass ? 'PASS' : 'FAIL: equipment management is still reachable during battle');
   process.exit(pass ? 0 : 1);
 }

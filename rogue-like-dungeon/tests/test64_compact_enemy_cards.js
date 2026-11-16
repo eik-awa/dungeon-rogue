@@ -1,6 +1,6 @@
 // Feature (user-requested): with 3+ enemies in a normal battle the enemy cards are rendered in a
 // compact layout (so all three fit on one row on a phone) and a "敵 のこり N 体" counter is shown.
-// Boss battles (even boss + summons = 3) keep the original layout and show no counter.
+// Boss battles (even boss + summons = 3) are laid out boss-in-the-middle, summons on both sides, and show no counter.
 const { makeDriver } = require('./drive');
 const SAVE_KEY = 'kiriwatari-forest-save';
 const RUN_SAVE_KEY = 'kiriwatari-run-save';
@@ -29,6 +29,7 @@ async function view(enemies) {
     compact: !!inner && inner.classList.contains('compact'),
     count: d.container.querySelector('.kw-enemy-count')?.textContent || null,
     cards: d.container.querySelectorAll('.kw-enemy').length,
+    center: inner ? [...inner.querySelectorAll(':scope > .kw-bc-side, :scope > .kw-bc-boss')].map((el) => [...el.querySelectorAll('.kw-ename')].map((n) => n.textContent.trim()).join(',')).join('|') : null,
   };
 }
 
@@ -56,12 +57,12 @@ async function main() {
   };
   console.log('[3] 3 enemies (1 killed): stays compact, counter shows 2:', threeOneDead.compact, threeOneDead.count);
   const boss = await view([mk('boss', { boss: true, hp: 500, maxHp: 1000, summons: ['slime'], chargeLine: '', bigLine: '', summonLine: '' }), mk('b'), mk('c')]);
-  console.log('[4] boss + 2 summons: original layout, no counter:', !boss.compact, boss.count === null);
+  console.log('[4] boss + 2 summons: boss in the middle, one summon each side, no counter:', !boss.compact, boss.count === null, boss.center);
 
   const pass = !two.compact && two.count === null
     && three.compact && three.cards === 3 && /のこり\s*3\s*体/.test(three.count || '')
     && threeOneDead.compact && /のこり\s*2\s*体/.test(threeOneDead.count || '')
-    && !boss.compact && boss.count === null;
+    && !boss.compact && boss.count === null && boss.center === 'b|boss|c';
   console.log(pass ? 'PASS' : 'FAIL');
   process.exit(pass ? 0 : 1);
 }

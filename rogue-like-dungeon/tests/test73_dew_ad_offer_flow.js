@@ -36,6 +36,7 @@ async function main() {
 
   const d = await toOffer();
   check('offer is shown with the shared daily count', d.text().includes('雫をもう1個もらえます') && d.text().includes('本日あと5回'));
+  check('the count has no "〜で共通" note, and the sentence breaks after the comma (no stray character on a line)', ![...d.container.querySelectorAll('.kw-sheet')].some((el) => el.textContent.includes('雫をもう1個') && el.textContent.includes('共通')) && d.container.innerHTML.includes('広告を視聴すると、<br>雫をもう1個もらえます。'));
 
   await d.click('広 告 を 見 る');
   await d.flush();

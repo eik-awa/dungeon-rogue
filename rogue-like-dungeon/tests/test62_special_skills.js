@@ -28,8 +28,9 @@ async function boot(skills, runOver, meta = {}) {
 }
 async function useFromBag(d, name) {
   await d.click('袋'); await d.flush();
-  const cell = Array.from(d.container.querySelectorAll('button.kw-cell')).find((b) => b.textContent.includes(name));
-  await d.click(cell);
+  // 道具は種類ごとにまとめた行(.kw-stack)で出る。その行の「使う」を押す。
+  const row = Array.from(d.container.querySelectorAll('.kw-stack')).find((r) => r.textContent.includes(name));
+  await d.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent.includes('使う')));
   await d.flushUntil(() => d.container.querySelector('.kw-log').textContent.includes('ターン2'), { tries: 80 });
   await d.flush(100);
 }

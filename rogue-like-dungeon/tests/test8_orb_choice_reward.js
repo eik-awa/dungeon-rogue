@@ -34,6 +34,11 @@ async function testCrystal() {
   await d.click(d.findButtonContaining('使う'));
   await d.flush();
   console.log('[crystal] orb choice screen shown:', d.text().includes('使いみちを選んでください'));
+  // 説明文は短く、ボタン(nowrap)からはみ出さないよう折り返しを許す
+  const crystalDesc = Array.from(d.container.querySelectorAll('.kw-sheet button')).find((b) => b.textContent.includes('精の結晶 +1'))?.lastElementChild;
+  const descOk = !!crystalDesc && crystalDesc.textContent.length <= 20 && crystalDesc.style.whiteSpace === 'normal';
+  console.log('[crystal] description is short and may wrap:', descOk, crystalDesc && crystalDesc.textContent);
+  if (!descOk) { console.log('FAIL: crystal description too long or cannot wrap'); process.exit(1); }
   await d.click('精の結晶 +1');
   await d.flush(100);
   const meta = d.readJSON(SAVE_KEY);

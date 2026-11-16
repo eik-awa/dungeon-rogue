@@ -44,11 +44,12 @@ async function testPickupAutoLocksAndIconUnlocks() {
   console.log('[1] epic item auto-locked on pickup (protectRareItems=true):', item && item.locked === true);
 
   // Open the bag and press the lock icon once — it should release the auto-lock.
-  // The lock-icon button is the immediate sibling right before the "ロック中" status button.
+  // 道具は種類ごとの行(.kw-stack)にまとまる。ロック済みの行では鍵ボタンが「ロックを解除」、「捨てる」は押せない。
   await d.click('袋を整理');
   await d.flush();
-  const lockStatusBtn = Array.from(d.container.querySelectorAll('button')).find((b) => b.textContent.includes('ロック中'));
-  const lockIconBtn = lockStatusBtn && lockStatusBtn.previousElementSibling;
+  const lockIconBtn = d.container.querySelector('.kw-stack button[aria-label="ロックを解除"]');
+  const discardBtn0 = Array.from(d.container.querySelectorAll('.kw-stack button')).find((b) => b.textContent.includes('捨てる'));
+  console.log('[1b] while locked the discard button is disabled and keeps the same label:', !!discardBtn0 && discardBtn0.disabled);
   if (lockIconBtn) { await d.click(lockIconBtn); }
   await d.flush();
   run = d.readJSON(RUN_SAVE_KEY);

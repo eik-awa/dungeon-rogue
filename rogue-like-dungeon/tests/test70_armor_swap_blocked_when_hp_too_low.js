@@ -57,6 +57,7 @@ async function main() {
   // [C] low HP: taking the heavy armor off (no replacement) is refused too
   {
     const d = await bag(mkRun(5, heavy, []));
+    await d.bagTab('装備');
     const equippedCell = Array.from(d.container.querySelectorAll('*')).filter((el) => el.textContent.trim().startsWith('重装の鎧') || (el.getAttribute && el.getAttribute('role') === 'button' && el.textContent.includes('重装の鎧')));
     const target = equippedCell.reverse().find((el) => typeof el.click === 'function');
     if (target) { await d.click(target); await d.flush(50); }

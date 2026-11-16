@@ -16,10 +16,12 @@ async function main() {
   const equipped = Array.from(d.container.querySelectorAll('button.kw-cell'))[0];
   await d.click(equipped); // unequip the only weapon (goes to the bag)
   await d.flush();
+  await d.bagTab('袋の中身'); // 外した武器は「袋の中身」タブに戻る
   // Re-equip must work during gear prep: the unequipped weapon shows a "装備する" button.
   const reEquip = d.findButtonContaining('装備する');
   console.log('[0] unequipped weapon can be re-equipped during gear prep:', !!reEquip);
   if (reEquip) { await d.click(reEquip); await d.flush(); }
+  await d.bagTab('装備');
   console.log('[0b] re-equipped (equipped card back, bag empty of weapons):', d.container.querySelectorAll('button.kw-cell').length > 0 && !d.findButtonContaining('装備する'));
   await d.click(Array.from(d.container.querySelectorAll('button.kw-cell'))[0]); // unequip again
   await d.flush();

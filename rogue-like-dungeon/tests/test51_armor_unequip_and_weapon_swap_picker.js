@@ -48,6 +48,7 @@ async function testArmorUnequip() {
   const hpBefore = d.readJSON(RUN_SAVE_KEY).player.hp;
   await d.click('袋・装備');
   await d.flush();
+  await d.bagTab('装備'); // 装備中の防具は「装備」タブ
   const armorCard = Array.from(d.container.querySelectorAll('button.kw-cell')).find((b) => b.textContent.includes('試験の兜'));
   console.log('[1] equipped armor card found:', !!armorCard);
   await d.click(armorCard);
