@@ -194,6 +194,12 @@ struct GameWebView: UIViewRepresentable {
             }
             func str(_ key: String) -> String { (body[key] as? String) ?? "" }
             func flag(_ key: String) -> String { ((body[key] as? Bool) ?? false) ? "1" : "0" }
+            /// エンチャントの id。イベント名に使うので、既知の id 以外は "none" にする(JSX の ENCHANTS と揃える)
+            func enchId() -> String {
+                let known: Set<String> = ["vampire", "pierce", "weakbane", "resbreak", "swift", "chill", "venom"]
+                let id = str("ench")
+                return known.contains(id) ? id : "none"
+            }
 
             switch event {
             case "run_start":
@@ -230,11 +236,25 @@ struct GameWebView: UIViewRepresentable {
                 Analytics.logEvent("weapon_run_start", parameters: [
                     "weapon_type": str("weapon_type"),
                     "floor": num("floor", 3),
+                    "ench": enchId(),
+                    "ench_lv": num("ench_lv", 1),
                 ])
+                // エンチャント付きなら、種類ごとに別名でも送る(GA4 のイベント一覧だけで使用数が見られる)
+                if enchId() != "none" { Analytics.logEvent("ench_run_start_\(enchId())", parameters: ["ench_lv": num("ench_lv", 1)]) }
             case "weapon_boss_kill":
                 Analytics.logEvent("weapon_boss_kill", parameters: [
                     "weapon_type": str("weapon_type"),
                     "stage": num("stage", 2),
+                    "ench": enchId(),
+                    "ench_lv": num("ench_lv", 1),
+                ])
+                if enchId() != "none" { Analytics.logEvent("ench_boss_kill_\(enchId())", parameters: ["ench_lv": num("ench_lv", 1)]) }
+            case "rush_ench_boss_kill":
+                // ボスラッシュで、ボスを倒したときに装備していたエンチャント付き武器
+                guard enchId() != "none" else { break }
+                Analytics.logEvent("ench_rush_kill_\(enchId())", parameters: [
+                    "stage": num("stage", 2),
+                    "ench_lv": num("ench_lv", 1),
                 ])
             case "event_challenge":
                 // 以前は case がなく捨てられていた

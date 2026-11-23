@@ -242,6 +242,76 @@ const WEAPON_NAMES = {
   instrument: ["木の実のオカリナ", "風鳴りの笛", "蛍籠のリラ", "夜啼きのヴィオラ", "森の交響ルシオール"],
 };
 
+/* ---- 武器のレアエンチャント ----
+   武器種の効果とは別に、まれに1つだけ付く特殊効果(weapon.ench に id、weapon.enchLv に段階 1〜3)。
+   付く確率はレアリティが高いほど上がり、コモン・良質には付かない。深い章ほど、宝箱の「luck」でも上がる(上限あり。enchantChanceOf)。
+   段階(厳選の要素)で効果の大きさが 1 : 2 : 4 になる(unit × ENCH_LEVEL_MULT)。出やすさは Lv1 が最も高い。
+   どの段階でも、ゲームの釣り合いを大きく崩さない小さめの値にしてある(完全な無視・無効はしない)。
+   効果は attackWith() で実装している。unit / text と必ず一致させる。 */
+const ENCH_LEVEL_MULT = [1, 2, 4];
+const ENCH_LEVEL_WEIGHT = [60, 30, 10];
+const enchNum = (x) => Number(x.toFixed(2));
+const enchPct = (v) => `${Math.round(v * 100)}%`;
+const ENCHANTS = {
+  vampire:  { label: "吸魂",     color: "#e0566a", stat: "回復する割合", unit: 0.02, fmt: enchPct, text: (x) => `与えたダメージの${x}を回復する。` },
+  pierce:   { label: "貫き",     color: "#7fb8ff", stat: "防御を無視する割合", unit: 0.15, fmt: enchPct, text: (x) => `敵の防御力の${x}を無視して攻撃する。` },
+  weakbane: { label: "弱点穿ち", color: "#f0a040", stat: "弱点の倍率", unit: 0.05, fmt: (v) => `${enchNum(BALANCE.affWeak + v)}倍`, text: (x) => `弱点を突いたときの倍率が${BALANCE.affWeak}倍から${x}になる。` },
+  resbreak: { label: "理破り",   color: "#c08ae8", stat: "耐性のある敵への倍率", unit: 0.10, fmt: (v) => `${enchNum(BALANCE.affResist + v)}倍`, text: (x) => `耐性のある敵への倍率が${BALANCE.affResist}倍から${x}になる。` },
+  swift:    { label: "疾風",     color: "#f4d35e", stat: "再使用がなくなる確率", unit: 0.10, fmt: enchPct, text: (x) => `${x}の確率で、再使用までのターンがなくなる。` },
+  chill:    { label: "霜縛り",   color: "#8fe0f0", stat: "攻撃を下げる確率", unit: 0.15, fmt: enchPct, text: (x) => `${x}の確率で、攻撃した敵の攻撃力を2ターン下げる。` },
+  venom:    { label: "蝕み",     color: "#8fd39a", stat: "毎ターンの毒ダメージ(攻撃力に対して)", unit: 0.05, fmt: enchPct, text: (x) => `攻撃した敵を毒にする(毎ターン、攻撃力の${x}のダメージ)。` },
+};
+const ENCHANT_IDS = Object.keys(ENCHANTS);
+const ENCHANT_CHANCE = { rare: 0.08, epic: 0.20, legend: 0.40 }; // レアリティ別(1章の値)。ここに無いレアリティには付かない
+const ENCHANT_STAGE_STEP = 0.1; // 1章進むごとに付く確率が +0.1倍(1章 1.0倍 → 10章 1.9倍)
+const ENCHANT_CHANCE_CAP = 0.6; // 付く確率の上限(章の倍率と宝箱の luck を掛けた後)
+// 武器にエンチャントが付く確率。レアリティ・章(floor)・luck で決まる
+const enchantChanceOf = (rarityId, floor, luck = 0) => {
+  const base = ENCHANT_CHANCE[rarityId] || 0;
+  if (base <= 0) return 0;
+  return Math.min(ENCHANT_CHANCE_CAP, base * (1 + ENCHANT_STAGE_STEP * stageOf(Math.max(1, floor))) * (1 + luck));
+};
+const enchantLevelOf = (w) => Math.min(ENCH_LEVEL_MULT.length, Math.max(1, Math.round(w?.enchLv || 1)));
+// Firebase 計測用: 武器のエンチャント(無ければ "none" / 0)。エンチャントの使用率を見るために、武器のイベントに添える
+const enchantTagOf = (w) => (w?.ench && ENCHANTS[w.ench] ? { ench: w.ench, ench_lv: enchantLevelOf(w) } : { ench: "none", ench_lv: 0 });
+// 武器に付いたエンチャントの効果値(段階込み)。付いていなければ 0
+const enchantValueOf = (w) => (w?.ench && ENCHANTS[w.ench] ? Math.round(ENCHANTS[w.ench].unit * ENCH_LEVEL_MULT[enchantLevelOf(w) - 1] * 1000) / 1000 : 0);
+const enchantTextOf = (w) => ENCHANTS[w.ench].text(ENCHANTS[w.ench].fmt(enchantValueOf(w)));
+// 「遊び方」用: 3段階の値を「2% / 4% / 8%」のように並べた説明
+const enchantGuideText = (id) => ENCHANTS[id].text(ENCH_LEVEL_MULT.map((m) => ENCHANTS[id].fmt(Math.round(ENCHANTS[id].unit * m * 1000) / 1000)).join(" / "));
+function rollEnchantLevel() {
+  const total = ENCH_LEVEL_WEIGHT.reduce((a, b) => a + b, 0);
+  let roll = Math.random() * total;
+  for (let i = 0; i < ENCH_LEVEL_WEIGHT.length; i++) { roll -= ENCH_LEVEL_WEIGHT[i]; if (roll < 0) return i + 1; }
+  return 1;
+}
+
+/* エンチャントのアイコン(色と形で見分ける)と、段階を表す点 */
+const ENCH_ICON = {
+  vampire:  <path d="M12 3C12 3 5.5 10.2 5.5 14.5a6.5 6.5 0 0 0 13 0C18.5 10.2 12 3 12 3Z" fill="currentColor" fillOpacity=".35" />,
+  pierce:   <path d="M4 20L19 5M12 5h7v7M7 12l5 5" />,
+  weakbane: <><circle cx="12" cy="12" r="6.5" /><path d="M12 2v5M12 17v5M2 12h5M17 12h5" /><circle cx="12" cy="12" r="1.5" fill="currentColor" /></>,
+  resbreak: <><path d="M12 3L20 6v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6Z" /><path d="M13 4l-2.5 6L14 13l-3 7" /></>,
+  swift:    <path d="M13 2L5 13.5h6L10 22l9-12h-6Z" fill="currentColor" fillOpacity=".35" />,
+  chill:    <path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7M9.5 3.8L12 6l2.5-2.2M9.5 20.2L12 18l2.5 2.2" />,
+  venom:    <><path d="M9 3h6M10 3v6l-5 10a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-10V3" /><path d="M7.5 16h9" /><circle cx="11" cy="19" r=".8" fill="currentColor" /></>,
+};
+function EnchantIcon({ id, size = 16 }) {
+  const en = ENCHANTS[id];
+  if (!en) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      style={{ color: en.color, flexShrink: 0 }} aria-hidden="true">{ENCH_ICON[id]}</svg>
+  );
+}
+function EnchantPips({ lv, color, size = 6 }) {
+  return (
+    <span className="kw-pips" style={{ "--ec": color }} aria-hidden="true">
+      {ENCH_LEVEL_MULT.map((_, i) => <span key={i} className={`kw-pip ${i < lv ? "on" : ""}`} style={{ width: size, height: size }} />)}
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------
    防具・消耗品
 ------------------------------------------------------------ */
@@ -522,10 +592,15 @@ function makeWeapon(floor, opts = {}) {
   const rar = opts.rarity ? rarityOf(opts.rarity) : rollRarity(opts.luck || 0);
   const idx = RARITIES.findIndex((r) => r.id === rar.id);
   const atk = Math.max(2, Math.round(t.base * rar.mult * (1 + floor * BALANCE.weaponGrowth) * rnd(0.92, 1.08)));
-  return {
+  const w = {
     id: uid(), kind: "weapon", type: typeId, name: WEAPON_NAMES[typeId][idx],
     rarity: rar.id, atk, asset: t.asset,
   };
+  // opts.ench / opts.enchLv: 指定すればそのエンチャント(と段階)を付ける(テスト・特別な報酬用)。無指定なら確率で抽選する。
+  const chance = enchantChanceOf(rar.id, floor, opts.luck || 0);
+  const ench = opts.ench || (chance > 0 && Math.random() < chance ? pick(ENCHANT_IDS) : null);
+  if (ench) { w.ench = ench; w.enchLv = opts.enchLv || rollEnchantLevel(); }
+  return w;
 }
 
 function makeArmor(floor, opts = {}) {
@@ -1448,6 +1523,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-chip { font-size: 12px; padding: 1px 6px; border-radius: 3px; letter-spacing: .1em; }
 .kw-chip.weak { color: var(--hotaru); border: 1px solid var(--hotaru-dim); }
 .kw-chip.res { color: var(--paper-dim); border: 1px solid rgba(185,183,165,.25); }
+.kw-chip.debuff { color: #e0a24a; border: 1px solid rgba(224,162,74,.5); }
 .kw-chip.poison { color: #a98ad9; border: 1px solid rgba(169,138,217,.4); }
 .kw-chip.core { color: #e07a6a; border: 1px solid rgba(224,122,106,.5); }
 .kw-chip.unknown { color: var(--mist); border: 1px dashed rgba(157,180,166,.3); }
@@ -1485,6 +1561,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-wcard.selected { box-shadow: 0 0 0 1.5px var(--hotaru), 0 6px 20px rgba(0,0,0,.45); transform: translateY(-3px); }
 .kw-wcard.empty { opacity: .5; border-style: dashed; cursor: default; }
 .kw-wcard .kw-wtype { font-size: 12px; font-weight: 700; line-height: 1; color: var(--mist); }
+.kw-wcard .kw-wench { position: absolute; left: 5px; top: 3px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8)); }
 .kw-wcard .kw-wcd { position: absolute; right: 4px; top: 2px; font-family: var(--font-display); font-size: 16px; font-weight: 800; color: var(--paper); text-shadow: 0 1px 4px rgba(0,0,0,.8); }
 .kw-wcard .kw-watk { font-family: var(--font-display); font-size: 11px; font-weight: 800; color: var(--paper); margin-left: 3px; }
 .kw-quick { display: flex; justify-content: center; gap: 6px; margin-top: 8px; flex-shrink: 0; }
@@ -1550,7 +1627,15 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-cell { padding: 10px; cursor: pointer; text-align: left; position: relative; color: var(--paper);
   font-family: var(--font-body); width: 100%; transition: box-shadow .15s ease; }
 .kw-cell .kw-cname { font-family: var(--font-display); font-size: 14px; font-weight: 700; margin: 4px 0 2px; line-height: 1.35; }
-.kw-cell .kw-cmeta { font-size: 12px; color: var(--mist); line-height: 1.5; }
+.kw-cmeta { font-size: 12px; color: var(--mist); line-height: 1.5; }
+.kw-ench { color: var(--paper); }
+.kw-ench-row { border-left: 2px solid var(--ec); padding-left: 6px; margin-top: 4px; }
+.kw-pips { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; }
+.kw-pip { display: inline-block; box-sizing: border-box; border-radius: 50%; border: 1px solid var(--ec); opacity: .55; }
+.kw-pip.on { background: var(--ec); opacity: 1; }
+.kw-trait-box { padding: 8px 10px; background: rgba(0,0,0,.2); border-radius: 8px; }
+.kw-trait-cap { font-size: 11px; color: var(--mist); letter-spacing: .1em; margin-bottom: 2px; }
+.kw-ench-panel { margin-top: 8px; padding: 10px; border: 1px solid; border-radius: 8px; }
 .kw-cell.picked { box-shadow: 0 0 0 1.5px var(--hotaru); }
 .kw-cell.equipped-mark::after { content: "装備中"; position: absolute; top: 7px; right: 8px; font-size: 11px; color: var(--hotaru); letter-spacing: .05em; }
 .kw-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
@@ -1587,6 +1672,11 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-enemy.goodTarget { box-shadow: 0 0 0 1.5px var(--hotaru), 0 0 22px var(--hotaru-dim); }
 .kw-enemy.goodTarget::before { content: "弱点をつける!"; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
   font-size: 11px; color: var(--ink); background: var(--hotaru); padding: 1px 8px; border-radius: 3px; letter-spacing: .1em; white-space: nowrap; }
+
+/* --- 耐性のある敵(効きにくい)のハイライト --- */
+.kw-enemy.badTarget { box-shadow: 0 0 0 1.5px rgba(185,183,165,.55); }
+.kw-enemy.badTarget::before { content: "効きにくい…"; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: var(--ink); background: var(--paper-dim); padding: 1px 8px; border-radius: 3px; letter-spacing: .1em; white-space: nowrap; }
 
 /* --- 未回収確認などの最前面モーダル --- */
 .kw-overlay.top { z-index: 50; }
@@ -1923,10 +2013,12 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
   const revealed = e.rare || e.boss ? { w: e.weak, r: e.resist } : d;
   const hidden = known.some((t) => !revealed.w?.includes(t) && !revealed.r?.includes(t));
   const goodTarget = pending && e.hp > 0 && revealed.w?.includes(WEAPON_TYPES[pending.type].dmgType);
+  // 耐性のある相手を狙っているときも、弱点のときと同じように札で知らせる(効きにくい相手を選ばないため)
+  const badTarget = pending && e.hp > 0 && !goodTarget && revealed.r?.includes(WEAPON_TYPES[pending.type].dmgType);
   const myFloats = floats.filter((f) => f.targetId === e.id);
   return (
     <div
-      className={`kw-panel kw-enemy ${e.hp <= 0 ? "dead" : ""} ${e.rare ? "rare" : ""} ${e.boss ? "boss" : ""} ${pending ? "targetable" : ""} ${goodTarget ? "goodTarget" : ""} ${hitId === e.id ? "hit" : ""}`}
+      className={`kw-panel kw-enemy ${e.hp <= 0 ? "dead" : ""} ${e.rare ? "rare" : ""} ${e.boss ? "boss" : ""} ${pending ? "targetable" : ""} ${goodTarget ? "goodTarget" : ""} ${badTarget ? "badTarget" : ""} ${hitId === e.id ? "hit" : ""}`}
       onClick={() => { if (pending && e.hp > 0) onAttack(pending, e.id); }}
       role="button" aria-label={`${e.name}を狙う`} data-enemy-id={e.id}
     >
@@ -1945,6 +2037,8 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
         {hidden && <span className="kw-chip unknown">?</span>}
         {e.rare && <span className="kw-chip weak">あと{e.fleeIn}T</span>}
         {e.hp > 0 && e.poisonT > 0 && <span className="kw-chip poison">毒 {e.poisonT}T</span>}
+        {e.hp > 0 && e.atkDown > 0 && <span className="kw-chip debuff" title="攻撃力が20%下がっている">攻↓ {e.atkDown}T</span>}
+        {e.hp > 0 && e.defCut > 0 && <span className="kw-chip debuff" title="斧で防御力が下げられている">防↓ {e.defCut}</span>}
         {e.hp > 0 && e.core && e.coreOpen > 0 && <span className="kw-chip weak">守り崩れ</span>}
       </div>
     </div>
@@ -1996,9 +2090,99 @@ function WeaponCard({ w, g, onAttack, onSelect, onInfo }) {
         {cd > 0 && <span className="kw-wcd">{cd}</span>}
         <AssetIcon assetId={w.asset} size={28} color={r.color} />
         <span className="kw-wtype">{t.dmgType}<b className="kw-watk">{w.atk}</b></span>
-        <span className="kw-sr">{w.name}</span>
+        {w.ench && ENCHANTS[w.ench] && <span className="kw-wench" aria-hidden="true"><EnchantIcon id={w.ench} size={14} /><EnchantPips lv={enchantLevelOf(w)} color={ENCHANTS[w.ench].color} size={4} /></span>}
+        <span className="kw-sr">{w.name}{w.ench && ENCHANTS[w.ench] ? `(${ENCHANTS[w.ench].label} Lv.${enchantLevelOf(w)})` : ""}</span>
       </button>
     </div>
+  );
+}
+
+/* 武器の一覧での表示: 攻撃力・属性と、エンチャントの名前・段階の点だけ。効果の文や特性などの詳細は、長押しで開く */
+function WeaponBrief({ w, withType }) {
+  const t = WEAPON_TYPES[w.type];
+  const en = w.ench ? ENCHANTS[w.ench] : null;
+  return (
+    <>
+      <div className="kw-cmeta">{withType ? `${t.label}・` : ""}攻 {w.atk}・{t.dmgType}属性</div>
+      {en && (
+        <div className="kw-ench kw-ench-row" style={{ "--ec": en.color, display: "flex", alignItems: "center", gap: 5 }}>
+          <EnchantIcon id={w.ench} size={15} />
+          <b style={{ color: en.color, fontSize: 12 }}>{en.label}</b>
+          <EnchantPips lv={enchantLevelOf(w)} color={en.color} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/* 拾う武器があるときだけ、長押しで詳細が見られることを知らせる(グリッドの最後に全幅で置く) */
+function WeaponPressNote({ drops }) {
+  if (!drops.some((d) => d.kind === "weapon")) return null;
+  return <div className="kw-sub" style={{ gridColumn: "1 / -1", fontSize: 11.5, textAlign: "center" }}>武器を長押しすると、詳細が見られます。</div>;
+}
+
+/* 長押しの共通処理。handlers を要素に付け、onClick の先頭で consumedLong() が true なら何もしない(長押しの後のタップ扱いを防ぐ) */
+function useLongPress(onLong) {
+  const timer = useRef(null);
+  const longFired = useRef(false);
+  const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  useEffect(() => clearTimer, []);
+  if (!onLong) return { handlers: {}, consumedLong: () => false };
+  return {
+    handlers: {
+      onPointerDown: () => { longFired.current = false; clearTimer(); timer.current = setTimeout(() => { timer.current = null; longFired.current = true; onLong(); }, LONG_PRESS_MS); },
+      onPointerUp: clearTimer,
+      onPointerLeave: () => { clearTimer(); longFired.current = false; },
+      onPointerCancel: () => { clearTimer(); longFired.current = false; },
+      onContextMenu: (e) => e.preventDefault(),
+    },
+    consumedLong: () => { if (longFired.current) { longFired.current = false; return true; } return false; },
+  };
+}
+// 武器の詳細を開く関数(メイン画面が Provider で渡す)。ItemCell の武器は、これで長押しの詳細を開く
+const WeaponInfoContext = React.createContext(null);
+
+/* 交代画面で、入れ替える新しい武器の概要。長押しで詳細を開く */
+function IncomingWeapon({ w, onInfo, children }) {
+  const { handlers } = useLongPress(() => onInfo(w));
+  return (
+    <div style={{ margin: "6px 0 14px", userSelect: "none", WebkitTouchCallout: "none" }} {...handlers}>
+      <RarityName item={w} small />
+      <div style={{ fontSize: 14, color: "var(--paper)", marginTop: 4, letterSpacing: ".05em" }}>{w.name}</div>
+      <div style={{ textAlign: "left", marginTop: 4 }}><WeaponBrief w={w} withType /></div>
+      {children}
+    </div>
+  );
+}
+
+/* 武器の特性(武器種の説明とエンチャント)。長押しの詳細で使う */
+function WeaponTraitLines({ w }) {
+  const t = WEAPON_TYPES[w.type];
+  const en = w.ench ? ENCHANTS[w.ench] : null;
+  const lv = enchantLevelOf(w);
+  return (
+    <>
+      <div className="kw-trait-box">
+        <div className="kw-trait-cap">武器の特性</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.8, color: "var(--paper)" }}>{t.desc}</div>
+      </div>
+      {en && (
+        <div className="kw-ench kw-ench-panel" style={{ "--ec": en.color, borderColor: en.color + "88", background: en.color + "14" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <EnchantIcon id={w.ench} size={26} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: "var(--mist)", letterSpacing: ".1em" }}>レアエンチャント</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 17, fontWeight: 700, color: en.color, letterSpacing: ".08em" }}>{en.label}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <EnchantPips lv={lv} color={en.color} size={8} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: en.color, marginTop: 2 }}>Lv.{lv}</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.75, color: "var(--paper)", marginTop: 8 }}>{enchantTextOf(w)}</div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2017,7 +2201,7 @@ function WeaponInfoSheet({ w, cd, onClose }) {
         <div className="kw-sub" style={{ marginBottom: 8 }}>
           {t.label}・攻 {w.atk}・{t.dmgType}属性{cd > 0 ? `・再使用まで${cd}ターン` : ""}
         </div>
-        <div style={{ fontSize: 13.5, lineHeight: 1.8, color: "var(--paper)" }}>{t.desc}</div>
+        <WeaponTraitLines w={w} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
           {t.tags.map((tag) => <span key={tag} className="kw-chip res">{tag}</span>)}
         </div>
@@ -2080,22 +2264,26 @@ function ItemInfoSheet({ c, count, lines, onClose }) {
 // 見出しの「## 」。見出しの文字は字間を広げているので、「#」と「#」の間まで開いて「# #」に見えないよう、ここだけ字間を0にする。
 const Hash = () => <span style={{ letterSpacing: 0 }}>## </span>;
 
-function ItemCell({ item, onClick, picked, equipped, actionLabel, hint }) {
+function ItemCell({ item, onClick, picked, equipped, actionLabel, hint, onInfo }) {
   const r = rarityOf(item.rarity) || RARITIES[0];
-  const meta = item.kind === "weapon"
-    ? `${WEAPON_TYPES[item.type].label}・攻 ${item.atk}・${WEAPON_TYPES[item.type].dmgType}属性`
-    : item.kind === "armor"
-      ? `${ARMOR_TYPES[item.slot].label}・防 ${item.def}・HP+${item.hp}`
-      : CONSUMABLES[item.itemId].desc;
+  // 武器は長押しで詳細を開く(タップは従来どおり onClick)。開き先は onInfo、無ければメイン画面の共通の詳細
+  const ctxInfo = React.useContext(WeaponInfoContext);
+  const open = item.kind === "weapon" ? (onInfo || ctxInfo) : null;
+  const { handlers, consumedLong } = useLongPress(open ? () => open(item) : null);
+  const meta = item.kind === "armor"
+    ? `${ARMOR_TYPES[item.slot].label}・防 ${item.def}・HP+${item.hp}`
+    : item.kind === "item" ? CONSUMABLES[item.itemId].desc : null;
   return (
     <button className={`kw-panel kw-cell ${picked ? "picked" : ""} ${equipped ? "equipped-mark" : ""}`}
-      onClick={onClick} style={{ boxShadow: picked ? undefined : r.glow === "none" ? undefined : r.glow }}>
+      {...handlers}
+      onClick={() => { if (consumedLong()) return; onClick && onClick(); }}
+      style={{ boxShadow: picked ? undefined : r.glow === "none" ? undefined : r.glow, ...(open ? { userSelect: "none", WebkitTouchCallout: "none" } : {}) }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <AssetIcon assetId={item.asset} size={20} color={r.color} />
         <RarityName item={item} small />
       </div>
       <div className="kw-cname">{item.name}</div>
-      <div className="kw-cmeta">{meta}</div>
+      {item.kind === "weapon" ? <WeaponBrief w={item} /> : <div className="kw-cmeta">{meta}</div>}
       {hint && <div className="kw-hint-diff" style={{ color: hint.up ? "#8fd39a" : hint.down ? "var(--paper-dim)" : "var(--hotaru)" }}>{hint.text}</div>}
       {actionLabel && <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--hotaru)", letterSpacing: ".12em" }}>{actionLabel}</div>}
     </button>
@@ -2130,6 +2318,9 @@ const BALANCE = {
   weaponGrowth: 0.09,      // フロアごとの武器ATK伸び率
   armorDefGrowth: 0.25,    // フロアごとの防具DEF増加
   armorHpGrowth: 0.06,     // フロアごとの防具HP伸び率
+
+  // ── 宝箱 ────────────────────────────────────
+  chestDewChance: 0.06,    // 宝箱を開けたとき、中身に加えて宝樹の雫が入っている確率
 
   // ── 属性相性 ────────────────────────────────
   affWeak: 1.6,            // 弱点ダメージ倍率
@@ -3008,7 +3199,8 @@ export default function KiriwatariNoMori() {
   const [consentApplicable, setConsentApplicable] = useState(false);
   // 起動後1回だけ表示するイベント告知バナー(イベント期間外は false で初期化)
   const [rushBuffsOpen, setRushBuffsOpen] = useState(false); // ボスラッシュの強化一覧
-  const [weaponInfoId, setWeaponInfoId] = useState(null); // 武器の長押し詳細
+  const [weaponInfoId, setWeaponInfoId] = useState(null); // 戦闘中の武器カードの長押し詳細(装備中の武器の id)
+  const [infoWeapon, setInfoWeapon] = useState(null); // 報酬・袋・交代画面の武器の長押し詳細(武器そのもの)
   const [itemInfoId, setItemInfoId] = useState(null); // 戦闘後の道具アイコンの長押し詳細(itemId)
   const [showEventBanner, setShowEventBanner] = useState(() => {
     if (!EVENT_ENABLED) return false;
@@ -3400,7 +3592,18 @@ export default function KiriwatariNoMori() {
   }
 
   const invCap = invCapOf(meta, g?.orbBagBonus || 0);
-  const bagOverNow = g && g.screen === "run" ? bagOver(g, invCap) : 0; // 上限を超えて持ち込んでいる個数(0なら進める)
+  const bagOverNow = g && g.screen === "run" ? bagOver(g, invCap) : 0;
+  // 雫の広告が失敗したあとの「再試行」ボタン(戦利品画面と宝箱で共通)
+  const dewRetry = g && g.screen === "run" && g.drops && g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && g.rewardAdFailedAt && (
+    <div style={{ marginTop: 4, marginBottom: 6 }}>
+      <button className="kw-btn ghost" style={{ fontSize: 12 }} disabled={!!g.rewardAdPending}
+        onClick={() => { setG((s) => ({ ...s, rewardAdFailedAt: null })); requestRewardAd("dew"); }}>
+        <Sparkles size={10} style={{ display: "inline", marginRight: 4 }} />
+        {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほどかかります）" : "広告を再試行して雫を2倍にする"}
+      </button>
+      {rewardAdFailNote({ marginTop: 4 })}
+    </div>
+  ); // 上限を超えて持ち込んでいる個数(0なら進める)
 
   async function buySkill(skillId) {
     const m0 = metaRef.current;
@@ -3517,7 +3720,7 @@ export default function KiriwatariNoMori() {
     // ラン開始を記録(開始章・周回数)
     try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "run_start", stage: chapterIdx + 1, floor: startFloor, clears: m.clears || 0 }); } catch (_) {}
     // ラン開始時の装備武器を記録(武器バランス調整の参考用)
-    try { first.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_run_start", weapon_type: w.type, floor: startFloor })); } catch (_) {}
+    try { first.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_run_start", weapon_type: w.type, floor: startFloor, ...enchantTagOf(w) })); } catch (_) {}
     setG(first);
   }
   // チェックポイント(前回到達章)から続ける
@@ -3665,6 +3868,8 @@ export default function KiriwatariNoMori() {
     const idx = st.rush.idx;
     const bossName = rushBossName(idx);
     try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "rush_boss_kill", stage: idx + 1 }); } catch (_) {}
+    // ボスラッシュでのエンチャントの使用率(倒したときに装備していたエンチャント付き武器)
+    try { (st.weapons || []).filter((w) => w?.ench && ENCHANTS[w.ench]).forEach((w) => window.webkit?.messageHandlers?.progress?.postMessage({ event: "rush_ench_boss_kill", stage: idx + 1, ...enchantTagOf(w) })); } catch (_) {}
     if (idx + 1 >= RUSH_TOTAL) { finishRush({ ...st, busy: false }, true); return; }
     const m = metaRef.current;
     const mx = maxHpOf(st, m);
@@ -3943,17 +4148,19 @@ export default function KiriwatariNoMori() {
   }
 
   /* ---------- ダメージ計算 ---------- */
-  function hitEnemy(st, enemy, rawAtk, dmgType, mult, discovered, weaponType) {
+  // fx: 武器のエンチャント由来の補正 { weakMult, resMult, pierce(防御を無視する割合) }(無ければ補正なし)
+  function hitEnemy(st, enemy, rawAtk, dmgType, mult, discovered, weaponType, fx) {
     let aff = 1, tag = null;
-    if (enemy.weak.includes(dmgType)) { aff = AFF_WEAK; tag = "weak"; }
-    else if (enemy.resist.includes(dmgType)) { aff = AFF_RES; tag = "res"; }
+    if (enemy.weak.includes(dmgType)) { aff = fx?.weakMult || AFF_WEAK; tag = "weak"; }
+    else if (enemy.resist.includes(dmgType)) { aff = fx?.resMult || AFF_RES; tag = "res"; }
     // ボスラッシュの「核」: 指定の武器種で突くと露出し、閉じている間は他の武器のダメージが大きく減る。
     let coreMul = 1, core = null;
     if (enemy.core && weaponType) {
       if (weaponType === enemy.core) { core = "open"; coreMul = RUSH.coreHit; }
       else if (!(enemy.coreOpen > 0)) { core = "shield"; coreMul = Math.min(1, RUSH.coreShield + skillEffectTotal(metaRef.current?.skills, "rushCoreLeak")); }
     }
-    const dmg = Math.max(1, Math.round(rawAtk * mult * aff * coreMul * rnd(0.9, 1.1)) - enemy.def);
+    const pierced = fx?.pierce ? enemy.def - Math.round(enemy.def * (1 - fx.pierce)) : 0; // 「貫き」で無視した防御(ログ用)
+    const dmg = Math.max(1, Math.round(rawAtk * mult * aff * coreMul * rnd(0.9, 1.1)) - Math.round(enemy.def * (1 - (fx?.pierce || 0))));
     enemy.hp = Math.max(0, enemy.hp - dmg);
     // +1 は、この行動のターン終了時に1減るぶん(露出は「次のターンから coreOpen ターン」続く)
     if (core === "open") enemy.coreOpen = RUSH.coreOpen + skillEffectTotal(metaRef.current?.skills, "rushCoreOpen") + 1;
@@ -3963,7 +4170,7 @@ export default function KiriwatariNoMori() {
       const list = tag === "weak" ? d.w : d.r;
       if (!list.includes(dmgType)) list.push(dmgType);
     }
-    return { dmg, tag, core };
+    return { dmg, tag, core, pierced };
   }
 
   /* ---------- プレイヤーの攻撃 ---------- */
@@ -3972,6 +4179,9 @@ export default function KiriwatariNoMori() {
     if (st0.busy || st0.phase !== "battle") return;
     playAttackSound();
     const t = WEAPON_TYPES[weapon.type];
+    const ench = weapon.ench && ENCHANTS[weapon.ench] ? weapon.ench : null;
+    const enchV = ench ? enchantValueOf(weapon) : 0; // 段階込みの効果値
+    const fx = ench ? { weakMult: ench === "weakbane" ? AFF_WEAK + enchV : 0, resMult: ench === "resbreak" ? AFF_RES + enchV : 0, pierce: ench === "pierce" ? enchV : 0 } : null;
     let s = { ...st0, pending: null, busy: true };
     const enemies = s.enemies.map((e) => ({ ...e }));
     const discovered = JSON.parse(JSON.stringify(meta.discovered || {}));
@@ -3986,11 +4196,22 @@ export default function KiriwatariNoMori() {
     const raw = weapon.atk * atkMul * masteryMult * powerSealMult * rushMult;
     // A-1: elementDmgPct と同じく、この武器の属性の余韻だけを合計する(フィルタ漏れで
     // 以前は全属性の余韻(5種合計20%)が常に乗ってしまっていた)。
+    // 余韻(スキル)と吸魂(エンチャント)は、回復量を別々にログへ出すため分けて持つ
     const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct", (e) => e.element === t.dmgType);
+    const vampirePct = ench === "vampire" ? enchV : 0;
     let dmgDealtThisAction = 0;
     const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
     if (!target) return;
     const floats = [];
+    // エンチャントが働いた回数(ログ用)。貫き=無視した防御の合計、弱点穿ち/理破り=倍率が変わった命中の数
+    const enchHits = { pierced: 0, weak: 0, res: 0 };
+    const hit = (...args) => {
+      const r = hitEnemy(...args);
+      if (ench === "pierce") enchHits.pierced += r.pierced || 0;
+      if (ench === "weakbane" && r.tag === "weak") enchHits.weak++;
+      if (ench === "resbreak" && r.tag === "res") enchHits.res++;
+      return r;
+    };
     // 槍が敵に与える毒。持続は基本2ターン+スキル(上限3)、ダメージは基準値×割合(基本30%+スキルの加算。上限50%)。
     // 再付与は持続を延長・ダメージは大きい方を採る(加算しない)。ダメージ判定は敵ターンの最後(enemyPhase)。
     const poisonTurns = Math.min(ENEMY_POISON.turnsMax, ENEMY_POISON.turnsBase + skillEffectTotal(meta?.skills, "enemyPoisonTurns"));
@@ -3998,7 +4219,9 @@ export default function KiriwatariNoMori() {
     const poisonRaw = weapon.atk * masteryMult * powerSealMult;
     const poisonPctAdd = skillEffectTotal(meta?.skills, "enemyPoisonPctAdd");
     // 0 = この武器は毒を付与しない。スキルの加算込みでも pctMax(50%)を超えない。
-    const poisonPct = ENEMY_POISON.pct[weapon.type] ? Math.min(ENEMY_POISON.pctMax, ENEMY_POISON.pct[weapon.type] + poisonPctAdd) : 0;
+    const poisonPct = ENEMY_POISON.pct[weapon.type]
+      ? Math.min(ENEMY_POISON.pctMax, ENEMY_POISON.pct[weapon.type] + poisonPctAdd)
+      : ench === "venom" ? enchV : 0; // 槍以外は「蝕み」のエンチャントがあるときだけ毒を付与する
     const poisonEnemy = (e) => {
       if (!poisonPct || !e || e.hp <= 0) return;
       const tick = Math.max(1, Math.round(poisonRaw * Math.max(0, poisonPct - (e.boss ? ENEMY_POISON.bossPctCut : 0))));
@@ -4026,7 +4249,7 @@ export default function KiriwatariNoMori() {
       for (let i = 0; i < 2; i++) {
         if (target.hp <= 0) break;
         const crit = Math.random() < critChance;
-        const r = hitEnemy(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered, weapon.type);
+        const r = hit(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered, weapon.type, fx);
         dmgDealtThisAction += r.dmg;
         if (crit) {
           const label = `会心 ${r.dmg}`;
@@ -4038,28 +4261,30 @@ export default function KiriwatariNoMori() {
       }
       s = pushLog(s, `${weapon.name}の二連撃。`);
     } else if (weapon.type === "greatsword") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 2.2, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hit(s, target, raw, t.dmgType, 2.2, discovered, weapon.type, fx); F(target.id, r); dmgDealtThisAction += r.dmg;
       s = pushLog(s, `${weapon.name}を振り抜いた!`);
     } else if (weapon.type === "bow") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hit(s, target, raw, t.dmgType, 1, discovered, weapon.type, fx); F(target.id, r); dmgDealtThisAction += r.dmg;
       const others = enemies.filter((e) => e.hp > 0 && e.id !== target.id);
-      if (others.length) { const o = pick(others); const r2 = hitEnemy(s, o, raw, t.dmgType, 0.5, discovered, weapon.type); F(o.id, r2); dmgDealtThisAction += r2.dmg; }
+      if (others.length) { const o = pick(others); const r2 = hit(s, o, raw, t.dmgType, 0.5, discovered, weapon.type, fx); F(o.id, r2); dmgDealtThisAction += r2.dmg; }
       s = pushLog(s, `${weapon.name}で射抜き、流れ矢が走る。`);
     } else if (weapon.type === "axe") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.6, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
-      target.def = Math.max(0, target.def - 2);
-      floats.push({ key: uid(), targetId: target.id, text: "防御破壊", color: "var(--mist)", size: 13, t: Date.now() });
+      const r = hit(s, target, raw, t.dmgType, 1.6, discovered, weapon.type, fx); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const cut = Math.min(2, target.def);
+      target.def -= cut;
+      target.defCut = (target.defCut || 0) + cut; // 敵の札に「防御ダウン」として出す
+      floats.push({ key: uid(), targetId: target.id, text: "防御↓", color: "#e0a24a", size: 13, t: Date.now() });
       s = pushLog(s, `${weapon.name}が守りを砕く。`);
     } else if (weapon.type === "spear") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.1, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hit(s, target, raw, t.dmgType, 1.1, discovered, weapon.type, fx); F(target.id, r); dmgDealtThisAction += r.dmg;
       poisonEnemy(target);
       s = pushLog(s, `${weapon.name}の穂先が深く刺さる。`);
       if (poisonPct && target.hp > 0) extraLogs.push(`${target.name}は毒に侵された(${poisonTurns}ターン${target.boss ? "・ボスには効きにくい" : ""})`);
     } else if (weapon.type === "book") {
-      for (const e of enemies) if (e.hp > 0) { const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered, weapon.type); F(e.id, r); dmgDealtThisAction += r.dmg; }
+      for (const e of enemies) if (e.hp > 0) { const r = hit(s, e, raw, t.dmgType, 1.0, discovered, weapon.type, fx); F(e.id, r); dmgDealtThisAction += r.dmg; }
       s = pushLog(s, `${weapon.name}の一節が森を薙ぐ。`);
     } else if (weapon.type === "staff") {
-      const r = hitEnemy(s, target, raw, t.dmgType, 1.4, discovered, weapon.type); F(target.id, r); dmgDealtThisAction += r.dmg;
+      const r = hit(s, target, raw, t.dmgType, 1.4, discovered, weapon.type, fx); F(target.id, r); dmgDealtThisAction += r.dmg;
       const heal = Math.round(maxHpOf(s) * 0.1);
       s.player = { ...s.player, hp: Math.min(maxHpOf(s), s.player.hp + heal) };
       floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 18, t: Date.now() });
@@ -4067,26 +4292,56 @@ export default function KiriwatariNoMori() {
       extraLogs.push(`HPを${heal}回復した`);
     } else if (weapon.type === "instrument") {
       for (const e of enemies) if (e.hp > 0) {
-        const r = hitEnemy(s, e, raw, t.dmgType, 1.0, discovered, weapon.type); F(e.id, r); dmgDealtThisAction += r.dmg;
+        const r = hit(s, e, raw, t.dmgType, 1.0, discovered, weapon.type, fx); F(e.id, r); dmgDealtThisAction += r.dmg;
         e.atkDown = 2 + skillEffectTotal(meta?.skills, "instrumentDebuffTurns");
+        floats.push({ key: uid(), targetId: e.id, text: "攻撃↓", color: "#e0a24a", size: 13, t: Date.now() });
       }
       s = pushLog(s, `${weapon.name}の旋律が敵を怯ませ、攻撃力を下げた。`);
     }
 
-    for (const t of [...hitLogs, ...extraLogs]) s = pushLog(s, t);
-
-    // 余韻(ライフスティール): 与えたダメージの一部を吸収する。
-    if (lifestealPct > 0 && dmgDealtThisAction > 0) {
-      const mx = maxHpOf(s);
-      const heal = Math.round(dmgDealtThisAction * lifestealPct);
-      if (heal > 0 && s.player.hp < mx) {
-        s.player = { ...s.player, hp: Math.min(mx, s.player.hp + heal) };
-        floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
-        s = pushLog(s, `余韻でHPを${heal}回復した`);
+    // エンチャント「霜縛り」「蝕み」: この攻撃が当たった敵(全体攻撃なら生きている全員)に状態異常を付ける。
+    if (ench === "chill" || ench === "venom") {
+      const hitTargets = (weapon.type === "book" || weapon.type === "instrument" ? enemies.filter((e) => e.hp > 0) : [target]).filter((e) => e.hp > 0);
+      if (ench === "chill") {
+        let chilled = 0;
+        for (const e of hitTargets) {
+          if (weapon.type === "instrument") continue; // 楽器はもともと攻撃力を下げる
+          if (Math.random() >= enchV) continue; // 確率で掛かる
+          e.atkDown = Math.max(e.atkDown || 0, 2);
+          chilled++;
+          floats.push({ key: uid(), targetId: e.id, text: "攻撃↓", color: "#e0a24a", size: 13, t: Date.now() });
+        }
+        if (chilled) extraLogs.push(`${ENCHANTS.chill.label}の力で、敵の攻撃力が下がった(2ターン)`);
+      } else if (weapon.type !== "spear" && hitTargets.length) {
+        for (const e of hitTargets) poisonEnemy(e);
+        extraLogs.push(`${ENCHANTS.venom.label}の力で、敵は毒に侵された(${poisonTurns}ターン)`);
       }
     }
 
-    if (t.cd > 0) s.cds = { ...s.cds, [weapon.id]: t.cd + 1 }; // このターン終了時に-1される
+    // 貫き・弱点穿ち・理破りが働いたことも、ダメージのすぐ後にログへ残す
+    if (enchHits.pierced > 0) extraLogs.push(`${ENCHANTS.pierce.label}の力で、敵の防御を${enchHits.pierced}無視した`);
+    if (enchHits.weak > 0) extraLogs.push(`${ENCHANTS.weakbane.label}の力で、弱点への一撃が重くなった(${AFF_WEAK}倍→${enchNum(AFF_WEAK + enchV)}倍)`);
+    if (enchHits.res > 0) extraLogs.push(`${ENCHANTS.resbreak.label}の力で、耐性を押し破った(${AFF_RES}倍→${enchNum(AFF_RES + enchV)}倍)`);
+
+    for (const t of [...hitLogs, ...extraLogs]) s = pushLog(s, t);
+
+    // 余韻(スキル)・吸魂(エンチャント): 与えたダメージの一部を吸収する。最大HPを超えた分は回復しない(余韻を先に数える)
+    for (const [pct, label] of [[lifestealPct, "余韻"], [vampirePct, ENCHANTS.vampire.label]]) {
+      if (!(pct > 0) || dmgDealtThisAction <= 0) continue;
+      const mx = maxHpOf(s);
+      const heal = Math.min(mx - s.player.hp, Math.round(dmgDealtThisAction * pct));
+      if (heal > 0) {
+        s.player = { ...s.player, hp: s.player.hp + heal };
+        floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
+        s = pushLog(s, label === "余韻" ? `余韻でHPを${heal}回復した` : `${label}の力で、HPを${heal}回復した`);
+      }
+    }
+
+    // 「疾風」のエンチャントは、確率で再使用待ちをなくす
+    const swiftFired = ench === "swift" && t.cd > 0 && Math.random() < enchV;
+    const cdTurns = swiftFired ? 0 : t.cd;
+    if (swiftFired) s = pushLog(s, `${ENCHANTS.swift.label}の力で、${weapon.name}はすぐにまた使える`);
+    if (cdTurns > 0) s.cds = { ...s.cds, [weapon.id]: cdTurns + 1 }; // このターン終了時に-1される
     s.enemies = enemies;
     s.floats = [...s.floats, ...floats];
     s.hitId = target.id;
@@ -4381,7 +4636,7 @@ export default function KiriwatariNoMori() {
         // 進行度をFirebaseに記録(章クリア=到達点更新)
         try { window.webkit?.messageHandlers?.progress?.postMessage({ event: "stage_clear", stage, checkpoint: m2.checkpoint }); } catch (_) {}
         // ボス撃破時の装備武器を記録(武器バランス調整の参考用)
-        try { s.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_boss_kill", weapon_type: w.type, stage })); } catch (_) {}
+        try { s.weapons.filter(Boolean).forEach(w => window.webkit?.messageHandlers?.progress?.postMessage({ event: "weapon_boss_kill", weapon_type: w.type, stage, ...enchantTagOf(w) })); } catch (_) {}
         // 第2・3章ボス初クリア時にレビューを促す
         if ((stage === 2 || stage === 3) && checkpointBefore <= stage) {
           try { window.webkit?.messageHandlers?.requestReview?.postMessage(null); } catch (_) {}
@@ -4984,13 +5239,24 @@ export default function KiriwatariNoMori() {
       // 武器種ごとに性能設計(短剣は2連撃、大剣は単発高倍率、など)が異なり基礎atkのスケールも
       // バラバラなため、異なる武器種同士でatkを比較しても優劣の目安にならない。
       // 同じ種類の武器とだけ比較する。
-      const sameType = eq.filter((w) => w.type === item.type);
+      // 装備していなくても、袋に同じ武器種があれば「新しい武器種」とは出さない(袋の中の同種とも比べる)。
+      const sameType = [...eq, ...st.inv.filter((x) => x.kind === "weapon")].filter((w) => w.type === item.type && w.id !== item.id);
       if (sameType.length === 0) return { text: "新しい武器種です", up: true };
-      const worst = Math.min(...sameType.map((w) => w.atk));
-      const best = Math.max(...sameType.map((w) => w.atk));
-      if (item.atk > best) return { text: `↑ 同種で最強(攻 +${item.atk - best})`, up: true };
-      if (item.atk > worst) return { text: `↑ 同種の最弱より 攻 +${item.atk - worst}`, up: true };
-      return { text: `↓ 同種の方が強い(攻 ${item.atk - worst})`, down: true };
+      // エンチャント付きの武器は、攻撃力だけでは強さを比べられないので別枠にする。
+      // 比べる相手は、同じ武器種で、エンチャントの種類と段階まで同じものだけ(エンチャント無しは、エンチャント無しどうし)。
+      // 比べる相手がいなければヒントは出さない(エンチャントの名前は、すぐ上の行に出ている)。
+      const enchKey = (w) => (w.ench && ENCHANTS[w.ench] ? `${w.ench}:${enchantLevelOf(w)}` : "");
+      const key = enchKey(item);
+      const peers = sameType.filter((w) => enchKey(w) === key);
+      if (peers.length === 0) return null;
+      const worst = Math.min(...peers.map((w) => w.atk));
+      const best = Math.max(...peers.map((w) => w.atk));
+      // 文は付けず、攻撃力の差の数字だけを出す(一覧のマスが2行にならないように)。
+      // 同種で最強なら最強との差、そうでなければ同種の最弱との差(入れ替えるならこれ、という相手)
+      const diff = item.atk > best ? item.atk - best : item.atk - worst;
+      if (diff > 0) return { text: `↑ 攻 +${diff}`, up: true };
+      if (diff < 0) return { text: `↓ 攻 ${diff}`, down: true };
+      return { text: "攻 ±0", down: true };
     }
     if (item.kind === "armor") {
       const cur = st.armor[item.slot];
@@ -5010,7 +5276,12 @@ export default function KiriwatariNoMori() {
     const s0 = gRef.current;
     if (s0.phase !== "chest" || s0.eventDone) return; // 連打・二重開封を弾く
     const item = Math.random() < 0.65 ? makeWeapon(s0.floor, { luck: 1.3 }) : makeArmor(s0.floor, { luck: 1.3 });
-    const ns = pushLog({ ...s0, drops: [item], eventDone: true }, "苔むした宝箱を開けた。", true);
+    const drops = [item];
+    // まれに、宝樹の雫が一緒に入っている。見つけたときは、ほかの雫と同じように広告で増やせる案内を出す。
+    const hasDew = Math.random() < BALANCE.chestDewChance;
+    if (hasDew) drops.push(makeConsumable("dew"));
+    let ns = pushLog({ ...s0, drops, eventDone: true, dewAdOffer: hasDew && rewardAdUsesLeft(metaRef.current) > 0 && !s0.dewAdClaimed }, "苔むした宝箱を開けた。", true);
+    if (hasDew) ns = pushLog(ns, "箱の底で、宝樹の雫が光っている!", true);
     setG(ns);
     gRef.current = ns;
     flushSaveRun(ns);
@@ -5587,6 +5858,29 @@ export default function KiriwatariNoMori() {
                         );
                       })}
                     </div>
+                    {heading("武器の詳細")}
+                    <div style={{ ...guideText, color: "var(--mist)", marginBottom: 10 }}>
+                      武器の一覧(宝箱・戦利品・袋・交代の画面)には、<b style={pp}>攻撃力・属性と、エンチャントの名前・段階の点</b>だけを出しています。<br />
+                      武器を<b style={pp}>長押し</b>すると、武器種の特性・効果が出るタグ・エンチャントの詳しい効果が見られます(タップは、拾う・装備などの操作です)。
+                    </div>
+                    {heading("武器のレアエンチャント")}
+                    <div style={{ ...guideText, color: "var(--mist)", marginBottom: 10 }}>
+                      まれに、武器種の効果とは別に<b style={pp}>エンチャント</b>が1つ付いた武器が手に入ります。<br />
+                      レアリティが高い武器ほど、深い章ほど付きやすく、付いた武器は、武器カードの左上に<b style={pp}>エンチャントごとのアイコン(色つき)</b>と、段階を表す<b style={pp}>点</b>が出ます。<br />
+                      効果には <b style={pp}>Lv.1〜3</b> があり、Lv.2 は Lv.1 の2倍、Lv.3 は4倍の効果です(下の説明は Lv.1 / Lv.2 / Lv.3 の順)。Lv.3 ほど出にくく、点が3つ埋まっているものが最大です。
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {ENCHANT_IDS.map((id) => (
+                        <div key={id} style={{ padding: "8px 10px", background: ENCHANTS[id].color + "14", border: `1px solid ${ENCHANTS[id].color}55`, borderRadius: 8 }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontFamily: "var(--font-display)", fontWeight: 700, color: ENCHANTS[id].color }}><EnchantIcon id={id} size={18} />{ENCHANTS[id].label}</span>
+                          <div style={{ fontSize: 13, color: "var(--mist)", marginTop: 3, lineHeight: 1.75 }}>{enchantGuideText(id)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ ...guideText, color: "var(--mist)", marginTop: 10 }}>
+                      敵の札に「攻↓」(攻撃ダウン)「防↓」(防御ダウン)「毒」が出ている間は、その効果が続いています。<br />
+                      狙う敵を選ぶとき、弱点なら「弱点をつける!」、耐性があるなら「効きにくい…」と出ます(弱点・耐性を知っている敵だけ)。
+                    </div>
                   </>
                 )}
 
@@ -5614,6 +5908,7 @@ export default function KiriwatariNoMori() {
                     {heading("アイテムの分類")}
                     <div style={{ ...guideText, marginBottom: 10 }}>
                       戦闘に勝つ、宝箱を開ける、泉に立ち寄る、などで、武器・防具・消耗品が手に入ります。<br />
+                      宝箱からは、まれに宝樹の雫も見つかります。<br />
                       消耗品は主に5種類です。
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -5940,6 +6235,7 @@ export default function KiriwatariNoMori() {
   const nodeLabel = { battle: "戦闘", chest: "宝箱", spring: "泉", boss: "主" };
 
   return (
+    <WeaponInfoContext.Provider value={setInfoWeapon}>
     <div className="kw-root">
       <style>{CSS}</style>
       <StageBackdrop floor={g.floor} />
@@ -6085,7 +6381,9 @@ export default function KiriwatariNoMori() {
                   ? <button className="kw-btn primary" onClick={openChest}>開ける</button>
                   : <div className="kw-grid" style={{ justifyItems: "center" }}>
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
+                      <WeaponPressNote drops={g.drops} />
                     </div>}
+                {dewRetry}
                 {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
                   <button className="kw-btn ghost" disabled={!!g.rewardAdPending || bagOverNow > 0} onClick={tryProceed}>先へ進む →</button>
@@ -6110,6 +6408,7 @@ export default function KiriwatariNoMori() {
                   : g.drops.length > 0 && (
                     <div className="kw-grid" style={{ justifyItems: "center" }}>
                       {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
+                      <WeaponPressNote drops={g.drops} />
                     </div>)}
                 {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
@@ -6129,19 +6428,11 @@ export default function KiriwatariNoMori() {
                 {g.drops.length > 0 && (
                   <div className="kw-grid">
                     {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
+                    <WeaponPressNote drops={g.drops} />
                   </div>
                 )}
                 {g.full && g.inv.length >= invCap && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋」から不要な物を捨てるか、置いて進みましょう。</div>}
-                {g.drops.some((d) => d.itemId === "dew") && !g.dewAdClaimed && rewardAdUsesLeft(meta) > 0 && g.rewardAdFailedAt && (
-                  <div style={{ marginTop: 4, marginBottom: 6 }}>
-                    <button className="kw-btn ghost" style={{ fontSize: 12 }} disabled={!!g.rewardAdPending}
-                      onClick={() => { setG((s) => ({ ...s, rewardAdFailedAt: null })); requestRewardAd("dew"); }}>
-                      <Sparkles size={10} style={{ display: "inline", marginRight: 4 }} />
-                      {g.rewardAdPending === "dew" ? "読み込み中…（15秒ほどかかります）" : "広告を再試行して雫を2倍にする"}
-                    </button>
-                    {rewardAdFailNote({ marginTop: 4 })}
-                  </div>
-                )}
+                {dewRetry}
                 {bagOverNow > 0 && <div className="kw-notice" style={{ marginTop: 12 }}>{bagOverText(bagOverNow)}</div>}
                 <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
                   {g.drops.length > 0 && <button className="kw-btn ghost" onClick={takeAllDrops}>全部拾う</button>}
@@ -6259,12 +6550,6 @@ export default function KiriwatariNoMori() {
           ))}
         </div>
       </div>
-
-      {/* ---------- 武器の詳細(長押し) ---------- */}
-      {weaponInfoId && (() => {
-        const wi = g.weapons.find((x) => x && x.id === weaponInfoId);
-        return wi ? <WeaponInfoSheet w={wi} cd={g.cds[wi.id] || 0} onClose={() => setWeaponInfoId(null)} /> : null;
-      })()}
 
       {/* ---------- 道具の詳細(長押し) ---------- */}
       {itemInfoId && (() => {
@@ -6730,6 +7015,7 @@ export default function KiriwatariNoMori() {
             </div>
             <div className="kw-grid" style={{ textAlign: "left" }}>
               {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う / 装備" hint={hintFor(d)} />)}
+              <WeaponPressNote drops={g.drops} />
             </div>
             {g.full && g.inv.length >= invCap && <div className="kw-notice">袋がいっぱいで拾えませんでした。「袋を整理」から不要な物を捨ててください。</div>}
             <div className="kw-actions sticky" style={{ justifyContent: "center" }}>
@@ -6757,6 +7043,7 @@ export default function KiriwatariNoMori() {
             </div>
             <div className="kw-grid">
               {g.drops.map((d) => <ItemCell key={d.id} item={d} onClick={() => takeDrop(d)} actionLabel="拾う" hint={hintFor(d)} />)}
+              <WeaponPressNote drops={g.drops} />
             </div>
             {g.full && g.inv.length >= invCap && <div className="kw-notice">袋がいっぱいで拾えませんでした。一度戻って「袋」から整理するか、置いていきましょう。</div>}
             <div className="kw-actions">
@@ -6911,7 +7198,7 @@ export default function KiriwatariNoMori() {
         </div>
       )}
       {/* ---------- 雫広告オファー ---------- */}
-      {g.phase === "reward" && g.dewAdOffer && rewardAdUsesLeft(meta) > 0 && (
+      {(g.phase === "reward" || g.phase === "chest") && g.dewAdOffer && rewardAdUsesLeft(meta) > 0 && (
         <div className="kw-overlay top">
           <div className="kw-panel kw-sheet" style={{ maxWidth: 300, textAlign: "center" }}>
             <div style={{ fontSize: 26 }}>✨</div>
@@ -6942,11 +7229,9 @@ export default function KiriwatariNoMori() {
         <div className="kw-overlay top">
           <div className="kw-panel kw-sheet" style={{ maxWidth: 420, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ color: "var(--hotaru)", fontSize: 17 }}>どの武器と交代しますか？</h2>
-            <div style={{ margin: "6px 0 14px" }}>
-              <RarityName item={g.pendingWeaponSwap} small />
-              <div style={{ fontSize: 14, color: "var(--paper)", marginTop: 4, letterSpacing: ".05em" }}>{g.pendingWeaponSwap.name}</div>
-              <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 6 }}>武器スロットに空きがありません。手放す武器を選んでください。</div>
-            </div>
+            <IncomingWeapon w={g.pendingWeaponSwap} onInfo={setInfoWeapon}>
+              <div style={{ fontSize: 12, color: "var(--mist)", marginTop: 6 }}>武器スロットに空きがありません。手放す武器を選んでください。<br />武器を長押しすると、詳細が見られます。</div>
+            </IncomingWeapon>
             <div className="kw-grid">
               {/* ロックは「捨てる」操作だけをブロックするためのもので、装備の交代までは
                   妨げない(ステージが進むほど高レア品でも見劣りしていくため)。ロック中の
@@ -6963,6 +7248,13 @@ export default function KiriwatariNoMori() {
           </div>
         </div>
       )}
+      {/* ---------- 武器の詳細(長押し。交代先の選択画面より手前に出すため、その後ろに置く) ---------- */}
+      {infoWeapon && <WeaponInfoSheet w={infoWeapon} cd={0} onClose={() => setInfoWeapon(null)} />}
+      {weaponInfoId && (() => {
+        const wi = g.weapons.find((x) => x && x.id === weaponInfoId);
+        return wi ? <WeaponInfoSheet w={wi} cd={g.cds[wi.id] || 0} onClose={() => setWeaponInfoId(null)} /> : null;
+      })()}
+
       {/* ---------- レアアイテム捨て確認 ---------- */}
       {discardConfirm && (
         <div className="kw-overlay top">
@@ -7035,5 +7327,6 @@ export default function KiriwatariNoMori() {
         </div>
       )}
     </div>
+    </WeaponInfoContext.Provider>
   );
 }
