@@ -597,7 +597,8 @@ function makeWeapon(floor, opts = {}) {
     rarity: rar.id, atk, asset: t.asset,
   };
   // opts.ench / opts.enchLv: 指定すればそのエンチャント(と段階)を付ける(テスト・特別な報酬用)。無指定なら確率で抽選する。
-  const chance = enchantChanceOf(rar.id, floor, opts.luck || 0);
+  // opts.enchLuck: エンチャントの付きやすさだけを上げる(レアリティは変えない。変異した敵のドロップ用)
+  const chance = Math.min(ENCHANT_CHANCE_CAP, enchantChanceOf(rar.id, floor, opts.luck || 0) * (1 + (opts.enchLuck || 0)));
   const ench = opts.ench || (chance > 0 && Math.random() < chance ? pick(ENCHANT_IDS) : null);
   if (ench) { w.ench = ench; w.enchLv = opts.enchLv || rollEnchantLevel(); }
   return w;
@@ -681,6 +682,70 @@ function makeBoss(floor) {
     summons: B.summons, chargeLine: B.chargeLine, bigLine: B.bigLine, summonLine: B.summonLine,
     final: !!B.final,
   };
+}
+
+/* ------------------------------------------------------------
+   敵の「変異」(第4章から)
+   通常の戦闘で、ときどき敵の1体に性質が1つ付く(e.mut に id)。強さを足すのではなく、
+   「どの武器をどの順で使うか」を変えるための仕掛け。札に色つきの印が出る。
+   変異した敵が武器を落とすと、その武器にエンチャントが付きやすい(攻撃力・レアリティ・落とす数は変えない)。
+   変異の効果は hitEnemy / attackWith / enemyPhase で実装している。text と必ず一致させる。
+   ここの数値を変えると難易度が変わる(tests の sim_mutation.js で前後を比べられる)。
+------------------------------------------------------------ */
+const MUTATION = {
+  fromStage: 3,        // この章(0始まり。3 = 第4章)から出る
+  chance: 0.30,        // 1回の戦闘で、変異した敵が出る確率(第4章)
+  chanceStep: 0.03,    // 1章進むごとに加算
+  chanceMax: 0.50,     // 上限
+  regenPct: 0.08,      // 再生: 敵のターンの終わりに回復する割合(最大HP比)
+  callAt: 2,           // 群れ呼び: この回数目の行動で仲間を呼ぶ(呼ぶターンは攻撃しない)
+  callHpK: 0.6,        // 呼ばれた仲間のHP(同じ階の通常の敵に対する倍率)
+  maxEnemies: 4,       // 群れ呼びで、生きている敵がこの数以上なら呼ばない
+  guardUntil: 0.5,     // かばう: HP がこの割合を下回ると、かばわなくなる
+  enchLuck: 1.0,       // 変異した敵が落とす武器の、エンチャントが付く確率の上乗せ(1.0 = 2倍。上限は ENCHANT_CHANCE_CAP)
+};
+const MUTATIONS = {
+  // hpK: 変異した敵のHP倍率。変異のぶん戦いが長引かないように、効果の重さに合わせて下げて釣り合わせている(sim で調整)
+  shell:   { hpK: 1.2, label: "硬殻",     color: "#9fb4c8", text: "殻にこもっている間は攻撃してこないが、最初に受けた一撃を無効にする(殻が割れる)。割れると攻撃してくる。短剣の二連撃や全体攻撃なら、殻を割りながら攻撃できる。" },
+  caller:  { hpK: 0.8, label: "群れ呼び", color: "#e0a24a", text: `${MUTATION.callAt}回目の行動で、攻撃せずに仲間を1体呼ぶ(1回だけ)。呼ばれた仲間は何も落とさない。` },
+  regen:   { hpK: 0.8, label: "再生",     color: "#8fd39a", text: `敵のターンの終わりに、最大HPの${Math.round(MUTATION.regenPct * 100)}%回復する。毒にかかっている間は再生しない。` },
+  guard:   { hpK: 0.7, label: "かばう",   color: "#c08ae8", text: `ほかの敵を狙った単体攻撃を代わりに受ける。HPが${Math.round(MUTATION.guardUntil * 100)}%を下回ると、かばわなくなる。全体攻撃と流れ矢は防げない。` },
+  nullify: { hpK: 1.0, label: "吸魔",     color: "#e0566a", text: "武器のエンチャントが効かない。" },
+};
+const MUTATION_IDS = Object.keys(MUTATIONS);
+const mutationChanceOf = (floor) => {
+  const s = stageOf(floor);
+  if (s < MUTATION.fromStage) return 0;
+  return Math.min(MUTATION.chanceMax, MUTATION.chance + (s - MUTATION.fromStage) * MUTATION.chanceStep);
+};
+// 通常戦闘の敵の並びに、確率で1体だけ変異を付ける(金枝の精・ボスには付けない)。
+function applyMutations(list, floor) {
+  const chance = mutationChanceOf(floor);
+  if (!(chance > 0) || Math.random() >= chance) return list;
+  const normals = list.filter((e) => !e.rare && !e.boss);
+  if (!normals.length) return list;
+  const target = pick(normals);
+  // かばうは、かばう相手がいるときだけ
+  const ids = normals.length >= 2 ? MUTATION_IDS : MUTATION_IDS.filter((id) => id !== "guard");
+  const mut = pick(ids);
+  const hp = Math.max(1, Math.round(target.maxHp * (MUTATIONS[mut].hpK ?? 1)));
+  return list.map((e) => (e === target ? { ...e, mut, hp, maxHp: hp } : e));
+}
+const isMut = (e, id) => !!e && e.mut === id && e.hp > 0;
+// 硬殻がまだ割れていないか
+const shellIntact = (e) => !!e && e.mut === "shell" && !e.shellBroken;
+// かばう: 単体攻撃の狙いを、かばう敵へ移す(狙いがかばう敵自身なら、そのまま)。HP が guardUntil を下回った敵は、かばわない。
+const GUARDABLE_WEAPONS = ["dagger", "greatsword", "bow", "axe", "spear", "staff"];
+const isGuarding = (e) => isMut(e, "guard") && e.hp >= e.maxHp * MUTATION.guardUntil;
+function guardRedirect(enemies, target, weaponType) {
+  if (!target || !GUARDABLE_WEAPONS.includes(weaponType) || target.mut === "guard") return target;
+  return enemies.find((e) => e.id !== target.id && isGuarding(e)) || target;
+}
+// 群れ呼びが呼ぶ仲間(その章の敵から1体。HP は少なめ、何も落とさない)
+function makeCalledEnemy(floor) {
+  const e = makeEnemy(pick(STAGES[stageOf(floor)].enemies), floor);
+  const hp = Math.max(1, Math.round(e.maxHp * MUTATION.callHpK));
+  return { ...e, hp, maxHp: hp, callee: true };
 }
 
 /* ------------------------------------------------------------
@@ -878,7 +943,7 @@ function enemiesForEncounter(floor, lastRareSeen = 0, rareChance = 0.08) {
   if (floor - lastRareSeen >= rareCooldownOf(floor) && Math.random() < rareChance) {
     list.push(makeRareEnemy(floor));
   }
-  return list;
+  return applyMutations(list, floor);
 }
 
 /* ------------------------------------------------------------
@@ -1525,6 +1590,7 @@ html, body { color: var(--paper); font-family: var(--font-body); }
 .kw-chip.res { color: var(--paper-dim); border: 1px solid rgba(185,183,165,.25); }
 .kw-chip.debuff { color: #e0a24a; border: 1px solid rgba(224,162,74,.5); }
 .kw-chip.poison { color: #a98ad9; border: 1px solid rgba(169,138,217,.4); }
+.kw-chip.mut { border: 1px solid; font-weight: 700; }
 .kw-chip.core { color: #e07a6a; border: 1px solid rgba(224,122,106,.5); }
 .kw-chip.unknown { color: var(--mist); border: 1px dashed rgba(157,180,166,.3); }
 
@@ -2007,7 +2073,75 @@ function RarityName({ item, small }) {
 }
 
 /* 敵カード(モジュールレベル=再生成されないので浮遊ダメージが再アニメしない) */
-function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
+const LOG_KEEP = 30;   // 戦闘の外で残すログの行数
+const LOG_MAX = 3000;  // 1戦闘のログの上限(通常は届かない。メモリを守るための保険)
+function trimLogs(logs) {
+  let start = -1;
+  for (let i = logs.length - 1; i >= 0; i--) if (logs[i].bs) { start = i; break; }
+  if (start < 0) return logs.length > LOG_KEEP ? logs.slice(-LOG_KEEP) : logs;
+  const before = logs.slice(0, start);
+  const battle = logs.slice(start);
+  const kept = battle.length > LOG_MAX ? battle.slice(-LOG_MAX) : battle;
+  const keepBefore = Math.max(0, LOG_KEEP - kept.length);
+  return [...(keepBefore > 0 ? before.slice(-keepBefore) : []), ...kept];
+}
+
+// 敵の札の長押しで出す、いま効いている状態と性質の説明。札に出ている印と同じ条件で並べる。
+function enemyStatusList(e) {
+  const out = [];
+  if (e.hp <= 0) return out;
+  const add = (label, color, text) => out.push({ label, color, text });
+  if (e.mut && MUTATIONS[e.mut] && !(e.mut === "shell" && e.shellBroken) && !(e.mut === "caller" && e.callDone) && !(e.mut === "guard" && !isGuarding(e))) {
+    const m = MUTATIONS[e.mut];
+    const left = e.mut === "caller" ? `あと${Math.max(1, MUTATION.callAt - (e.callActs || 0))}回の行動で仲間を呼ぶ。` : "";
+    add(`変異「${m.label}」`, m.color, m.text + left);
+  } else if (e.mut && MUTATIONS[e.mut]) {
+    const m = MUTATIONS[e.mut];
+    const done = e.mut === "shell" ? "殻は割れている。もう一撃目も通常どおり効く。"
+      : e.mut === "caller" ? "もう仲間を呼んだ。これ以上は呼ばない。"
+      : e.mut === "guard" ? `HPが${Math.round(MUTATION.guardUntil * 100)}%を下回ったので、もうかばわない。` : m.text;
+    add(`変異「${m.label}」`, "var(--mist)", done);
+  }
+  if (e.rare) add(`あと${e.fleeIn}T`, "var(--hotaru)", `金枝の精。あと${e.fleeIn}ターンで逃げてしまう。`);
+  if (e.charge) add("大技の構え", "#e0566a", "次の行動で大技を出す(ふだんの約2倍のダメージ)。守ると受けるダメージを減らせる。");
+  if (e.poisonT > 0) add(`毒 ${e.poisonT}T`, "#a98ad9", `毎ターン${Math.max(1, e.poisonDmg || 1)}のダメージを受けている。あと${e.poisonT}ターン。`);
+  if (e.atkDown > 0) add(`攻↓ ${e.atkDown}T`, "#e0a24a", `攻撃力が20%下がっている。あと${e.atkDown}ターン。`);
+  if (e.defCut > 0) add(`防↓ ${e.defCut}`, "#e0a24a", `斧で防御力が${e.defCut}下げられている。`);
+  if (e.core && e.coreOpen > 0) add("守り崩れ", "var(--hotaru)", "守りが崩れていて、どの武器でも通常どおりダメージが通る。");
+  if (e.drain) add("吸収", "#8fd39a", "攻撃で与えたダメージの半分だけ、HPを回復する。");
+  if (e.poison) add("毒攻撃", "#a98ad9", "攻撃したとき、ときどき毒にしてくる。");
+  return out;
+}
+
+function EnemyInfoSheet({ e, onClose }) {
+  const list = enemyStatusList(e);
+  return (
+    <div className="kw-overlay top" onClick={onClose}>
+      <div className="kw-panel kw-sheet" style={{ maxWidth: 340, textAlign: "left" }} onClick={(ev) => ev.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <AssetIcon assetId={e.asset} size={26} color={e.rare ? "var(--hotaru)" : "var(--mist)"} />
+          <span style={{ fontSize: 12, color: "var(--mist)" }}>HP {e.hp} / {e.maxHp}</span>
+        </div>
+        <h2 style={{ fontSize: 18, letterSpacing: ".06em" }}>{e.name}</h2>
+        <div className="kw-enemy-info" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+          {list.length === 0
+            ? <div style={{ fontSize: 13.5, color: "var(--paper-dim)" }}>いま効いている強化や弱体はありません。</div>
+            : list.map((x, i) => (
+              <div key={i} style={{ fontSize: 13.5, lineHeight: 1.7, color: "var(--paper)" }}>
+                <b style={{ color: x.color }}>{x.label}</b><br />{x.text}
+              </div>
+            ))}
+        </div>
+        <div className="kw-actions">
+          <button className="kw-btn ghost" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact, onInfo }) {
+  const { handlers: pressHandlers, consumedLong } = useLongPress(onInfo ? () => onInfo(e.id) : null);
   const d = disc[e.bookId] || { w: [], r: [] };
   const known = [...(e.weak || []), ...(e.resist || [])];
   const revealed = e.rare || e.boss ? { w: e.weak, r: e.resist } : d;
@@ -2019,7 +2153,8 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
   return (
     <div
       className={`kw-panel kw-enemy ${e.hp <= 0 ? "dead" : ""} ${e.rare ? "rare" : ""} ${e.boss ? "boss" : ""} ${pending ? "targetable" : ""} ${goodTarget ? "goodTarget" : ""} ${badTarget ? "badTarget" : ""} ${hitId === e.id ? "hit" : ""}`}
-      onClick={() => { if (pending && e.hp > 0) onAttack(pending, e.id); }}
+      {...pressHandlers}
+      onClick={() => { if (consumedLong()) return; if (pending && e.hp > 0) onAttack(pending, e.id); }}
       role="button" aria-label={`${e.name}を狙う`} data-enemy-id={e.id}
     >
       {myFloats.map((f, i) => (
@@ -2040,6 +2175,11 @@ function EnemyCard({ e, disc, pending, hitId, floats, onAttack, compact }) {
         {e.hp > 0 && e.atkDown > 0 && <span className="kw-chip debuff" title="攻撃力が20%下がっている">攻↓ {e.atkDown}T</span>}
         {e.hp > 0 && e.defCut > 0 && <span className="kw-chip debuff" title="斧で防御力が下げられている">防↓ {e.defCut}</span>}
         {e.hp > 0 && e.core && e.coreOpen > 0 && <span className="kw-chip weak">守り崩れ</span>}
+        {e.hp > 0 && e.mut && MUTATIONS[e.mut] && !(e.mut === "shell" && e.shellBroken) && !(e.mut === "caller" && e.callDone) && !(e.mut === "guard" && !isGuarding(e)) && (
+          <span className="kw-chip mut" style={{ color: MUTATIONS[e.mut].color, borderColor: MUTATIONS[e.mut].color + "99" }} title={MUTATIONS[e.mut].text}>
+            {MUTATIONS[e.mut].label}{e.mut === "caller" ? ` ${Math.max(1, MUTATION.callAt - (e.callActs || 0))}T` : ""}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -3201,6 +3341,7 @@ export default function KiriwatariNoMori() {
   const [rushBuffsOpen, setRushBuffsOpen] = useState(false); // ボスラッシュの強化一覧
   const [weaponInfoId, setWeaponInfoId] = useState(null); // 戦闘中の武器カードの長押し詳細(装備中の武器の id)
   const [infoWeapon, setInfoWeapon] = useState(null); // 報酬・袋・交代画面の武器の長押し詳細(武器そのもの)
+  const [enemyInfoId, setEnemyInfoId] = useState(null); // 敵の札の長押し詳細(敵の id)
   const [itemInfoId, setItemInfoId] = useState(null); // 戦闘後の道具アイコンの長押し詳細(itemId)
   const [showEventBanner, setShowEventBanner] = useState(() => {
     if (!EVENT_ENABLED) return false;
@@ -3655,8 +3796,10 @@ export default function KiriwatariNoMori() {
     return st.rush ? Math.round(base * (1 + skillEffectTotal(m?.skills, "rushMaxHpPct") + (st.rush.hp || 0))) : base;
   };
 
-  const pushLog = (st, text, strong = false) =>
-    ({ ...st, logs: [...st.logs.slice(-29), { text, strong, k: uid() }] });
+  // ログは、いま(または直前)の戦闘の【戦闘開始】から後を全部残す(bs: 戦闘開始の目印)。
+  // 戦闘開始より前のログは、合わせて LOG_KEEP 行まで残す。念のため全体は LOG_MAX 行で打ち切る。
+  const pushLog = (st, text, strong = false, bs = false) =>
+    ({ ...st, logs: trimLogs([...st.logs, bs ? { text, strong, k: uid(), bs: true } : { text, strong, k: uid() }]) });
 
   const addFloat = (st, targetId, text, color, size = 20) =>
     ({ ...st, floats: [...st.floats, { key: uid(), targetId, text, color, size, t: Date.now() }] });
@@ -4056,7 +4199,8 @@ export default function KiriwatariNoMori() {
       return;
     }
     if (savedEnemies.length > 0) {
-      const restored = ensureWeapon({ ...base, enemies: savedEnemies });
+      // 中断した戦闘の続き。ここからのログも戦闘1回分として全部残すよう、戦闘開始の目印を付ける
+      const restored = ensureWeapon(pushLog({ ...base, enemies: savedEnemies }, "【戦闘再開】", true, true));
       saveRun(restored.floor, restored.node, restored.player, restored.weapons, restored.armor, restored.inv, restored.cds, restored.lastRareSeen, restored.orbBagBonus, restored.enemies, null, null, runExtraOf(restored));
       setG(restored);
     } else {
@@ -4101,7 +4245,7 @@ export default function KiriwatariNoMori() {
         if (ch) updateMeta({ seen: ns }); }
       s.cds = {};
       s.turn = 1;
-      s = pushLog(s, "【戦闘開始】", true);
+      s = pushLog(s, "【戦闘開始】", true, true);
       s = pushLog(s, `## ターン${s.turn}`, true);
       // 呼吸法・再生の心得: 戦闘開始時にHPを回復
       const battleStartHealPct = skillEffectTotal(meta?.skills, "battleStartHealPct");
@@ -4118,6 +4262,7 @@ export default function KiriwatariNoMori() {
           : `──ボスラッシュ ${s.rush.idx + 1}/${RUSH.bosses}:${rushBossName(s.rush.idx)}が、取り巻きを連れて立ちはだかる。`)
         : kind === "boss" ? `──${STAGES[stageOf(s.floor)].boss.name}が立ちはだかる。` : "敵が現れた。", kind === "boss" || !!s.rush);
       if (s.enemies.some((e) => e.rare)) s = pushLog(s, "……金色の光。金枝の精が紛れている!", true);
+      for (const e of s.enemies) if (e.mut && MUTATIONS[e.mut]) s = pushLog(s, `${e.name}は変異している。「${MUTATIONS[e.mut].label}」${MUTATIONS[e.mut].text}`, true);
     } else {
       s.phase = kind; // chest / spring
     }
@@ -4150,6 +4295,11 @@ export default function KiriwatariNoMori() {
   /* ---------- ダメージ計算 ---------- */
   // fx: 武器のエンチャント由来の補正 { weakMult, resMult, pierce(防御を無視する割合) }(無ければ補正なし)
   function hitEnemy(st, enemy, rawAtk, dmgType, mult, discovered, weaponType, fx) {
+    // 変異「硬殻」: 最初の一撃は殻が受け止める(ダメージなし)
+    if (shellIntact(enemy)) { enemy.shellBroken = true; return { dmg: 0, tag: null, core: null, pierced: 0, shell: true }; }
+    // 変異「吸魔」: エンチャントの補正を受けない
+    const nulled = !!fx && enemy.mut === "nullify";
+    if (nulled) fx = null;
     let aff = 1, tag = null;
     if (enemy.weak.includes(dmgType)) { aff = fx?.weakMult || AFF_WEAK; tag = "weak"; }
     else if (enemy.resist.includes(dmgType)) { aff = fx?.resMult || AFF_RES; tag = "res"; }
@@ -4170,7 +4320,7 @@ export default function KiriwatariNoMori() {
       const list = tag === "weak" ? d.w : d.r;
       if (!list.includes(dmgType)) list.push(dmgType);
     }
-    return { dmg, tag, core, pierced };
+    return { dmg, tag, core, pierced, nulled };
   }
 
   /* ---------- プレイヤーの攻撃 ---------- */
@@ -4200,13 +4350,18 @@ export default function KiriwatariNoMori() {
     const lifestealPct = skillEffectTotal(meta?.skills, "lifestealPct", (e) => e.element === t.dmgType);
     const vampirePct = ench === "vampire" ? enchV : 0;
     let dmgDealtThisAction = 0;
-    const target = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
-    if (!target) return;
+    const aimed = enemies.find((e) => e.id === targetId && e.hp > 0) || enemies.find((e) => e.hp > 0);
+    if (!aimed) return;
+    // 変異「かばう」: 単体攻撃は、かばう敵が代わりに受ける
+    const target = guardRedirect(enemies, aimed, weapon.type);
     const floats = [];
     // エンチャントが働いた回数(ログ用)。貫き=無視した防御の合計、弱点穿ち/理破り=倍率が変わった命中の数
-    const enchHits = { pierced: 0, weak: 0, res: 0 };
+    const enchHits = { pierced: 0, weak: 0, res: 0, nulled: 0 };
+    let enchDealt = 0; // 吸魂の回復の元になるダメージ(吸魔の敵へのダメージは数えない)
     const hit = (...args) => {
       const r = hitEnemy(...args);
+      if (r.nulled) { enchHits.nulled++; return r; }
+      enchDealt += r.dmg;
       if (ench === "pierce") enchHits.pierced += r.pierced || 0;
       if (ench === "weakbane" && r.tag === "weak") enchHits.weak++;
       if (ench === "resbreak" && r.tag === "res") enchHits.res++;
@@ -4233,7 +4388,13 @@ export default function KiriwatariNoMori() {
     const hitLogs = [];
     const extraLogs = [];
     const nameOf = (eid) => enemies.find((x) => x.id === eid)?.name || "敵";
+    if (target !== aimed) hitLogs.push(`${target.name}が${aimed.name}をかばった`);
     const F = (eid, r) => {
+      if (r.shell) {
+        floats.push({ key: uid(), targetId: eid, text: "殻が割れた", color: MUTATIONS.shell.color, size: 15, t: Date.now() });
+        hitLogs.push(`${nameOf(eid)}の殻が一撃を受け止めて割れた(ダメージなし)`);
+        return;
+      }
       const label = (r.tag === "weak" ? `弱点 ${r.dmg}` : r.tag === "res" ? `耐性 ${r.dmg}` : `${r.dmg}`) + (r.core === "shield" ? "(守り)" : "");
       const color = r.tag === "weak" ? "var(--hotaru)" : r.tag === "res" ? "var(--paper-dim)" : "var(--paper)";
       floats.push({ key: uid(), targetId: eid, text: label, color, size: r.tag === "weak" ? 24 : 19, t: Date.now() });
@@ -4251,7 +4412,7 @@ export default function KiriwatariNoMori() {
         const crit = Math.random() < critChance;
         const r = hit(s, target, raw, t.dmgType, crit ? 1.8 : 1, discovered, weapon.type, fx);
         dmgDealtThisAction += r.dmg;
-        if (crit) {
+        if (crit && !r.shell) {
           const label = `会心 ${r.dmg}`;
           floats.push({ key: uid(), targetId: target.id, text: label, color: "var(--hotaru)", size: 24, t: Date.now() });
           hitLogs.push(`${target.name}に${r.dmg}ダメージを与えた(会心)`);
@@ -4301,7 +4462,7 @@ export default function KiriwatariNoMori() {
 
     // エンチャント「霜縛り」「蝕み」: この攻撃が当たった敵(全体攻撃なら生きている全員)に状態異常を付ける。
     if (ench === "chill" || ench === "venom") {
-      const hitTargets = (weapon.type === "book" || weapon.type === "instrument" ? enemies.filter((e) => e.hp > 0) : [target]).filter((e) => e.hp > 0);
+      const hitTargets = (weapon.type === "book" || weapon.type === "instrument" ? enemies.filter((e) => e.hp > 0) : [target]).filter((e) => e.hp > 0 && e.mut !== "nullify");
       if (ench === "chill") {
         let chilled = 0;
         for (const e of hitTargets) {
@@ -4322,14 +4483,15 @@ export default function KiriwatariNoMori() {
     if (enchHits.pierced > 0) extraLogs.push(`${ENCHANTS.pierce.label}の力で、敵の防御を${enchHits.pierced}無視した`);
     if (enchHits.weak > 0) extraLogs.push(`${ENCHANTS.weakbane.label}の力で、弱点への一撃が重くなった(${AFF_WEAK}倍→${enchNum(AFF_WEAK + enchV)}倍)`);
     if (enchHits.res > 0) extraLogs.push(`${ENCHANTS.resbreak.label}の力で、耐性を押し破った(${AFF_RES}倍→${enchNum(AFF_RES + enchV)}倍)`);
+    if (ench && enchHits.nulled > 0) extraLogs.push(`${MUTATIONS.nullify.label}の敵には、${ENCHANTS[ench].label}の力が届かなかった`);
 
     for (const t of [...hitLogs, ...extraLogs]) s = pushLog(s, t);
 
     // 余韻(スキル)・吸魂(エンチャント): 与えたダメージの一部を吸収する。最大HPを超えた分は回復しない(余韻を先に数える)
-    for (const [pct, label] of [[lifestealPct, "余韻"], [vampirePct, ENCHANTS.vampire.label]]) {
-      if (!(pct > 0) || dmgDealtThisAction <= 0) continue;
+    for (const [pct, label, base] of [[lifestealPct, "余韻", dmgDealtThisAction], [vampirePct, ENCHANTS.vampire.label, enchDealt]]) {
+      if (!(pct > 0) || base <= 0) continue;
       const mx = maxHpOf(s);
-      const heal = Math.min(mx - s.player.hp, Math.round(dmgDealtThisAction * pct));
+      const heal = Math.min(mx - s.player.hp, Math.round(base * pct));
       if (heal > 0) {
         s.player = { ...s.player, hp: s.player.hp + heal };
         floats.push({ key: uid(), targetId: "player", text: `+${heal}`, color: "#8fd39a", size: 15, t: Date.now() });
@@ -4338,7 +4500,7 @@ export default function KiriwatariNoMori() {
     }
 
     // 「疾風」のエンチャントは、確率で再使用待ちをなくす
-    const swiftFired = ench === "swift" && t.cd > 0 && Math.random() < enchV;
+    const swiftFired = ench === "swift" && t.cd > 0 && target.mut !== "nullify" && Math.random() < enchV;
     const cdTurns = swiftFired ? 0 : t.cd;
     if (swiftFired) s = pushLog(s, `${ENCHANTS.swift.label}の力で、${weapon.name}はすぐにまた使える`);
     if (cdTurns > 0) s.cds = { ...s.cds, [weapon.id]: cdTurns + 1 }; // このターン終了時に-1される
@@ -4568,10 +4730,12 @@ export default function KiriwatariNoMori() {
         drops.push(makeArmor(floor, { rarity: "epic" }));
         continue;
       }
+      if (e.callee) continue; // 群れ呼びで呼ばれた仲間は何も落とさない
       const roll = Math.random();
       const wMax = floor <= 10 ? 0.64 : 0.62; // 第1章は武器ドロップ率アップ
       if (roll < 0.38) drops.push(makeConsumable(null, floor));
-      else if (roll < wMax) drops.push(makeWeapon(floor, { luck: dropLuck }));
+      // 変異した敵の武器はエンチャントが付きやすい(落とす確率・レアリティは同じ)
+      else if (roll < wMax) drops.push(makeWeapon(floor, { luck: dropLuck, enchLuck: e.mut ? MUTATION.enchLuck : 0 }));
       else if (roll < wMax + 0.12) drops.push(makeArmor(floor, { luck: dropLuck }));
     }
     if (drops.length === 0) drops.push(makeConsumable(null, floor));
@@ -4706,6 +4870,28 @@ export default function KiriwatariNoMori() {
         if (e.fleeIn <= 0) { e.hp = 0; e.counted = true; e.fled = true; s = pushLog(s, `${e.name}は森の奥へ消えてしまった……`); }
         else s = pushLog(s, `${e.name}は揺らめいている(あと${e.fleeIn}ターン)。`);
         continue;
+      }
+      // 変異「硬殻」: 殻が割れるまでは、こもったまま攻撃しない
+      if (shellIntact(e)) {
+        s = pushLog(s, `${e.name}は殻にこもっている。`);
+        continue;
+      }
+      // 変異「群れ呼び」: callAt 回目の行動で、攻撃せずに仲間を1体呼ぶ(生きている敵が多いときは呼ばずに攻撃する)
+      if (e.mut === "caller" && !e.callDone) {
+        e.callActs = (e.callActs || 0) + 1;
+        if (e.callActs >= MUTATION.callAt) {
+          e.callDone = true;
+          if (enemies.filter((x) => x.hp > 0).length < MUTATION.maxEnemies) {
+            const kid = makeCalledEnemy(s.floor);
+            enemies = [...enemies, kid];
+            s = pushLog(s, `${e.name}が仲間を呼んだ。${kid.name}が現れた!`, true);
+            setG({ ...s, enemies, player });
+            await sleep(380);
+            if (seq != null && seqRef.current !== seq) return;
+            s = gRef.current; enemies = s.enemies.map((x) => ({ ...x })); player = { ...s.player };
+            continue;
+          }
+        }
       }
       const weaken = e.atkDown > 0 ? 0.8 : 1;
       let dmg = Math.max(1, Math.round(e.atk * weaken * rnd(0.9, 1.1)) - def);
@@ -4842,15 +5028,25 @@ export default function KiriwatariNoMori() {
 
     // 敵の毒(槍の付与)。敵ターンの最後に、防御・弱点/耐性を無視して固定ダメージを与える。
     // 旧セーブの敵には poisonT が無い(undefined)ので > 0 判定で安全にスキップされる。
+    const poisonedNow = new Set(); // このターンに毒を受けた敵(変異「再生」が止まる)
     if (player.hp > 0) {
       for (const e of enemies) {
         if (e.hp <= 0 || !(e.poisonT > 0)) continue;
+        poisonedNow.add(e.id);
         const pd = Math.min(e.hp, Math.max(1, e.poisonDmg || 1));
         e.hp -= pd;
         e.poisonT -= 1;
         if (e.poisonT <= 0) e.poisonDmg = 0;
         s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `毒 ${pd}`, color: "#a98ad9", size: 15, t: Date.now() }] };
         s = pushLog(s, `${e.name}は毒で${pd}ダメージを受けた`);
+      }
+      // 変異「再生」: 毒にかかっていなければ、最大HPの一部を回復する
+      for (const e of enemies) {
+        if (!isMut(e, "regen") || e.hp >= e.maxHp || poisonedNow.has(e.id)) continue;
+        const rec = Math.min(e.maxHp - e.hp, Math.max(1, Math.round(e.maxHp * MUTATION.regenPct)));
+        e.hp += rec;
+        s = { ...s, floats: [...s.floats, { key: uid(), targetId: e.id, text: `再生 ${rec}`, color: MUTATIONS.regen.color, size: 15, t: Date.now() }] };
+        s = pushLog(s, `${e.name}は再生し、HPを${rec}回復した`);
       }
     }
     // 実りの加護: 生命の果実によるリジェネ
@@ -5881,6 +6077,20 @@ export default function KiriwatariNoMori() {
                       敵の札に「攻↓」(攻撃ダウン)「防↓」(防御ダウン)「毒」が出ている間は、その効果が続いています。<br />
                       狙う敵を選ぶとき、弱点なら「弱点をつける!」、耐性があるなら「効きにくい…」と出ます(弱点・耐性を知っている敵だけ)。
                     </div>
+                    {heading("敵の変異")}
+                    <div style={{ ...guideText, color: "var(--mist)", marginBottom: 10 }}>
+                      <b style={pp}>第4章から</b>、ときどき敵の1体が<b style={pp}>変異</b>しています。変異した敵の札には、色つきの印が出ます。<br />
+                      変異した敵が落とす武器は、<b style={pp}>エンチャントが付きやすく</b>なります。<br />
+                      敵の札を<b style={pp}>長押し</b>すると、変異や毒・攻↓など、その敵にいま効いている状態の説明が見られます。
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {MUTATION_IDS.map((id) => (
+                        <div key={id} style={{ padding: "8px 10px", background: MUTATIONS[id].color + "14", border: `1px solid ${MUTATIONS[id].color}55`, borderRadius: 8 }}>
+                          <span style={{ fontSize: 14, fontFamily: "var(--font-display)", fontWeight: 700, color: MUTATIONS[id].color }}>{MUTATIONS[id].label}</span>
+                          <div style={{ fontSize: 13, color: "var(--mist)", marginTop: 3, lineHeight: 1.75 }}>{MUTATIONS[id].text}</div>
+                        </div>
+                      ))}
+                    </div>
                   </>
                 )}
 
@@ -6292,13 +6502,13 @@ export default function KiriwatariNoMori() {
             if (bossE && sideEs.length >= 1) {
               const half = Math.ceil(sideEs.length / 2);
               const sideCard = (e) => (
-                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} compact />
+                <EnemyCard key={e.id} e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} onInfo={setEnemyInfoId} compact />
               );
               return (
                 <div className="kw-field-inner bosscenter">
                   <div className="kw-bc-side">{sideEs.slice(0, half).map(sideCard)}</div>
                   <div className="kw-bc-boss">
-                    <EnemyCard e={bossE} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} />
+                    <EnemyCard e={bossE} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} onInfo={setEnemyInfoId} />
                   </div>
                   <div className="kw-bc-side">{sideEs.slice(half).map(sideCard)}</div>
                   {g.rush && <div className="kw-enemy-count">敵 のこり <b>{g.enemies.filter((e) => e.hp > 0).length}</b> 体{rushRespawnLine}</div>}
@@ -6309,7 +6519,7 @@ export default function KiriwatariNoMori() {
               <div className={`kw-field-inner ${compactField ? "compact" : ""}`}>
                 {g.enemies.map((e, i) => (
                   <React.Fragment key={e.id}>
-                    <EnemyCard e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith}
+                    <EnemyCard e={e} disc={disc} pending={g.pending} hitId={g.hitId} floats={g.floats} onAttack={attackWith} onInfo={setEnemyInfoId}
                       compact={compactField && !e.boss} />
                   </React.Fragment>
                 ))}
@@ -6568,6 +6778,13 @@ export default function KiriwatariNoMori() {
           if (rg > 0) lines.push(`さらに${rg}ターンの間、毎ターン最大HPの10%を回復する。`);
         }
         return <ItemInfoSheet c={c} count={n} lines={lines} onClose={() => setItemInfoId(null)} />;
+      })()}
+
+      {/* ---------- 敵の状態の詳細(札の長押し) ---------- */}
+      {enemyInfoId && (() => {
+        const e = g.phase === "battle" ? g.enemies.find((x) => x.id === enemyInfoId) : null;
+        if (!e) return null;
+        return <EnemyInfoSheet e={e} onClose={() => setEnemyInfoId(null)} />;
       })()}
 
       {/* ---------- ログの拡大ポップアップ ---------- */}
